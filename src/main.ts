@@ -75,7 +75,7 @@ function runKeyDiagnostics(): Map<number, KeyValidationError[]> {
         }
     }
 
-    // NEW: Pre-calculate unique parent steps pointing to each node
+    // Pre-calculate unique parent steps pointing to each node
     const inboundParentMap = new Map<number, Set<number>>();
     myDichotomousKey.forEach(c => {
         if (c.link1) {
@@ -505,7 +505,7 @@ function setupGlobalEvents() {
     });
 
     // New Node Injection Engine Action
-    const addBtn = document.querySelector('#add-couplet-btn');
+   const addBtn = document.querySelector('#add-couplet-btn');
     addBtn?.replaceWith(addBtn.cloneNode(true)); // Clear listeners safely
     document.querySelector('#add-couplet-btn')?.addEventListener('click', () => {
         const maxId = myDichotomousKey && Array.isArray(myDichotomousKey)
@@ -516,6 +516,25 @@ function setupGlobalEvents() {
             : 100;
 
         const nextInternalId = maxId + 1;
+
+        // Find the first open slot scanning from the bottom up
+        for (let i = myDichotomousKey.length - 1; i >= 0; i--) {
+            const couplet = myDichotomousKey[i];
+            const alt1Open = !couplet.link1 && !couplet.taxa1;
+            const alt2Open = !couplet.link2 && !couplet.taxa2;
+
+            if (alt1Open) {
+                // If both are open or only alt1 is open, favor alt1/a
+                couplet.link1 = nextInternalId;
+                break;
+            } else if (alt2Open) {
+                // If only alt2 is open
+                couplet.link2 = nextInternalId;
+                break;
+            }
+        }
+
+        // Inject the newly generated couplet to the bottom of the stack
         myDichotomousKey.push({ id: nextInternalId, alt1: "", alt2: "", link1: 0, link2: 0, taxa1: "", taxa2: "" });
         renderApp();
     });
