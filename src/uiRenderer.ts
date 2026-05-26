@@ -89,8 +89,7 @@ export function initializeShell(appDiv: HTMLDivElement, store: KeyStore, refresh
  * Updates the card items on the editor canvas panel without rebuilding the shell layout wrapper.
  */
 export function renderEditorCards(store: KeyStore, refreshAll: () => void) {
-    const container = document.querySelector('#editor-container') ||
-        document.getElementById('editor-cards-container');
+    const container = document.querySelector('#editor-container');
     if (!container) return;
 
     const key = store.getKey();
@@ -260,6 +259,7 @@ export function renderEditorCards(store: KeyStore, refreshAll: () => void) {
         // Native Drag-and-Drop Pipeline Actions
         card.addEventListener('dragstart', () => {
             store.startDragging(couplet.id);
+            card.classList.remove('is-hovered', 'is-active');
             card.style.opacity = '0.4';
         });
 
@@ -313,7 +313,7 @@ export function renderPrintView(store: KeyStore) {
             <div style="font-weight: bold; text-align: center; align-self: start; color: #000;">—</div>
             <div style="display: flex; justify-content: space-between; align-items: end; width: 100%;">
               <span style="flex-shrink: 1; text-align: left; white-space: pre-wrap;">${escapeHTML(c.alt2) || '___'}</span>
-              <span style="flex-shrink: 1; border-bottom: 1px dotted #000; margin: 0 8px 4px 8px;"></span>
+              <span style="flex-grow: 1; border-bottom: 1px dotted #000; margin: 0 8px 4px 8px;"></span>
               <span style="flex-shrink: 0; white-space: nowrap;">${end2}</span>
             </div>
             <div style="grid-column: span 2; height: 8px;"></div>
@@ -336,16 +336,23 @@ function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     // Local Storage Drivers
     document.querySelector('#cmd-save')?.addEventListener('click', () => {
         localStorage.setItem('dichotomous_key', JSON.stringify(store.getKey()));
+        store.markSaved();
         alert("Saved successfully to local engine database!");
+        refreshAll();
     });
 
     // JSON Data Export Pipeliners
     document.querySelector('#cmd-export-json')?.addEventListener('click', () => {
-        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(store.getKey(), null, 2));
+        const blob = new Blob([JSON.stringify(store.getKey(), null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+
         const dlAnchor = document.createElement('a');
-        dlAnchor.setAttribute("href", dataStr);
+        dlAnchor.setAttribute("href", url);
         dlAnchor.setAttribute("download", "dichotomous_key_export.json");
         dlAnchor.click();
+
+        // Clean up memory after triggering download
+        URL.revokeObjectURL(url);
     });
 
     // JSON Data Import

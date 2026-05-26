@@ -20,6 +20,7 @@ interface AppState {
 
 export class KeyStore {
     private state: AppState;
+    private lastSavedState: string;
 
     // FIX: Change stack types from string[] to AppState[]
     private undoStack: AppState[] = [];
@@ -33,6 +34,7 @@ export class KeyStore {
     constructor(initialKey: Couplet[], maxHistoryLimit = 100) {
         this.state = { dichotomousKey: initialKey };
         this.maxHistoryLimit = maxHistoryLimit;
+        this.lastSavedState = JSON.stringify(initialKey);
     }
 
     // ==========================================
@@ -49,9 +51,6 @@ export class KeyStore {
 
     public setActiveCard(id: number | null) {
         if (this.activeEditingCardId !== id) {
-            if (id !== null) {
-                this.commitHistoryCheckpoint(); // Commit history right as a new card session starts
-            }
             this.activeEditingCardId = id;
         }
     }
@@ -70,6 +69,16 @@ export class KeyStore {
 
     public stopDragging() {
         this._draggedId = null;
+    }
+
+    /** Commit the current memory matrix as clean after a successful storage save */
+    public markSaved() {
+        this.lastSavedState = JSON.stringify(this.state.dichotomousKey);
+    }
+
+    /** Evaluation hook: Checks if active state differs from local storage baseline */
+    public hasUnsavedChanges(): boolean {
+        return this.lastSavedState !== JSON.stringify(this.state.dichotomousKey);
     }
 
     // ==========================================
@@ -112,6 +121,60 @@ export class KeyStore {
 
         this.state = this.redoStack.pop()!;
         return true;
+    }
+
+    // ==========================================
+    // GRAPH ANALYSIS HELPERS
+    // ==========================================
+
+    /**
+     * Finds the 0-based array index of a couplet by its internal unique ID.
+     * Returns -1 if the ID does not exist.
+     */
+    public getIndexById(id: number): number {
+        return this.state.dichotomousKey.findIndex(c => c.id === id);
+    }
+
+    /**
+     * Sweeps the key matrix to find all parent step routes targeting an internal ID.
+     * Returns human-readable labels like ["#1a", "#4b"].
+     */
+    public getInboundLinks(targetId: number): string[] {
+        const inbound: string[] = [];
+        if (!targetId) return inbound;
+
+        this.state.dichotomousKey.forEach((couplet, index) => {
+            if (couplet.link1 === targetId) inbound.push(`#${index + 1}a`);
+            if (couplet.link2 === targetId) inbound.push(`#${index + 1}b`);
+        });
+        return inbound;
+    }
+
+    /**
+     * Executes a Breadth-First Search (BFS) starting from the root node (Index 0).
+     * Returns a Set containing all unique, reachable internal IDs.
+     */
+    public getReachableNodes(): Set<number> {
+        const reachable = new Set<number>();
+        const key = this.state.dichotomousKey;
+        if (key.length === 0) return reachable;
+
+        // Start traversal queue at the absolute root step
+        const queue: number[] = [key[0].id];
+
+        while (queue.length > 0) {
+            const activeId = queue.shift()!;
+            if (!reachable.has(activeId)) {
+                reachable.add(activeId);
+
+                const match = key.find(c => c.id === activeId);
+                if (match) {
+                    if (match.link1) queue.push(match.link1);
+                    if (match.link2) queue.push(match.link2);
+                }
+            }
+        }
+        return reachable;
     }
 
     // ==========================================
@@ -181,11 +244,15 @@ export class KeyStore {
 
     public deleteSelected() {
         if (this.selectedIds.length === 0) return;
-
         this.saveCheckpoint();
-        this.state.dichotomousKey = this.state.dichotomousKey.filter(
-            c => !this.selectedIds.includes(c.id)
-        );
+        const removedIds = new Set(this.selectedIds);
+        this.state.dichotomousKey = this.state.dichotomousKey
+            .filter(c => !removedIds.has(c.id))
+            .map(c => ({
+                ...c,
+                link1: removedIds.has(c.link1) ? 0 : c.link1,
+                link2: removedIds.has(c.link2) ? 0 : c.link2,
+            }));
         this.selectedIds = [];
     }
 
@@ -424,11 +491,8 @@ export class KeyStore {
             }
             if (c.link1 === c.id) issues.push({ severity: 'error', message: 'Choice A loops directly into its own card.' });
             if (c.link2 === c.id) issues.push({ severity: 'error', message: 'Choice B loops directly into its own card.' });
-
             if (c.link1 && !idMap.has(c.link1)) issues.push({ severity: 'error', message: 'Choice A points to an invalid or deleted step.' });
             if (c.link2 && !idMap.has(c.link2)) issues.push({ severity: 'error', message: 'Choice B points to an invalid or deleted step.' });
-            if (c.link1 === c.id) issues.push({ severity: 'error', message: 'Choice A loops directly into its own card.' });
-            if (c.link2 === c.id) issues.push({ severity: 'error', message: 'Choice B loops directly into its own card.' });
             if (!c.taxa1 && !c.link1) issues.push({ severity: 'warning', message: 'Choice A is incomplete. Assign a Taxa or destination step.' });
             if (!c.taxa2 && !c.link2) issues.push({ severity: 'warning', message: 'Choice B is incomplete. Assign a Taxa or destination step.' });
             if (c.taxa1 && c.link1) issues.push({ severity: 'warning', message: 'Choice A contains both Taxa and a Goto jump (Hint Mode activated).' });
