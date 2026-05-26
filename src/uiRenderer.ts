@@ -90,35 +90,59 @@ export function initializeShell(appDiv: HTMLDivElement, store: KeyStore, refresh
  * Updates the card items on the editor canvas panel without rebuilding the shell layout wrapper.
  */
 export function renderEditorCards(store: KeyStore, refreshAll: () => void) {
-    const container = document.querySelector('#editor-container');
+    const container = document.querySelector('#editor-container') ||
+        document.getElementById('editor-cards-container');
     if (!container) return;
 
-    container.innerHTML = '';
     const key = store.getKey();
     const selectedIds = store.getSelectedIds();
     const activeDiagnostics = store.runDiagnostics();
 
-    // Update dynamic selection badge quantities inside toolbar components
+    // Maintain toolbar context (updates the deletion count badge on your buttons)
     const deleteBtn = document.querySelector('#cmd-delete-selected') as HTMLButtonElement;
     if (deleteBtn) deleteBtn.textContent = `🗑️ Delete Selected (${selectedIds.length})`;
 
+    // Pre-map tracking tables in a single linear O(N) pass
+    const idToIndexMap = new Map<number, number>();
+    const inboundLinksMap = new Map<number, string[]>();
+    const selectedIdsSet = new Set(selectedIds); // O(1) membership lookups
+
+    key.forEach((couplet, idx) => {
+        idToIndexMap.set(couplet.id, idx);
+    });
+
+    key.forEach((searchNode, searchIdx) => {
+        if (searchNode.link1) {
+            if (!inboundLinksMap.has(searchNode.link1)) inboundLinksMap.set(searchNode.link1, []);
+            inboundLinksMap.get(searchNode.link1)!.push(`#${searchIdx + 1}a`);
+        }
+        if (searchNode.link2) {
+            if (!inboundLinksMap.has(searchNode.link2)) inboundLinksMap.set(searchNode.link2, []);
+            inboundLinksMap.get(searchNode.link2)!.push(`#${searchIdx + 1}b`);
+        }
+    });
+
+    // Optimization: Build structural elements off-screen using DocumentFragment
+    const fragment = document.createDocumentFragment();
+
+    // Render each individual loop step instantly
     key.forEach((couplet, index) => {
-        const isSelected = selectedIds.includes(couplet.id);
         const displayNum = index + 1;
-        const card = document.createElement('div');
+        const isSelected = selectedIdsSet.has(couplet.id);
 
-        card.draggable = true;
-        card.setAttribute('data-id', couplet.id.toString());
+        const inboundLinks = inboundLinksMap.get(couplet.id) || [];
+        const idx1 = couplet.link1 ? idToIndexMap.get(couplet.link1) : undefined;
+        const idx2 = couplet.link2 ? idToIndexMap.get(couplet.link2) : undefined;
 
-        // Process runtime reverse tracing routes
-        const inboundLinks: string[] = [];
-        key.forEach((searchNode, searchIdx) => {
-            if (searchNode.link1 === couplet.id) inboundLinks.push(`#${searchIdx + 1}a`);
-            if (searchNode.link2 === couplet.id) inboundLinks.push(`#${searchIdx + 1}b`);
-        });
+        const viewLink1 = idx1 !== undefined ? idx1 + 1 : '';
+        const viewLink2 = idx2 !== undefined ? idx2 + 1 : '';
 
         const cardErrors = activeDiagnostics.get(couplet.id) || [];
         const hasErrors = cardErrors.some(e => e.severity === 'error');
+
+        const card = document.createElement('div');
+        card.draggable = true;
+        card.setAttribute('data-id', couplet.id.toString());
 
         card.style.cssText = `
             border: ${isSelected ? '2px solid #007bff' : (hasErrors ? '2px dashed #ef4444' : '1px solid #cbd5e1')}; 
@@ -130,9 +154,6 @@ export function renderEditorCards(store: KeyStore, refreshAll: () => void) {
             position: relative;
             box-shadow: 0 1px 3px rgba(0,0,0,0.05);
         `;
-
-        const viewLink1 = couplet.link1 ? key.findIndex(c => c.id === couplet.link1) + 1 : '';
-        const viewLink2 = couplet.link2 ? key.findIndex(c => c.id === couplet.link2) + 1 : '';
 
         let warningBlockHtml = '';
         if (cardErrors.length > 0) {
@@ -182,72 +203,74 @@ export function renderEditorCards(store: KeyStore, refreshAll: () => void) {
             ${warningBlockHtml}
         `;
 
-        // Selection Toggle Event
         card.addEventListener('click', (e) => {
             const target = e.target as HTMLElement;
-            if (target.closest('input, textarea, button, select')) return; // Avoid breaking inner focus handles
+            if (target.closest('input, textarea, button, select')) return;
 
             const isMulti = e.ctrlKey || e.metaKey;
             store.toggleSelection(couplet.id, isMulti);
             refreshAll();
         });
 
-        // Decoupled Input Synchronizers (Maintains cursor positions perfectly)
+        // Track local input state variables inside the card loop instance scope
+        let typingSessionActive = false;
+
         card.querySelectorAll('.input-sync').forEach(element => {
             const el = element as HTMLInputElement | HTMLTextAreaElement;
             const field = el.getAttribute('data-field')!;
-            
-            // Track typing state to prevent flooding the history stack
-            let typingSessionActive = false;
 
-            // FIX 1: Prevent parent drag-and-drop mechanics from hijacking the mouse caret text placement
-            el.addEventListener('mousedown', () => { 
-                card.draggable = false; 
-            });
-            el.addEventListener('mouseenter', () => { 
-                card.draggable = false; 
-            });
-            el.addEventListener('mouseleave', () => { 
-                if (store.draggedId === null) card.draggable = true; 
+            el.addEventListener('mousedown', () => { card.draggable = false; });
+            el.addEventListener('mouseenter', () => { card.draggable = false; });
+            el.addEventListener('mouseleave', () => {
+                if (store.draggedId === null) card.draggable = true;
             });
 
             el.addEventListener('input', () => {
-                // FIX 2: Capture the pristine state BEFORE the very first keystroke modifies it
-                if (!typingSessionActive) {
+                store.setActiveCard(couplet.id);
+
+                // Safe Undo History registration check
+                if (!typingSessionActive && typeof store.commitHistoryCheckpoint === 'function') {
                     store.commitHistoryCheckpoint();
                     typingSessionActive = true;
                 }
 
                 let value: any = el.value;
-                
                 if (field === 'link1' || field === 'link2') {
                     const stepNum = parseLinkInput(value, key.length);
                     value = stepNum > 0 ? key[stepNum - 1].id : 0;
-                } else {
-                    value = el.value;
                 }
-                
+
                 store.updateCouplet(couplet.id, { [field]: value });
-                renderPrintView(store); // Instantly updates presentation engine side view only
+                renderPrintView(store);
             });
 
             el.addEventListener('blur', () => {
-                // Restore card drag privileges and reset typing session flags
                 card.draggable = true;
                 typingSessionActive = false;
-                // FIX: Defer refresh to the next event loop tick.
-                // This gives the browser time to fire the "click" event on your buttons
-                // BEFORE the DOM tree gets torn down and rebuilt.
+
                 setTimeout(() => {
-                    refreshAll(); // Full visual pass updates step labels & warning badges safely
+                    // Check focus context layout to avoid losing user position when tabbing fields
+                    if (!card.contains(document.activeElement)) {
+                        store.clearActiveCard();
+                        refreshAll();
+                    }
                 }, 0);
             });
         });
 
-        // Native Drag & Drop Implementation Pipeline
-        card.addEventListener('dragstart', () => { store.draggedId = couplet.id; card.style.opacity = '0.4'; });
-        card.addEventListener('dragend', () => { card.style.opacity = '1'; store.draggedId = null; });
+        // Native Drag-and-Drop Pipeline Actions
+        card.addEventListener('dragstart', () => {
+            store.startDragging(couplet.id);
+            card.style.opacity = '0.4';
+        });
+
+        card.addEventListener('dragend', () => {
+            card.style.opacity = '1';
+            store.stopDragging();
+        });
+
         card.addEventListener('dragover', (e) => e.preventDefault());
+
         card.addEventListener('drop', (e) => {
             e.preventDefault();
             if (store.draggedId === null || store.draggedId === couplet.id) return;
@@ -255,8 +278,12 @@ export function renderEditorCards(store: KeyStore, refreshAll: () => void) {
             refreshAll();
         });
 
-        container.appendChild(card);
+        fragment.appendChild(card);
     });
+
+    // Clear previous view contents and flush the fragment out to screen
+    container.innerHTML = '';
+    container.appendChild(fragment);
 }
 
 /**
@@ -322,26 +349,36 @@ function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         dlAnchor.click();
     });
 
-    // JSON Data Import Router Drivers
+    // JSON Data Import
     const hiddenInput = document.querySelector('#file-import-hidden') as HTMLInputElement;
-    document.querySelector('#cmd-trigger-import')?.addEventListener('click', () => hiddenInput?.click());
-    hiddenInput?.addEventListener('change', (e) => {
+    
+    document.querySelector('#cmd-trigger-import')?.addEventListener('click', () => {
+        hiddenInput?.click();
+    });
+
+    hiddenInput?.addEventListener('change', async (e) => {
         const file = (e.target as HTMLInputElement).files?.[0];
         if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            try {
-                const parsed = JSON.parse(event.target?.result as string);
-                if (Array.isArray(parsed)) {
-                    store.replaceKeyData(parsed);
-                    refreshAll();
-                    alert("Key data parsed and injected successfully!");
-                }
-            } catch {
-                alert("Error: Invalid schema JSON file structured parameters.");
+
+        try {
+            const fileText = await file.text();
+            const rawData = JSON.parse(fileText);
+
+            // Process transactional validation check inside the store layer
+            const importResult = store.importJsonData(rawData);
+
+            if (!importResult.success) {
+                alert(`Failed to import JSON schema:\n• ${importResult.errors.join('\n• ')}`);
+                hiddenInput.value = ''; // Reset input so they can retry after editing
+                return;
             }
-        };
-        reader.readAsText(file);
+            refreshAll();
+
+        } catch (err) {
+            alert("Malformed JSON structure: Unable to parse file stream.");
+        } finally {
+            if (hiddenInput) hiddenInput.value = '';
+        }
     });
 
     // Node Operations

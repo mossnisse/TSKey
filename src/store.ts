@@ -23,15 +23,18 @@ export class KeyStore {
     private state: AppState;
     private undoStack: string[] = [];
     private redoStack: string[] = [];
+    private readonly maxHistoryLimit: number;
 
     // Move transient UI states here so they don't pollute the history engine
     private selectedIds: number[] = [];
-    public draggedId: number | null = null;
+    private _draggedId: number | null = null;
+    private activeEditingCardId: number | null = null;
 
-    constructor(initialKey: Couplet[]) {
+    constructor(initialKey: Couplet[], maxHistoryLimit = 100) {
         this.state = {
             dichotomousKey: initialKey
         };
+        this.maxHistoryLimit = maxHistoryLimit;
     }
 
     // ==========================================
@@ -46,6 +49,31 @@ export class KeyStore {
         return this.selectedIds;
     }
 
+    public setActiveCard(id: number | null) {
+        if (this.activeEditingCardId !== id) {
+            if (id !== null) {
+                this.commitHistoryCheckpoint(); // Commit history right as a new card session starts
+            }
+            this.activeEditingCardId = id;
+        }
+    }
+
+    public clearActiveCard() {
+        this.activeEditingCardId = null;
+    }
+
+    public get draggedId(): number | null {
+        return this._draggedId;
+    }
+
+    public startDragging(id: number) {
+        this._draggedId = id;
+    }
+
+    public stopDragging() {
+        this._draggedId = null;
+    }
+
     // ==========================================
     // HISTORY ENGINE (Undo / Redo)
     // ==========================================
@@ -53,8 +81,13 @@ export class KeyStore {
     private saveCheckpoint() {
         // Clear forward history whenever a new mutation occurs
         this.redoStack = [];
+
         // Save a deep snapshot of the current state before modifying it
         this.undoStack.push(JSON.stringify(this.state));
+
+        if (this.undoStack.length > this.maxHistoryLimit) {
+            this.undoStack.shift();
+        }
     }
 
     public undo(): boolean {
@@ -62,6 +95,12 @@ export class KeyStore {
 
         // Push current state to redo stack
         this.redoStack.push(JSON.stringify(this.state));
+
+        // Redo stack protection: mirror the ceiling constraint for maximum safety
+        if (this.redoStack.length > this.maxHistoryLimit) {
+            this.redoStack.shift();
+        }
+
         // Restore previous state
         this.state = JSON.parse(this.undoStack.pop()!);
         return true;
@@ -72,6 +111,11 @@ export class KeyStore {
 
         // Push current state back to undo stack
         this.undoStack.push(JSON.stringify(this.state));
+
+        if (this.undoStack.length > this.maxHistoryLimit) {
+            this.undoStack.shift();
+        }
+
         // Restore next state
         this.state = JSON.parse(this.redoStack.pop()!);
         return true;
@@ -82,9 +126,6 @@ export class KeyStore {
     // ==========================================
 
     public updateCouplet(id: number, fields: Partial<Omit<Couplet, 'id'>>) {
-        // OPTIMIZATION: Don't flood history for every single keypress.
-        // The UI orchestrator will handle when to trigger saveCheckpoint() for typing,
-        // but for safety, we preserve data updates immutably here.
         this.state.dichotomousKey = this.state.dichotomousKey.map(c => {
             if (c.id === id) {
                 return { ...c, ...fields };
@@ -174,47 +215,68 @@ export class KeyStore {
         this.state.dichotomousKey = nextKey;
     }
 
-    /*
     public autoOrderBFS() {
         if (this.state.dichotomousKey.length === 0) return;
         this.saveCheckpoint();
 
+        const key = this.state.dichotomousKey;
+
+        // Calculate incoming counts (in-degree) for all nodes
         const incomingCounts = new Map<number, number>();
-        this.state.dichotomousKey.forEach(c => {
+        key.forEach(c => {
             if (c.link1) incomingCounts.set(c.link1, (incomingCounts.get(c.link1) || 0) + 1);
             if (c.link2) incomingCounts.set(c.link2, (incomingCounts.get(c.link2) || 0) + 1);
         });
 
-        const root = this.state.dichotomousKey.find(c => !incomingCounts.has(c.id));
-        const rootId = root ? root.id : this.state.dichotomousKey[0].id;
+        // Identify all structural roots (nodes with 0 incoming links)
+        // We maintain their relative order as they currently exist in the array
+        const roots = key.filter(c => !incomingCounts.has(c.id));
+
+        // Fallback: If the graph is a pure closed loop and no root is found,
+        // use the first card as a seed root so the algorithm doesn't fail.
+        if (roots.length === 0) {
+            roots.push(key[0]);
+        }
 
         const visited = new Set<number>();
         const orderedCouplets: Couplet[] = [];
-        const queue: number[] = [rootId];
 
-        while (queue.length > 0) {
-            const currentId = queue.shift()!;
-            if (currentId === 0 || visited.has(currentId)) continue;
+        // Process each structural root sequentially to prevent tree-interleaving
+        roots.forEach(root => {
+            if (visited.has(root.id)) return;
 
-            const couplet = this.state.dichotomousKey.find(c => c.id === currentId);
-            if (!couplet) continue;
+            const queue: number[] = [root.id];
 
-            visited.add(currentId);
-            orderedCouplets.push(couplet);
+            while (queue.length > 0) {
+                const currentId = queue.shift()!;
+                if (currentId === 0 || visited.has(currentId)) continue;
 
-            if (couplet.link1 && couplet.link1 !== 0 && !visited.has(couplet.link1)) queue.push(couplet.link1);
-            if (couplet.link2 && couplet.link2 !== 0 && !visited.has(couplet.link2)) queue.push(couplet.link2);
-        }
+                const couplet = key.find(c => c.id === currentId);
+                if (!couplet) continue;
 
-        // Clean sweep orphans so data isn't dropped
-        this.state.dichotomousKey.forEach(c => {
+                visited.add(currentId);
+                orderedCouplets.push(couplet);
+
+                // Add children to the queue for this specific root's tree
+                if (couplet.link1 && couplet.link1 !== 0 && !visited.has(couplet.link1)) {
+                    queue.push(couplet.link1);
+                }
+                if (couplet.link2 && couplet.link2 !== 0 && !visited.has(couplet.link2)) {
+                    queue.push(couplet.link2);
+                }
+            }
+        });
+
+        // Clean sweep: Catches completely cyclical islands 
+        // (nodes that link to each other but have no path back to any 0-in-degree root)
+        key.forEach(c => {
             if (!visited.has(c.id)) {
                 const orphanQueue = [c.id];
                 while (orphanQueue.length > 0) {
                     const orphanId = orphanQueue.shift()!;
                     if (orphanId === 0 || visited.has(orphanId)) continue;
 
-                    const orphanCouplet = this.state.dichotomousKey.find(x => x.id === orphanId);
+                    const orphanCouplet = key.find(x => x.id === orphanId);
                     if (!orphanCouplet) continue;
 
                     visited.add(orphanId);
@@ -226,56 +288,7 @@ export class KeyStore {
             }
         });
 
-        this.state.dichotomousKey = orderedCouplets;
-    }*/
-
-    public autoOrderBFS() {
-        if (this.state.dichotomousKey.length === 0) return;
-        this.saveCheckpoint();
-
-        // Fix: Root is authoritatively the first card on the canvas
-        const rootId = this.state.dichotomousKey[0].id;
-
-        const visited = new Set<number>();
-        const orderedCouplets: Couplet[] = [];
-        const queue: number[] = [rootId];
-
-        // Traverse the primary tree starting from Step #1
-        while (queue.length > 0) {
-            const currentId = queue.shift()!;
-            if (currentId === 0 || visited.has(currentId)) continue;
-
-            const couplet = this.state.dichotomousKey.find(c => c.id === currentId);
-            if (!couplet) continue;
-
-            visited.add(currentId);
-            orderedCouplets.push(couplet);
-
-            if (couplet.link1 && couplet.link1 !== 0 && !visited.has(couplet.link1)) queue.push(couplet.link1);
-            if (couplet.link2 && couplet.link2 !== 0 && !visited.has(couplet.link2)) queue.push(couplet.link2);
-        }
-
-        // Clean sweep: Safely catches any temporary secondary roots, 
-        // orphaned clusters, or floating nodes, appending them to the bottom.
-        this.state.dichotomousKey.forEach(c => {
-            if (!visited.has(c.id)) {
-                const orphanQueue = [c.id];
-                while (orphanQueue.length > 0) {
-                    const orphanId = orphanQueue.shift()!;
-                    if (orphanId === 0 || visited.has(orphanId)) continue;
-
-                    const orphanCouplet = this.state.dichotomousKey.find(x => x.id === orphanId);
-                    if (!orphanCouplet) continue;
-
-                    visited.add(orphanId);
-                    orderedCouplets.push(orphanCouplet);
-
-                    if (orphanCouplet.link1 && !visited.has(orphanCouplet.link1)) orphanQueue.push(orphanCouplet.link1);
-                    if (orphanCouplet.link2 && !visited.has(orphanCouplet.link2)) orphanQueue.push(orphanCouplet.link2);
-                }
-            }
-        });
-
+        // Commit the perfectly grouped layout
         this.state.dichotomousKey = orderedCouplets;
     }
 
@@ -283,6 +296,65 @@ export class KeyStore {
         this.saveCheckpoint();
         this.state.dichotomousKey = newData;
         this.selectedIds = [];
+    }
+
+    /**
+     * Validates external JSON data shapes safely before committing to the state tree.
+     * Blocks corruption entirely if basic structural parameters are breached.
+     */
+    public importJsonData(rawData: unknown): { success: boolean; errors: string[] } {
+        const errors: string[] = [];
+
+        // Verify root structure type
+        if (!rawData || !Array.isArray(rawData)) {
+            return { success: false, errors: ['Invalid file format: Imported root data must be a JSON array.'] };
+        }
+
+        const validatedData: Couplet[] = [];
+        const seenIds = new Set<number>();
+
+        rawData.forEach((item: any, index) => {
+            const structuralLocation = `Item at index ${index + 1}`;
+
+            // 2. Strict ID verification (Lookups will shatter if ID properties fail)
+            if (item.id === undefined || item.id === null) {
+                errors.push(`${structuralLocation} is missing its mandatory 'id' parameter.`);
+            } else if (typeof item.id !== 'number' || isNaN(item.id)) {
+                errors.push(`${structuralLocation} has an invalid 'id' type (must be a number).`);
+            } else if (seenIds.has(item.id)) {
+                errors.push(`Data Integrity Breach: Duplicate internal 'id' (${item.id}) found at index ${index + 1}.`);
+            } else {
+                seenIds.add(item.id);
+            }
+
+            // Graceful type coercion & sanitation for standard fields
+            // Rather than instantly crashing the app for a missing description string,
+            // we sanitize individual fields safely to empty parameters.
+            const sanitizedCouplet: Couplet = {
+                id: Number(item.id) || 0,
+                alt1: typeof item.alt1 === 'string' ? item.alt1 : '',
+                alt2: typeof item.alt2 === 'string' ? item.alt2 : '',
+                link1: typeof item.link1 === 'number' && !isNaN(item.link1) ? item.link1 : 0,
+                link2: typeof item.link2 === 'number' && !isNaN(item.link2) ? item.link2 : 0,
+                taxa1: typeof item.taxa1 === 'string' ? item.taxa1 : '',
+                taxa2: typeof item.taxa2 === 'string' ? item.taxa2 : ''
+            };
+
+            validatedData.push(sanitizedCouplet);
+        });
+
+        // Critical Gatekeeper Check
+        // If any structural issues were discovered, abort state changes completely
+        if (errors.length > 0) {
+            return { success: false, errors };
+        }
+
+        // Safe State Transition
+        this.saveCheckpoint(); //
+        this.state.dichotomousKey = validatedData; //
+        this.selectedIds = []; //
+
+        return { success: true, errors: [] };
     }
 
     // ==========================================
@@ -313,6 +385,15 @@ export class KeyStore {
         const diagnostics = new Map<number, KeyValidationError[]>();
         const key = this.state.dichotomousKey;
 
+        // Pre-build instant lookups in O(N) time
+        const idMap = new Map<number, Couplet>();
+        const idToIndexMap = new Map<number, number>();
+        key.forEach((c, index) => {
+            idMap.set(c.id, c);
+            idToIndexMap.set(c.id, index);
+        });
+
+        // Reachability check using O(1) lookups
         const reachableNodes = new Set<number>();
         if (key.length > 0) {
             const processQueue = [key[0].id];
@@ -320,7 +401,7 @@ export class KeyStore {
                 const activeId = processQueue.shift()!;
                 if (!reachableNodes.has(activeId)) {
                     reachableNodes.add(activeId);
-                    const match = key.find(c => c.id === activeId);
+                    const match = idMap.get(activeId); // O(1) instead of .find()
                     if (match) {
                         if (match.link1) processQueue.push(match.link1);
                         if (match.link2) processQueue.push(match.link2);
@@ -329,6 +410,7 @@ export class KeyStore {
             }
         }
 
+        // Parent Map grouping
         const inboundParentMap = new Map<number, Set<number>>();
         key.forEach(c => {
             if (c.link1) {
@@ -345,15 +427,15 @@ export class KeyStore {
             const issues: KeyValidationError[] = [];
 
             if (index > 0 && !reachableNodes.has(c.id)) {
-                issues.push({
-                    severity: 'warning',
-                    message: 'Orphaned: This step is unreachable from Step #1.'
-                });
+                issues.push({ severity: 'warning', message: 'Orphaned: This step is unreachable from Step #1.' });
             }
             if (c.link1 === c.id) issues.push({ severity: 'error', message: 'Choice A loops directly into its own card.' });
             if (c.link2 === c.id) issues.push({ severity: 'error', message: 'Choice B loops directly into its own card.' });
-            if (c.link1 && !key.some(x => x.id === c.link1)) issues.push({ severity: 'error', message: 'Choice A points to an invalid or deleted step.' });
-            if (c.link2 && !key.some(x => x.id === c.link2)) issues.push({ severity: 'error', message: 'Choice B points to an invalid or deleted step.' });
+
+            if (c.link1 && !idMap.has(c.link1)) issues.push({ severity: 'error', message: 'Choice A points to an invalid or deleted step.' });
+            if (c.link2 && !idMap.has(c.link2)) issues.push({ severity: 'error', message: 'Choice B points to an invalid or deleted step.' });
+            if (c.link1 === c.id) issues.push({ severity: 'error', message: 'Choice A loops directly into its own card.' });
+            if (c.link2 === c.id) issues.push({ severity: 'error', message: 'Choice B loops directly into its own card.' });
             if (!c.taxa1 && !c.link1) issues.push({ severity: 'warning', message: 'Choice A is incomplete. Assign a Taxa or destination step.' });
             if (!c.taxa2 && !c.link2) issues.push({ severity: 'warning', message: 'Choice B is incomplete. Assign a Taxa or destination step.' });
             if (c.taxa1 && c.link1) issues.push({ severity: 'warning', message: 'Choice A contains both Taxa and a Goto jump (Hint Mode activated).' });
@@ -363,12 +445,14 @@ export class KeyStore {
             if (uniqueParents && uniqueParents.size > 1) {
                 const parentStepLabels: string[] = [];
                 uniqueParents.forEach(parentId => {
-                    const parentIdx = key.findIndex(x => x.id === parentId);
-                    if (parentIdx !== -1) parentStepLabels.push(`#${parentIdx + 1}`);
+                    const parentIdx = idToIndexMap.get(parentId); // O(1) instead of .findIndex()
+                    if (parentIdx !== undefined && parentIdx !== -1) {
+                        parentStepLabels.push(`#${parentIdx + 1}`);
+                    }
                 });
                 issues.push({
                     severity: 'warning',
-                    message: `Convergence: Multiple steps (${parentStepLabels.join(', ')}) link here. Keys should ideally have only one entry path.`
+                    message: `Convergence: Multiple steps (${parentStepLabels.join(', ')}) link here.`
                 });
             }
 
