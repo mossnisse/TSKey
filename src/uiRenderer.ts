@@ -38,8 +38,7 @@ function parseLinkInput(val: string, maxItems: number): number {
 export function initializeShell(appDiv: HTMLDivElement, store: KeyStore, refreshAll: () => void) {
     appDiv.innerHTML = `
     <div style="font-family: sans-serif; padding: 20px; max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px;">
-      
-      <div style="padding: 12px; background: #f8f9fa; border-radius: 8px; display: flex; gap: 10px; align-items: center; border: 1px solid #e2e8f0; flex-wrap: wrap;">
+      <div style="position: sticky; top: 0; z-index: 100; background: #ffffff; padding: 14px 0; margin-bottom: 24px; border-bottom: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); display: flex; justify-content: space-between; align-items: center; gap: 16px;">
         <button id="cmd-undo" style="padding: 6px 12px; cursor: pointer;">↩️ Undo</button>
         <button id="cmd-redo" style="padding: 6px 12px; cursor: pointer;">↪️ Redo</button>
         <span style="border-left: 1px solid #ccc; height: 20px; margin: 0 5px;"></span>
@@ -351,7 +350,7 @@ function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
     // JSON Data Import
     const hiddenInput = document.querySelector('#file-import-hidden') as HTMLInputElement;
-    
+
     document.querySelector('#cmd-trigger-import')?.addEventListener('click', () => {
         hiddenInput?.click();
     });

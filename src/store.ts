@@ -1,5 +1,4 @@
 // store.ts
-
 export interface Couplet {
     id: number;    // Permanent internal unique ID
     alt1: string;
@@ -21,19 +20,18 @@ interface AppState {
 
 export class KeyStore {
     private state: AppState;
-    private undoStack: string[] = [];
-    private redoStack: string[] = [];
+
+    // FIX: Change stack types from string[] to AppState[]
+    private undoStack: AppState[] = [];
+    private redoStack: AppState[] = [];
     private readonly maxHistoryLimit: number;
 
-    // Move transient UI states here so they don't pollute the history engine
     private selectedIds: number[] = [];
     private _draggedId: number | null = null;
     private activeEditingCardId: number | null = null;
 
     constructor(initialKey: Couplet[], maxHistoryLimit = 100) {
-        this.state = {
-            dichotomousKey: initialKey
-        };
+        this.state = { dichotomousKey: initialKey };
         this.maxHistoryLimit = maxHistoryLimit;
     }
 
@@ -79,11 +77,10 @@ export class KeyStore {
     // ==========================================
 
     private saveCheckpoint() {
-        // Clear forward history whenever a new mutation occurs
         this.redoStack = [];
 
-        // Save a deep snapshot of the current state before modifying it
-        this.undoStack.push(JSON.stringify(this.state));
+        // Native deep-clone replaces JSON stringification
+        this.undoStack.push(structuredClone(this.state));
 
         if (this.undoStack.length > this.maxHistoryLimit) {
             this.undoStack.shift();
@@ -93,31 +90,27 @@ export class KeyStore {
     public undo(): boolean {
         if (this.undoStack.length === 0) return false;
 
-        // Push current state to redo stack
-        this.redoStack.push(JSON.stringify(this.state));
+        this.redoStack.push(structuredClone(this.state));
 
-        // Redo stack protection: mirror the ceiling constraint for maximum safety
         if (this.redoStack.length > this.maxHistoryLimit) {
             this.redoStack.shift();
         }
 
-        // Restore previous state
-        this.state = JSON.parse(this.undoStack.pop()!);
+        // Clean, type-safe assignment with no JSON.parse() needed
+        this.state = this.undoStack.pop()!;
         return true;
     }
 
     public redo(): boolean {
         if (this.redoStack.length === 0) return false;
 
-        // Push current state back to undo stack
-        this.undoStack.push(JSON.stringify(this.state));
+        this.undoStack.push(structuredClone(this.state));
 
         if (this.undoStack.length > this.maxHistoryLimit) {
             this.undoStack.shift();
         }
 
-        // Restore next state
-        this.state = JSON.parse(this.redoStack.pop()!);
+        this.state = this.redoStack.pop()!;
         return true;
     }
 
@@ -316,7 +309,7 @@ export class KeyStore {
         rawData.forEach((item: any, index) => {
             const structuralLocation = `Item at index ${index + 1}`;
 
-            // 2. Strict ID verification (Lookups will shatter if ID properties fail)
+            // Strict ID verification (Lookups will shatter if ID properties fail)
             if (item.id === undefined || item.id === null) {
                 errors.push(`${structuralLocation} is missing its mandatory 'id' parameter.`);
             } else if (typeof item.id !== 'number' || isNaN(item.id)) {

@@ -1,5 +1,4 @@
 // main.ts
-
 import { KeyStore } from './store.ts';
 import { initializeShell, renderEditorCards, renderPrintView } from './uiRenderer.ts';
 
