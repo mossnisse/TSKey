@@ -1,3 +1,4 @@
+// uiRenderer.ts
 import { KeyStore, type Couplet } from './store.ts';
 
 // ==========================================
@@ -317,11 +318,43 @@ function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     document.querySelector('#cmd-redo')?.addEventListener('click', () => { if (store.redo()) refreshAll(); });
 
     document.querySelector('#cmd-save')?.addEventListener('click', () => {
-        localStorage.setItem('dichotomous_key', JSON.stringify(store.getKey()));
+    try {
+        const currentData = store.getKey();
+
+        // Structural Validation Gate
+        if (!Array.isArray(currentData) || currentData.length === 0) {
+            throw new Error("Cannot save an empty or corrupted data structure.");
+        }
+
+        // Attempt serialization and storage write
+        const serializedData = JSON.stringify(currentData);
+        localStorage.setItem('dichotomous_key', serializedData);
+
+        // Double-check verify step (Ensure disk matches memory)
+        const verifyData = localStorage.getItem('dichotomous_key');
+        if (verifyData !== serializedData) {
+            throw new Error("Disk verification failed. Storage write mismatch.");
+        }
+
+        // Success Pipeline
         store.markSaved();
-        alert("Saved successfully to local engine database!");
+        alert("💾 Saved successfully to local engine database!");
         refreshAll();
-    });
+
+    } catch (error: any) {
+        // Fail-safe Error Catching
+        console.error("Save Operation Failed: ", error);
+        
+        let userMessage = "Failed to save data. An unknown error occurred.";
+        if (error.name === 'QuotaExceededError' || error.code === 22) {
+            userMessage = "⚠️ Save Failed: Browser LocalStorage is completely full! Please free up space or export your key as a JSON file.";
+        } else if (error.message) {
+            userMessage = `⚠️ Save Failed: ${error.message}`;
+        }
+
+        alert(userMessage);
+    }
+});
 
     document.querySelector('#cmd-export-json')?.addEventListener('click', () => {
         const blob = new Blob([JSON.stringify(store.getKey(), null, 2)], { type: 'application/json' });

@@ -50,13 +50,15 @@ export class KeyStore {
     }
 
     public setActiveCard(id: number | null) {
-        if (this.activeEditingCardId !== id) {
-            this.activeEditingCardId = id;
-        }
+        this.activeEditingCardId = id;
     }
 
     public clearActiveCard() {
         this.activeEditingCardId = null;
+    }
+
+    public getActiveCardId(): number | null {
+        return this.activeEditingCardId;
     }
 
     public get draggedId(): number | null {
@@ -256,23 +258,27 @@ export class KeyStore {
         this.selectedIds = [];
     }
 
-    public reorderCouplets(draggedId: number, targetId: number) {
-        if (draggedId === targetId) return;
+    public reorderCouplets(srcId: number, targetId: number): boolean {
+        // Locate the item indices safely
+        const arr = [...this.state.dichotomousKey];
+        const srcIdx = arr.findIndex(c => c.id === srcId);
+        const targetIdx = arr.findIndex(c => c.id === targetId);
 
-        this.saveCheckpoint();
+        // Defensive Guard: If either ID vanished, abort immediately 
+        if (srcIdx === -1 || targetIdx === -1) {
+            console.warn(`Aborted reordering: srcIdx (${srcIdx}) or targetIdx (${targetIdx}) was invalid.`);
+            return false;
+        }
 
-        // Create a shallow copy of the array structure
-        const nextKey = [...this.state.dichotomousKey];
+        // Commit history state before mutating data
+        this.commitHistoryCheckpoint();
 
-        const draggedIndex = nextKey.findIndex(c => c.id === draggedId);
-        const targetIndex = nextKey.findIndex(c => c.id === targetId);
+        // Safely perform the swap
+        const [movedItem] = arr.splice(srcIdx, 1);
+        arr.splice(targetIdx, 0, movedItem);
 
-        // Safely manipulate the copy
-        const [removed] = nextKey.splice(draggedIndex, 1);
-        nextKey.splice(targetIndex, 0, removed);
-
-        // Assign the entirely new array reference
-        this.state.dichotomousKey = nextKey;
+        this.state.dichotomousKey = arr;
+        return true;
     }
 
     public autoOrderBFS() {
@@ -445,7 +451,7 @@ export class KeyStore {
         const diagnostics = new Map<number, KeyValidationError[]>();
         const key = this.state.dichotomousKey;
 
-        // Pre-build instant lookups in O(N) time
+        // Pre-build lookups
         const idMap = new Map<number, Couplet>();
         const idToIndexMap = new Map<number, number>();
         key.forEach((c, index) => {
@@ -453,22 +459,9 @@ export class KeyStore {
             idToIndexMap.set(c.id, index);
         });
 
-        // Reachability check using O(1) lookups
-        const reachableNodes = new Set<number>();
-        if (key.length > 0) {
-            const processQueue = [key[0].id];
-            while (processQueue.length > 0) {
-                const activeId = processQueue.shift()!;
-                if (!reachableNodes.has(activeId)) {
-                    reachableNodes.add(activeId);
-                    const match = idMap.get(activeId); // O(1) instead of .find()
-                    if (match) {
-                        if (match.link1) processQueue.push(match.link1);
-                        if (match.link2) processQueue.push(match.link2);
-                    }
-                }
-            }
-        }
+        // ─── REFACTORED TO USE EXSTING TRAVERSAL HELPER ─────────────────────
+        const reachableNodes = this.getReachableNodes();
+        // ────────────────────────────────────────────────────────────────────
 
         // Parent Map grouping
         const inboundParentMap = new Map<number, Set<number>>();
@@ -486,6 +479,7 @@ export class KeyStore {
         key.forEach((c, index) => {
             const issues: KeyValidationError[] = [];
 
+            // Warns users if a card isn't picked up by the BFS traversal queue
             if (index > 0 && !reachableNodes.has(c.id)) {
                 issues.push({ severity: 'warning', message: 'Orphaned: This step is unreachable from Step #1.' });
             }
@@ -502,7 +496,7 @@ export class KeyStore {
             if (uniqueParents && uniqueParents.size > 1) {
                 const parentStepLabels: string[] = [];
                 uniqueParents.forEach(parentId => {
-                    const parentIdx = idToIndexMap.get(parentId); // O(1) instead of .findIndex()
+                    const parentIdx = idToIndexMap.get(parentId);
                     if (parentIdx !== undefined && parentIdx !== -1) {
                         parentStepLabels.push(`#${parentIdx + 1}`);
                     }
