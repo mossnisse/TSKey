@@ -1,8 +1,7 @@
-// main.ts
+import './style.css'; // INJECT GLOBAL PROJECT STYLES
 import { KeyStore, type Couplet  } from './store.ts';
 import { initializeShell, renderEditorCards, renderPrintView } from './uiRenderer.ts';
 
-// Initialize state store from storage or fallbacks
 const fallbackData = [
     { id: 101, alt1: "Has feathers", alt2: "Lacks feathers", link1: 0, link2: 102, taxa1: "Bird", taxa2: "" },
     { id: 102, alt1: "Has fur", alt2: "Scales or bare skin", link1: 0, link2: 103, taxa1: "Mammal", taxa2: "" },
@@ -20,7 +19,6 @@ try {
 const store = new KeyStore(initialData);
 const appContainer = document.querySelector<HTMLDivElement>('#app')!;
 
-// Define the comprehensive visual refresh handler loops
 const refreshAll = () => {
     renderEditorCards(store, refreshAll);
     renderPrintView(store);
@@ -29,21 +27,19 @@ const refreshAll = () => {
     if (saveBtn) {
         if (store.hasUnsavedChanges()) {
             saveBtn.innerHTML = '💾 Save Memory *';
-            saveBtn.style.background = '#eab308'; // Warning amber/yellow color
+            saveBtn.classList.add('is-unsaved'); // Activates amber alerting state via CSS
         } else {
             saveBtn.innerHTML = '💾 Save Memory';
-            saveBtn.style.background = '#22c55e'; // Clean success green color
+            saveBtn.classList.remove('is-unsaved'); // Resets to baseline operational green
         }
     }
 };
 
 window.addEventListener('beforeunload', (event) => {
     if (store.hasUnsavedChanges()) {
-        // Triggers the standard system dialogue box 
         event.preventDefault();
     }
 });
 
-// Bootstrap application runtime instance
 initializeShell(appContainer, store, refreshAll);
 refreshAll();

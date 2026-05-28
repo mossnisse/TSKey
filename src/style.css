@@ -1,0 +1,350 @@
+/* ==========================================
+   GLOBAL & CORE LAYOUT WRAPPERS
+   ========================================== */
+.app-shell {
+  font-family: sans-serif;
+  padding: 20px;
+  max-width: 1400px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.main-layout {
+  display: flex;
+  gap: 20px;
+  align-items: start;
+}
+
+.editor-column {
+  flex: 1.2;
+}
+
+.heading-editor {
+  margin-top: 0;
+  color: #1e293b;
+}
+
+/* ==========================================
+   STICKY APPLICATION TOOLBAR
+   ========================================== */
+.sticky-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: #ffffff;
+  padding: 14px 0;
+  margin-bottom: 24px;
+  border-bottom: 1px solid #e2e8f0;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.toolbar-divider {
+  border-left: 1px solid #ccc;
+  height: 20px;
+  margin: 0 5px;
+}
+
+.toolbar-spacer {
+  flex-grow: 1;
+}
+
+/* ==========================================
+   UI CONTROLS & BUTTON MATRICES
+   ========================================== */
+.btn {
+  padding: 6px 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 14px;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.btn-secondary {
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  color: #334155;
+}
+.btn-secondary:hover { background: #e2e8f0; }
+
+.btn-primary {
+  background: #4f46e5;
+  color: white;
+  border: none;
+}
+.btn-primary:hover { background: #4338ca; }
+
+.btn-danger {
+  background: #dc3545;
+  color: white;
+  border: none;
+}
+.btn-danger:hover { background: #bd2130; }
+
+.btn-outline {
+  background: transparent;
+  border: 1px solid #cbd5e1;
+  color: #475569;
+}
+.btn-outline:hover { background: #f8fafc; }
+
+.btn-add-block {
+  margin-top: 15px;
+  padding: 12px 20px;
+  cursor: pointer;
+  background: #007bff;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-weight: bold;
+  width: 100%;
+  transition: background-color 0.15s ease;
+}
+.btn-add-block:hover { background: #0056b3; }
+
+/* Dynamic Memory State Engine Button classes */
+.btn-save {
+  padding: 6px 12px;
+  cursor: pointer;
+  font-weight: bold;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  background: #22c55e; /* Clean success green */
+}
+.btn-save.is-unsaved {
+  background: #eab308; /* Warning amber/yellow */
+}
+
+.select-input {
+  padding: 6px;
+  border-radius: 4px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+}
+
+/* ==========================================
+   NODE CANVAS & CARD STRUCTURAL STATES
+   ========================================== */
+.key-card {
+  border: 1px solid #cbd5e1;
+  padding: 16px;
+  margin-bottom: 16px;
+  border-radius: 8px;
+  background: #ffffff;
+  cursor: grab;
+  position: relative;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+.key-card:hover {
+  border-color: #94a3b8;
+}
+
+/* State Modifiers managed by JS classList API */
+.key-card.is-selected {
+  border: 2px solid #007bff;
+  background: #f0f7ff;
+}
+.key-card.has-errors {
+  border: 2px dashed #ef4444;
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+  user-select: none;
+}
+
+.card-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.card-title {
+  margin: 0;
+  color: #1e293b;
+  font-size: 15px;
+}
+
+.drag-handle {
+  font-size: 18px;
+  color: #94a3b8;
+  cursor: grab;
+}
+
+/* Badges */
+.badge {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+.badge-linked {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+.badge-isolated {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+/* Card Fields layout */
+.card-row {
+  margin-bottom: 14px;
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.card-textarea {
+  flex: 1;
+  min-height: 50px;
+  font-family: sans-serif;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  resize: vertical;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.card-meta-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  justify-content: center;
+  font-size: 12px;
+  min-width: 220px;
+  border-left: 1px solid #e2e8f0;
+  padding-left: 12px;
+  background: #fafafa;
+  border-radius: 0 6px 6px 0;
+}
+
+.meta-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.input-taxa {
+  width: 110px;
+  padding: 3px 6px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+}
+
+.input-goto {
+  width: 55px;
+  padding: 3px 6px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+}
+
+/* Diagnostic Error Blocks */
+.warning-block {
+  margin-top: 10px;
+  padding: 8px;
+  background: #fff7ed;
+  border-left: 3px solid #f97316;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #c2410c;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.error-text { color: #dc2626; }
+.warning-text { color: #c2410c; }
+
+/* ==========================================
+   PASSIVE PUBLICATION PRINT VIEW PANELS
+   ========================================== */
+.print-column {
+  flex: 0.8;
+  padding: 25px;
+  border-radius: 8px;
+  border: 1px solid #000;
+  position: sticky;
+  top: 20px;
+  max-height: 85vh;
+  overflow-y: auto;
+  background: #fff;
+  color: #000;
+}
+
+.hr-print {
+  border: 0;
+  border-top: 1px solid #000;
+  margin-bottom: 20px;
+}
+
+.print-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 10px;
+  align-items: end;
+  color: #000;
+  line-height: 1.6;
+  font-family: serif;
+  font-size: 15px;
+}
+
+.print-step-num {
+  font-weight: bold;
+  align-self: start;
+  color: #000;
+}
+
+.print-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  width: 100%;
+}
+
+.print-text {
+  flex-shrink: 1;
+  text-align: left;
+  white-space: pre-wrap;
+}
+
+.print-dots {
+  flex-grow: 1;
+  border-bottom: 1px dotted #000;
+  margin: 0 8px 4px 8px;
+}
+
+.print-dest {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.print-dest-strong {
+  font-weight: bold;
+}
+.print-dest-taxon {
+  font-weight: bold;
+  font-style: italic;
+}
+
+.print-dash {
+  font-weight: bold;
+  text-align: center;
+  align-self: start;
+  color: #000;
+}
+
+.print-spacer {
+  grid-column: span 2;
+  height: 8px;
+}

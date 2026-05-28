@@ -1,4 +1,3 @@
-// uiRenderer.ts
 import { KeyStore, type Couplet } from './store.ts';
 
 // ==========================================
@@ -24,7 +23,7 @@ function getStepNumberById(key: readonly Couplet[], targetId: number): string {
 function parseLinkInput(val: string, maxItems: number): number {
     const num = parseInt(val) || 0;
     if (num <= 0 || num > maxItems) return 0;
-    return num; // Returns the intended user-facing step number temporary slot
+    return num;
 }
 
 // ==========================================
@@ -37,26 +36,26 @@ function parseLinkInput(val: string, maxItems: number): number {
  */
 export function initializeShell(appDiv: HTMLDivElement, store: KeyStore, refreshAll: () => void) {
     appDiv.innerHTML = `
-    <div style="font-family: sans-serif; padding: 20px; max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px;">
-      <div style="position: sticky; top: 0; z-index: 100; background: #ffffff; padding: 14px 0; margin-bottom: 24px; border-bottom: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); display: flex; justify-content: space-between; align-items: center; gap: 16px;">
-        <button id="cmd-undo" style="padding: 6px 12px; cursor: pointer;">↩️ Undo</button>
-        <button id="cmd-redo" style="padding: 6px 12px; cursor: pointer;">↪️ Redo</button>
-        <span style="border-left: 1px solid #ccc; height: 20px; margin: 0 5px;"></span>
+    <div class="app-shell">
+      <div class="sticky-toolbar">
+        <button id="cmd-undo" class="btn btn-secondary">↩️ Undo</button>
+        <button id="cmd-redo" class="btn btn-secondary">↪️ Redo</button>
+        <span class="toolbar-divider"></span>
         
-        <button id="cmd-save" style="padding: 6px 12px; cursor: pointer; font-weight: bold; background:#22c55e; color:white; border:none; border-radius:4px;">💾 Save Memory</button>
-        <button id="cmd-export-json" style="padding: 6px 12px; cursor: pointer;">📥 Export JSON</button>
-        <button id="cmd-trigger-import" style="padding: 6px 12px; cursor: pointer;">📤 Import JSON</button>
+        <button id="cmd-save" class="btn-save">💾 Save Memory</button>
+        <button id="cmd-export-json" class="btn btn-secondary">📥 Export JSON</button>
+        <button id="cmd-trigger-import" class="btn btn-secondary">📤 Import JSON</button>
         <input type="file" id="file-import-hidden" accept=".json" style="display: none;" />
         
-        <span style="border-left: 1px solid #ccc; height: 20px; margin: 0 5px;"></span>
+        <span class="toolbar-divider"></span>
         
-        <button id="cmd-reorder" style="padding: 6px 12px; cursor: pointer; background: #4f46e5; color: white; border: none; border-radius: 4px;">🔄 Auto-Order Couplets</button>
-        <button id="cmd-delete-selected" style="padding: 6px 12px; cursor: pointer; color: white; background: #dc3545; border: none; border-radius: 4px;">🗑️ Delete Selected</button>
-        <button id="cmd-clear-selection" style="padding: 6px 12px; cursor: pointer; background: transparent; border: 1px solid #ccc; border-radius: 4px;">Clear Selection</button>
+        <button id="cmd-reorder" class="btn btn-primary">🔄 Auto-Order Couplets</button>
+        <button id="cmd-delete-selected" class="btn btn-danger">🗑️ Delete Selected</button>
+        <button id="cmd-clear-selection" class="btn btn-outline">Clear Selection</button>
         
-        <span style="flex-grow: 1;"></span>
+        <span class="toolbar-spacer"></span>
         
-        <select id="export-format-selector" style="padding: 6px; border-radius: 4px; border: 1px solid #ccc;">
+        <select id="export-format-selector" class="select-input">
           <option value="">-- Export Target Format --</option>
           <option value="text">Plain Text (.txt)</option>
           <option value="html">Structured HTML/CSS</option>
@@ -65,17 +64,17 @@ export function initializeShell(appDiv: HTMLDivElement, store: KeyStore, refresh
         </select>
       </div>
     
-      <div style="display: flex; gap: 20px; align-items: start;">
-        <div style="flex: 1.2;">
-          <h2 style="margin-top: 0; color: #1e293b;">Key Node Canvas</h2>
+      <div class="main-layout">
+        <div class="editor-column">
+          <h2 class="heading-editor">Key Node Canvas</h2>
           <div id="editor-container"></div>
-          <button id="add-couplet-btn" style="margin-top: 15px; padding: 12px 20px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 6px; font-weight: bold; width: 100%;">+ Add New Step Block</button>
+          <button id="add-couplet-btn" class="btn-add-block">+ Add New Step Block</button>
         </div>
 
-        <div style="flex: 0.8; padding: 25px; border-radius: 8px; border: 1px solid #000; position: sticky; top: 20px; max-height: 85vh; overflow-y: auto; background: #fff; color: #000;">
-          <h2 style="margin-top: 0; color: #000;">Live Publication Render</h2>
-          <hr style="border: 0; border-top: 1px solid #000; margin-bottom: 20px;" />
-          <div id="print-view-container" style="line-height: 1.8; font-family: serif; font-size: 15px; color: #000;"></div>
+        <div class="print-column">
+          <h2>Live Publication Render</h2>
+          <hr class="hr-print" />
+          <div id="print-view-container" class="print-grid"></div>
         </div>
       </div>
     </div>
@@ -96,14 +95,12 @@ export function renderEditorCards(store: KeyStore, refreshAll: () => void) {
     const selectedIds = store.getSelectedIds();
     const activeDiagnostics = store.runDiagnostics();
 
-    // Maintain toolbar context (updates the deletion count badge on your buttons)
     const deleteBtn = document.querySelector('#cmd-delete-selected') as HTMLButtonElement;
     if (deleteBtn) deleteBtn.textContent = `🗑️ Delete Selected (${selectedIds.length})`;
 
-    // Pre-map tracking tables in a single linear O(N) pass
     const idToIndexMap = new Map<number, number>();
     const inboundLinksMap = new Map<number, string[]>();
-    const selectedIdsSet = new Set(selectedIds); // O(1) membership lookups
+    const selectedIdsSet = new Set(selectedIds);
 
     key.forEach((couplet, idx) => {
         idToIndexMap.set(couplet.id, idx);
@@ -120,10 +117,8 @@ export function renderEditorCards(store: KeyStore, refreshAll: () => void) {
         }
     });
 
-    // Optimization: Build structural elements off-screen using DocumentFragment
     const fragment = document.createDocumentFragment();
 
-    // Render each individual loop step instantly
     key.forEach((couplet, index) => {
         const displayNum = index + 1;
         const isSelected = selectedIdsSet.has(couplet.id);
@@ -141,59 +136,54 @@ export function renderEditorCards(store: KeyStore, refreshAll: () => void) {
         const card = document.createElement('div');
         card.draggable = true;
         card.setAttribute('data-id', couplet.id.toString());
-
-        card.style.cssText = `
-            border: ${isSelected ? '2px solid #007bff' : (hasErrors ? '2px dashed #ef4444' : '1px solid #cbd5e1')}; 
-            padding: 16px; 
-            margin-bottom: 16px; 
-            border-radius: 8px; 
-            background: ${isSelected ? '#f0f7ff' : '#ffffff'}; 
-            cursor: grab; 
-            position: relative;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        `;
+        
+        // Setup state-driven visual style toggles through classList API
+        card.className = 'key-card';
+        if (isSelected) card.classList.add('is-selected');
+        if (hasErrors) card.classList.add('has-errors');
 
         let warningBlockHtml = '';
         if (cardErrors.length > 0) {
-            warningBlockHtml = `<div style="margin-top: 10px; padding: 8px; background: #fff7ed; border-left: 3px solid #f97316; border-radius: 4px; font-size:12px; color: #c2410c; display:flex; flex-direction:column; gap:2px;">`;
+            warningBlockHtml = `<div class="warning-block">`;
             cardErrors.forEach(err => {
-                const color = err.severity === 'error' ? '#dc2626' : '#c2410c';
-                warningBlockHtml += `<span style="color: ${color}">⚠️ ${err.message}</span>`;
+                const modifierClass = err.severity === 'error' ? 'error-text' : 'warning-text';
+                warningBlockHtml += `<span class="${modifierClass}">⚠️ ${err.message}</span>`;
             });
             warningBlockHtml += `</div>`;
         }
 
+        const badgeClass = inboundLinks.length ? 'badge badge-linked' : (index === 0 ? 'badge badge-linked' : 'badge badge-isolated');
+        const badgeLabel = inboundLinks.length ? `Linked from: ${inboundLinks.map(escapeHTML).join(', ')}` : (index === 0 ? '🏁 Root Node' : '⚠️ Isolated Node');
+
         card.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; user-select: none;">
-              <div style="display:flex; align-items:center; gap: 10px;">
-                <h4 style="margin: 0; color: #1e293b; font-size: 15px;">Step #${displayNum}</h4>
-                <span style="font-size: 11px; background: ${inboundLinks.length ? '#e0f2fe' : '#fee2e2'}; padding: 2px 6px; border-radius: 4px; color: ${inboundLinks.length ? '#0369a1' : '#991b1b'}; font-weight: 500;">
-                  ${inboundLinks.length ? `Linked from: ${inboundLinks.map(escapeHTML).join(', ')}` : (index === 0 ? '🏁 Root Node' : '⚠️ Isolated Node')}
-                </span>
+            <div class="card-header">
+              <div class="card-header-left">
+                <h4 class="card-title">Step #${displayNum}</h4>
+                <span class="${badgeClass}">${badgeLabel}</span>
               </div>
-              <span style="font-size: 18px; color: #94a3b8; cursor: grab;">☰</span>
+              <span class="drag-handle">☰</span>
             </div>
             
-            <div style="margin-bottom: 14px; display: flex; gap: 12px; align-items: stretch;">
-              <textarea class="input-sync" data-field="alt1" placeholder="Enter diagnostic trait details..." style="flex: 1; min-height: 50px; font-family: sans-serif; padding: 8px; border-radius: 6px; border: 1px solid #cbd5e1; resize: vertical; font-size:14px; line-height:1.4;">${escapeHTML(couplet.alt1)}</textarea>
-              <div style="display: flex; flex-direction: column; gap: 6px; justify-content: center; font-size: 12px; min-width: 220px; border-left: 1px solid #e2e8f0; padding-left: 12px; background:#fafafa; border-radius:0 6px 6px 0;">
-                <label style="display: flex; justify-content: space-between; align-items: center;">Leads to: 
-                  <input type="text" class="input-sync" data-field="taxa1" placeholder="Taxon name" value="${escapeHTML(couplet.taxa1)}" style="width: 110px; padding: 3px 6px; border: 1px solid #cbd5e1; border-radius: 4px;" />
+            <div class="card-row">
+              <textarea class="input-sync card-textarea" data-field="alt1" placeholder="Enter diagnostic trait details...">${escapeHTML(couplet.alt1)}</textarea>
+              <div class="card-meta-pane">
+                <label class="meta-label">Leads to: 
+                  <input type="text" class="input-sync input-taxa" data-field="taxa1" placeholder="Taxon name" value="${escapeHTML(couplet.taxa1)}" />
                 </label>
-                <label style="display: flex; justify-content: space-between; align-items: center;">Goto step: 
-                  <input type="number" class="input-sync" data-field="link1" min="1" max="${key.length}" placeholder="#" value="${viewLink1 || ''}" style="width: 55px; padding: 3px 6px; border: 1px solid #cbd5e1; border-radius: 4px;" />
+                <label class="meta-label">Goto step: 
+                  <input type="number" class="input-sync input-goto" data-field="link1" min="1" max="${key.length}" placeholder="#" value="${viewLink1 || ''}" />
                 </label>
               </div>
             </div>
 
-            <div style="display: flex; gap: 12px; align-items: stretch;">
-              <textarea class="input-sync" data-field="alt2" placeholder="Enter contrast alternative description..." style="flex: 1; min-height: 50px; font-family: sans-serif; padding: 8px; border-radius: 6px; border: 1px solid #cbd5e1; resize: vertical; font-size:14px; line-height:1.4;">${escapeHTML(couplet.alt2)}</textarea>
-              <div style="display: flex; flex-direction: column; gap: 6px; justify-content: center; font-size: 12px; min-width: 220px; border-left: 1px solid #e2e8f0; padding-left: 12px; background:#fafafa; border-radius:0 6px 6px 0;">
-                <label style="display: flex; justify-content: space-between; align-items: center;">Leads to Taxa: 
-                  <input type="text" class="input-sync" data-field="taxa2" placeholder="Taxon name" value="${escapeHTML(couplet.taxa2)}" style="width: 110px; padding: 3px 6px; border: 1px solid #cbd5e1; border-radius: 4px;" />
+            <div class="card-row">
+              <textarea class="input-sync card-textarea" data-field="alt2" placeholder="Enter contrast alternative description...">${escapeHTML(couplet.alt2)}</textarea>
+              <div class="card-meta-pane">
+                <label class="meta-label">Leads to Taxa: 
+                  <input type="text" class="input-sync input-taxa" data-field="taxa2" placeholder="Taxon name" value="${escapeHTML(couplet.taxa2)}" />
                 </label>
-                <label style="display: flex; justify-content: space-between; align-items: center;">Goto Step: 
-                  <input type="number" class="input-sync" data-field="link2" min="1" max="${key.length}" placeholder="#" value="${viewLink2 || ''}" style="width: 55px; padding: 3px 6px; border: 1px solid #cbd5e1; border-radius: 4px;" />
+                <label class="meta-label">Goto Step: 
+                  <input type="number" class="input-sync input-goto" data-field="link2" min="1" max="${key.length}" placeholder="#" value="${viewLink2 || ''}" />
                 </label>
               </div>
             </div>
@@ -210,7 +200,6 @@ export function renderEditorCards(store: KeyStore, refreshAll: () => void) {
             refreshAll();
         });
 
-        // Track local input state variables inside the card loop instance scope
         let typingSessionActive = false;
 
         card.querySelectorAll('.input-sync').forEach(element => {
@@ -226,7 +215,6 @@ export function renderEditorCards(store: KeyStore, refreshAll: () => void) {
             el.addEventListener('input', () => {
                 store.setActiveCard(couplet.id);
 
-                // Safe Undo History registration check
                 if (!typingSessionActive && typeof store.commitHistoryCheckpoint === 'function') {
                     store.commitHistoryCheckpoint();
                     typingSessionActive = true;
@@ -247,7 +235,6 @@ export function renderEditorCards(store: KeyStore, refreshAll: () => void) {
                 typingSessionActive = false;
 
                 setTimeout(() => {
-                    // Check focus context layout to avoid losing user position when tabbing fields
                     if (!card.contains(document.activeElement)) {
                         store.clearActiveCard();
                         refreshAll();
@@ -256,7 +243,6 @@ export function renderEditorCards(store: KeyStore, refreshAll: () => void) {
             });
         });
 
-        // Native Drag-and-Drop Pipeline Actions
         card.addEventListener('dragstart', () => {
             store.startDragging(couplet.id);
             card.classList.remove('is-hovered', 'is-active');
@@ -280,47 +266,45 @@ export function renderEditorCards(store: KeyStore, refreshAll: () => void) {
         fragment.appendChild(card);
     });
 
-    // Clear previous view contents and flush the fragment out to screen
     container.innerHTML = '';
     container.appendChild(fragment);
 }
 
 /**
- * Renders the passive publication presentation.
+ * Renders the passive publication presentation view structure.
  */
 export function renderPrintView(store: KeyStore) {
     const container = document.querySelector('#print-view-container');
     if (!container) return;
 
     const key = store.getKey();
-    let htmlContent = `<div style="display: grid; grid-template-columns: auto 1fr; gap: 8px 12px; align-items: end; color: #000;">`;
+    let htmlContent = '';
 
     key.forEach((c, index) => {
         const currentDisplayNum = index + 1;
         const step1Dest = getStepNumberById(key, c.link1);
         const step2Dest = getStepNumberById(key, c.link2);
 
-        const end1 = c.taxa1 ? `<strong style="font-style: italic;">${escapeHTML(c.taxa1)}</strong>` : (c.link1 ? `<strong>${step1Dest}</strong>` : '<span>...</span>');
-        const end2 = c.taxa2 ? `<strong style="font-style: italic;">${escapeHTML(c.taxa2)}</strong>` : (c.link2 ? `<strong>${step2Dest}</strong>` : '<span>...</span>');
+        const end1 = c.taxa1 ? `<strong class="print-dest-taxon">${escapeHTML(c.taxa1)}</strong>` : (c.link1 ? `<strong class="print-dest-strong">${step1Dest}</strong>` : '<span>...</span>');
+        const end2 = c.taxa2 ? `<strong class="print-dest-taxon">${escapeHTML(c.taxa2)}</strong>` : (c.link2 ? `<strong class="print-dest-strong">${step2Dest}</strong>` : '<span>...</span>');
 
         htmlContent += `
-            <div style="font-weight: bold; align-self: start; color: #000;">${currentDisplayNum}.</div>
-            <div style="display: flex; justify-content: space-between; align-items: end; width: 100%;">
-              <span style="flex-shrink: 1; text-align: left; white-space: pre-wrap;">${escapeHTML(c.alt1) || '___'}</span>
-              <span style="flex-grow: 1; border-bottom: 1px dotted #000; margin: 0 8px 4px 8px;"></span>
-              <span style="flex-shrink: 0; white-space: nowrap;">${end1}</span>
+            <div class="print-step-num">${currentDisplayNum}.</div>
+            <div class="print-row">
+              <span class="print-text">${escapeHTML(c.alt1) || '___'}</span>
+              <span class="print-dots"></span>
+              <span class="print-dest">${end1}</span>
             </div>
-            <div style="font-weight: bold; text-align: center; align-self: start; color: #000;">—</div>
-            <div style="display: flex; justify-content: space-between; align-items: end; width: 100%;">
-              <span style="flex-shrink: 1; text-align: left; white-space: pre-wrap;">${escapeHTML(c.alt2) || '___'}</span>
-              <span style="flex-grow: 1; border-bottom: 1px dotted #000; margin: 0 8px 4px 8px;"></span>
-              <span style="flex-shrink: 0; white-space: nowrap;">${end2}</span>
+            <div class="print-dash">—</div>
+            <div class="print-row">
+              <span class="print-text">${escapeHTML(c.alt2) || '___'}</span>
+              <span class="print-dots"></span>
+              <span class="print-dest">${end2}</span>
             </div>
-            <div style="grid-column: span 2; height: 8px;"></div>
+            <div class="print-spacer"></div>
         `;
     });
 
-    htmlContent += `</div>`;
     container.innerHTML = htmlContent;
 }
 
@@ -329,11 +313,9 @@ export function renderPrintView(store: KeyStore) {
 // ==========================================
 
 function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
-    // History Actions
     document.querySelector('#cmd-undo')?.addEventListener('click', () => { if (store.undo()) refreshAll(); });
     document.querySelector('#cmd-redo')?.addEventListener('click', () => { if (store.redo()) refreshAll(); });
 
-    // Local Storage Drivers
     document.querySelector('#cmd-save')?.addEventListener('click', () => {
         localStorage.setItem('dichotomous_key', JSON.stringify(store.getKey()));
         store.markSaved();
@@ -341,21 +323,16 @@ function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         refreshAll();
     });
 
-    // JSON Data Export Pipeliners
     document.querySelector('#cmd-export-json')?.addEventListener('click', () => {
         const blob = new Blob([JSON.stringify(store.getKey(), null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
-
         const dlAnchor = document.createElement('a');
         dlAnchor.setAttribute("href", url);
         dlAnchor.setAttribute("download", "dichotomous_key_export.json");
         dlAnchor.click();
-
-        // Clean up memory after triggering download
         URL.revokeObjectURL(url);
     });
 
-    // JSON Data Import
     const hiddenInput = document.querySelector('#file-import-hidden') as HTMLInputElement;
 
     document.querySelector('#cmd-trigger-import')?.addEventListener('click', () => {
@@ -369,17 +346,14 @@ function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         try {
             const fileText = await file.text();
             const rawData = JSON.parse(fileText);
-
-            // Process transactional validation check inside the store layer
             const importResult = store.importJsonData(rawData);
 
             if (!importResult.success) {
                 alert(`Failed to import JSON schema:\n• ${importResult.errors.join('\n• ')}`);
-                hiddenInput.value = ''; // Reset input so they can retry after editing
+                hiddenInput.value = '';
                 return;
             }
             refreshAll();
-
         } catch (err) {
             alert("Malformed JSON structure: Unable to parse file stream.");
         } finally {
@@ -387,7 +361,6 @@ function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         }
     });
 
-    // Node Operations
     document.querySelector('#cmd-clear-selection')?.addEventListener('click', () => {
         store.clearSelection();
         refreshAll();
@@ -412,7 +385,6 @@ function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         refreshAll();
     });
 
-    // Format Stubs
     document.querySelector('#export-format-selector')?.addEventListener('change', (e) => {
         const format = (e.target as HTMLSelectElement).value;
         if (!format) return;
