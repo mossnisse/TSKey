@@ -1,4 +1,12 @@
 /* style.css */
+/* ==========================================\
+   GLOBAL BOX-SIZING RESET
+   ========================================== */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
 
 /* ==========================================
    GLOBAL & CORE LAYOUT WRAPPERS
@@ -150,11 +158,15 @@
 
 /* State Modifiers managed by JS classList API */
 .key-card.is-selected {
-  border: 2px solid #007bff;
+  border-color: #007bff; /* Change the color of the existing 1px border */
+  box-shadow: 0 0 0 1px #007bff; /* Adds an extra 1px visual ring on the outside */
   background: #f0f7ff;
 }
+
 .key-card.has-errors {
-  border: 2px dashed #ef4444;
+  /* For dashed lines, box-shadow can't do dashes, see Option 2 or 3 if you love dashes */
+  border-color: #ef4444;
+  box-shadow: 0 0 0 1px #ef4444;
 }
 
 .card-header {
@@ -225,7 +237,7 @@
   gap: 6px;
   justify-content: center;
   font-size: 12px;
-  min-width: 220px;
+  min-width: 190px;
   border-left: 1px solid #e2e8f0;
   padding-left: 12px;
   background: #fafafa;

@@ -20,12 +20,13 @@ interface AppState {
 
 export class KeyStore {
     private state: AppState;
-    private lastSavedState: string;
+    private isDirty: boolean = false;
 
-    // FIX: Change stack types from string[] to AppState[]
     private undoStack: AppState[] = [];
     private redoStack: AppState[] = [];
     private readonly maxHistoryLimit: number;
+    private savedHistoryIndex: number = 0;
+    private currentHistoryIndex: number = 0;
 
     private selectedIds: number[] = [];
     private _draggedId: number | null = null;
@@ -34,7 +35,7 @@ export class KeyStore {
     constructor(initialKey: Couplet[], maxHistoryLimit = 100) {
         this.state = { dichotomousKey: initialKey };
         this.maxHistoryLimit = maxHistoryLimit;
-        this.lastSavedState = JSON.stringify(initialKey);
+        this.isDirty = false;
     }
 
     // ==========================================
@@ -73,14 +74,14 @@ export class KeyStore {
         this._draggedId = null;
     }
 
-    /** Commit the current memory matrix as clean after a successful storage save */
     public markSaved() {
-        this.lastSavedState = JSON.stringify(this.state.dichotomousKey);
+        this.savedHistoryIndex = this.currentHistoryIndex;
+        this.isDirty = false;
     }
 
-    /** Evaluation hook: Checks if active state differs from local storage baseline */
     public hasUnsavedChanges(): boolean {
-        return this.lastSavedState !== JSON.stringify(this.state.dichotomousKey);
+        if (this.currentHistoryIndex !== this.savedHistoryIndex) return true;
+        return this.isDirty;
     }
 
     // ==========================================
@@ -90,11 +91,13 @@ export class KeyStore {
     private saveCheckpoint() {
         this.redoStack = [];
 
-        // Native deep-clone replaces JSON stringification
         this.undoStack.push(structuredClone(this.state));
 
         if (this.undoStack.length > this.maxHistoryLimit) {
             this.undoStack.shift();
+            if (this.savedHistoryIndex > 0) this.savedHistoryIndex--;
+        } else {
+            this.currentHistoryIndex++;
         }
     }
 
@@ -107,8 +110,10 @@ export class KeyStore {
             this.redoStack.shift();
         }
 
-        // Clean, type-safe assignment with no JSON.parse() needed
         this.state = this.undoStack.pop()!;
+
+        this.currentHistoryIndex--;
+        this.isDirty = false;
         return true;
     }
 
@@ -119,9 +124,16 @@ export class KeyStore {
 
         if (this.undoStack.length > this.maxHistoryLimit) {
             this.undoStack.shift();
+            if (this.savedHistoryIndex > 0) this.savedHistoryIndex--;
+        } else {
+            this.currentHistoryIndex++;
         }
 
         this.state = this.redoStack.pop()!;
+
+        // Moving forwards down the timeline
+        this.currentHistoryIndex++;
+        this.isDirty = false;
         return true;
     }
 
@@ -190,6 +202,7 @@ export class KeyStore {
             }
             return c;
         });
+        this.isDirty = true;
     }
 
     /** Explicitly commits a history point. Useful after text editing finishes (blur). */
@@ -242,6 +255,7 @@ export class KeyStore {
                 taxa1: "", taxa2: ""
             }
         ];
+        this.isDirty = true;
     }
 
     public deleteSelected() {
@@ -256,6 +270,7 @@ export class KeyStore {
                 link2: removedIds.has(c.link2) ? 0 : c.link2,
             }));
         this.selectedIds = [];
+        this.isDirty = true;
     }
 
     public reorderCouplets(srcId: number, targetId: number): boolean {
@@ -278,6 +293,7 @@ export class KeyStore {
         arr.splice(targetIdx, 0, movedItem);
 
         this.state.dichotomousKey = arr;
+        this.isDirty = true;
         return true;
     }
 
@@ -287,6 +303,8 @@ export class KeyStore {
 
         const key = this.state.dichotomousKey;
 
+        const idToCoupletMap = new Map<number, Couplet>(key.map(c => [c.id, c]));
+
         // Calculate incoming counts (in-degree) for all nodes
         const incomingCounts = new Map<number, number>();
         key.forEach(c => {
@@ -295,11 +313,9 @@ export class KeyStore {
         });
 
         // Identify all structural roots (nodes with 0 incoming links)
-        // We maintain their relative order as they currently exist in the array
         const roots = key.filter(c => !incomingCounts.has(c.id));
 
-        // Fallback: If the graph is a pure closed loop and no root is found,
-        // use the first card as a seed root so the algorithm doesn't fail.
+        // Fallback: Loop protection seed
         if (roots.length === 0) {
             roots.push(key[0]);
         }
@@ -307,7 +323,7 @@ export class KeyStore {
         const visited = new Set<number>();
         const orderedCouplets: Couplet[] = [];
 
-        // Process each structural root sequentially to prevent tree-interleaving
+        // Process each structural root sequentially
         roots.forEach(root => {
             if (visited.has(root.id)) return;
 
@@ -317,24 +333,23 @@ export class KeyStore {
                 const currentId = queue.shift()!;
                 if (currentId === 0 || visited.has(currentId)) continue;
 
-                const couplet = key.find(c => c.id === currentId);
+                const couplet = idToCoupletMap.get(currentId);
                 if (!couplet) continue;
 
                 visited.add(currentId);
                 orderedCouplets.push(couplet);
 
-                // Add children to the queue for this specific root's tree
-                if (couplet.link1 && couplet.link1 !== 0 && !visited.has(couplet.link1)) {
+                // Add children to the queue (Cleaned up falsy 0 conditions)
+                if (couplet.link1 && !visited.has(couplet.link1)) {
                     queue.push(couplet.link1);
                 }
-                if (couplet.link2 && couplet.link2 !== 0 && !visited.has(couplet.link2)) {
+                if (couplet.link2 && !visited.has(couplet.link2)) {
                     queue.push(couplet.link2);
                 }
             }
         });
 
-        // Clean sweep: Catches completely cyclical islands 
-        // (nodes that link to each other but have no path back to any 0-in-degree root)
+        // Clean sweep: Catches completely cyclical islands
         key.forEach(c => {
             if (!visited.has(c.id)) {
                 const orphanQueue = [c.id];
@@ -342,7 +357,7 @@ export class KeyStore {
                     const orphanId = orphanQueue.shift()!;
                     if (orphanId === 0 || visited.has(orphanId)) continue;
 
-                    const orphanCouplet = key.find(x => x.id === orphanId);
+                    const orphanCouplet = idToCoupletMap.get(orphanId);
                     if (!orphanCouplet) continue;
 
                     visited.add(orphanId);
@@ -362,6 +377,7 @@ export class KeyStore {
         this.saveCheckpoint();
         this.state.dichotomousKey = newData;
         this.selectedIds = [];
+        this.isDirty = true;
     }
 
     /**

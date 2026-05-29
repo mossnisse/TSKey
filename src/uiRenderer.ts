@@ -253,7 +253,7 @@ export function renderEditorCards(store: KeyStore, refreshAll: () => void) {
                 <div class="card-row">
                   <textarea class="input-sync card-textarea" data-field="alt2" placeholder="Enter contrast alternative description...">${escapeHTML(couplet.alt2)}</textarea>
                   <div class="card-meta-pane">
-                    <label class="meta-label">Leads to Taxa: 
+                    <label class="meta-label">Leads to: 
                       <input type="text" class="input-sync input-taxa" data-field="taxa2" placeholder="Taxon name" value="${escapeHTML(couplet.taxa2)}" />
                     </label>
                     <label class="meta-label">Goto Step: 
@@ -372,10 +372,15 @@ function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         if (target.matches('input, textarea')) {
             const card = target.closest('.key-card') as HTMLElement;
             if (card) card.draggable = false;
+
+            // Auto-select text inside the Goto step number inputs for instant overwriting
+            if (target.classList.contains('input-goto') && target instanceof HTMLInputElement) {
+                target.select();
+            }
         }
     });
 
-    // Centralized Serialization Serialization Execution
+    // Centralized Serialization Execution
     container.addEventListener('focusout', (e) => {
         const target = e.target as HTMLElement;
         if (target.matches('input, textarea')) {
@@ -443,12 +448,11 @@ function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             }
 
             const serializedData = JSON.stringify(currentData);
+
+            // This completes fully or throws an exception if the action fails
             localStorage.setItem('dichotomous_key', serializedData);
 
-            if (localStorage.getItem('dichotomous_key') !== serializedData) {
-                throw new Error("Disk verification failed. Storage write mismatch.");
-            }
-
+            // If no exception was thrown, the write was successful
             store.markSaved();
             alert("💾 Saved successfully to local engine database!");
             refreshAll();
@@ -528,7 +532,48 @@ function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     document.querySelector('#export-format-selector')?.addEventListener('change', (e) => {
         const format = (e.target as HTMLSelectElement).value;
         if (!format) return;
-        alert(`Format conversion engine initiated for: [${format.toUpperCase()}].`);
+
+        if (format === 'text') {
+            const key = store.getKey();
+            let textContent = '';
+
+            key.forEach((c, index) => {
+                const currentDisplayNum = index + 1;
+
+                // Re-use your helper utilities for sequential numbering matching
+                const step1Dest = getStepNumberById(key, c.link1);
+                const step2Dest = getStepNumberById(key, c.link2);
+
+                // Replicate Live Print view terminal determination (Taxa > Jump Link > Incomplete)
+                const end1 = c.taxa1 ? c.taxa1 : (c.link1 ? step1Dest : '...');
+                const end2 = c.taxa2 ? c.taxa2 : (c.link2 ? step2Dest : '...');
+
+                // Use raw strings (DO NOT wrap in escapeHTML for plain text files)
+                const alt1Text = c.alt1 || '___';
+                const alt2Text = c.alt2 || '___';
+
+                // Replicate layout matching structural column mapping via explicit tab markers (\t)
+                textContent += `${currentDisplayNum}.\t${alt1Text}\t${end1}\n`;
+                textContent += `—\t${alt2Text}\t${end2}\n\n`;
+            });
+
+            // Stream compiled matrix into a downloadable plain-text Blob file
+            const blob = new Blob([textContent], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const dlAnchor = document.createElement('a');
+
+            dlAnchor.setAttribute("href", url);
+            dlAnchor.setAttribute("download", "dichotomous_key_render.txt");
+            dlAnchor.click();
+
+            // Clean up allocated browser window memory resource references
+            URL.revokeObjectURL(url);
+        } else {
+            // Keep the placeholder alerts intact for your remaining format targets
+            alert(`Format conversion engine initiated for: [${format.toUpperCase()}].`);
+        }
+
+        // Reset selector interface layout state back to default placeholder view
         (e.target as HTMLSelectElement).value = "";
     });
 }

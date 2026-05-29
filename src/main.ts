@@ -8,11 +8,38 @@ const fallbackData = [
     { id: 103, alt1: "Has scales", alt2: "Skin is smooth and moist", link1: 0, link2: 0, taxa1: "Reptile2", taxa2: "Amphibian" }
 ];
 
+function isValidCoupletArray(data: any): data is Couplet[] {
+    if (!Array.isArray(data)) return false;
+    
+    return data.every(item => 
+        item &&
+        typeof item === 'object' &&
+        typeof item.id === 'number' &&
+        typeof item.alt1 === 'string' &&
+        typeof item.alt2 === 'string' &&
+        typeof item.link1 === 'number' &&
+        typeof item.link2 === 'number' &&
+        typeof item.taxa1 === 'string' &&
+        typeof item.taxa2 === 'string'
+    );
+}
+
 let initialData: Couplet[];
 try {
-    initialData = JSON.parse(localStorage.getItem('dichotomous_key') || 'null') || fallbackData;
+    const rawStorage = localStorage.getItem('dichotomous_key');
+    const parsedData = rawStorage ? JSON.parse(rawStorage) : null;
+    
+    // Explicitly validate the schema structure before accepting it
+    if (parsedData && isValidCoupletArray(parsedData)) {
+        initialData = parsedData;
+    } else {
+        if (rawStorage) {
+            console.warn('Invalid data schema detected in localStorage. Loading defaults.');
+        }
+        initialData = fallbackData;
+    }
 } catch {
-    console.warn('Corrupted localStorage data. Loading defaults.');
+    console.warn('Corrupted localStorage JSON format. Loading defaults.');
     initialData = fallbackData;
 }
 
@@ -32,6 +59,12 @@ const refreshAll = () => {
             saveBtn.innerHTML = '💾 Save Memory';
             saveBtn.classList.remove('is-unsaved'); // Resets to baseline operational green
         }
+    }
+
+    const deleteBtn = document.querySelector<HTMLButtonElement>('#cmd-delete-selected');
+    if (deleteBtn) {
+        const hasSelection = store.getSelectedIds().length > 0;
+        deleteBtn.disabled = !hasSelection;
     }
 };
 
