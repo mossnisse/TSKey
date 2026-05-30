@@ -459,6 +459,10 @@ export class KeyStore {
         this.selectedIds = [];
     }
 
+    public selectAll() {
+        this.selectedIds = this.state.dichotomousKey.map(c => c.id);
+    }
+
     // ==========================================
     // REAL-TIME DIAGNOSTICS ENGINE
     // ==========================================

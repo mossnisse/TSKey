@@ -1,6 +1,8 @@
+// main.ts
 import './style.css'; // INJECT GLOBAL PROJECT STYLES
 import { KeyStore, type Couplet  } from './store.ts';
 import { initializeShell, renderEditorCards, renderPrintView } from './uiRenderer.ts';
+import { setupGlobalListeners, setupKeyboardShortcuts} from './eventController.ts'
 
 const fallbackData = [
     { id: 101, alt1: "Has feathers", alt2: "Lacks feathers", link1: 0, link2: 102, taxa1: "Bird", taxa2: "" },
@@ -47,7 +49,7 @@ const store = new KeyStore(initialData);
 const appContainer = document.querySelector<HTMLDivElement>('#app')!;
 
 const refreshAll = () => {
-    renderEditorCards(store, refreshAll);
+    renderEditorCards(store);
     renderPrintView(store);
 
     const saveBtn = document.querySelector<HTMLButtonElement>('#cmd-save');
@@ -74,5 +76,7 @@ window.addEventListener('beforeunload', (event) => {
     }
 });
 
-initializeShell(appContainer, store, refreshAll);
+initializeShell(appContainer);
+setupGlobalListeners(store, refreshAll);
+setupKeyboardShortcuts(store, refreshAll);
 refreshAll();

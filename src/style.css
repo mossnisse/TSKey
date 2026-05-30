@@ -8,6 +8,26 @@
   box-sizing: border-box;
 }
 
+/* ==========================================\
+   Editing controll
+   ========================================== */
+
+/* Prevent user dragging selection highlights across background canvas */
+.main-layout {
+  display: flex;
+  gap: 20px;
+  align-items: start;
+  user-select: none; /* Disables standard text highlight across editor nodes */
+}
+
+/* Re-allow standard selectable highlighting inside the form parameters explicitly */
+.card-textarea,
+.input-taxa,
+.input-goto,
+.print-grid {
+  user-select: text; /* Ensures input systems work exactly like raw native fields */
+}
+
 /* ==========================================
    GLOBAL & CORE LAYOUT WRAPPERS
    ========================================== */
