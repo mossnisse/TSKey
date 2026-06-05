@@ -1,5 +1,40 @@
 /* style.css */
-/* ==========================================\
+
+/* ==========================================
+   CSS CUSTOM PROPERTIES (CONSOLIDATED DESIGN TOKENS)
+   ========================================== */
+:root {
+  /* 1. Neutrals (Slate Scale) */
+  --color-bg: #ffffff;
+  --color-bg-muted: #f8fafc;
+  --color-text: #0f172a;
+  --color-text-muted: #475569;
+  --color-border: #cbd5e1;
+  --color-border-light: #e2e8f0;
+  
+  /* 2. Unified Brand / Action System (Indigo Accent) */
+  --color-primary: #4f46e5;
+  --color-primary-hover: #4338ca;
+  --color-primary-light: #eef2ff;
+
+  /* 3. Semantic States (Strictly 1 Base per State) */
+  --color-success: #22c55e;
+  
+  --color-warning: #d97706; /* Darkened amber for readable contrast text/borders */
+  --color-warning-light: #fefce8;
+  
+  --color-danger: #ef4444;
+  --color-danger-hover: #dc2626;
+  --color-danger-light: #fee2e2;
+
+  /* Layout & Animation Core */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --transition-base: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+/* ==========================================
    GLOBAL BOX-SIZING RESET
    ========================================== */
 *,
@@ -8,24 +43,21 @@
   box-sizing: border-box;
 }
 
-/* ==========================================\
-   Editing controll
+/* ==========================================
+   EDITING CONTROL
    ========================================== */
-
-/* Prevent user dragging selection highlights across background canvas */
 .main-layout {
   display: flex;
   gap: 20px;
   align-items: start;
-  user-select: none; /* Disables standard text highlight across editor nodes */
+  user-select: none;
 }
 
-/* Re-allow standard selectable highlighting inside the form parameters explicitly */
 .card-textarea,
 .input-taxa,
 .input-goto,
 .print-grid {
-  user-select: text; /* Ensures input systems work exactly like raw native fields */
+  user-select: text;
 }
 
 /* ==========================================
@@ -41,19 +73,13 @@
   gap: 20px;
 }
 
-.main-layout {
-  display: flex;
-  gap: 20px;
-  align-items: start;
-}
-
 .editor-column {
   flex: 1.2;
 }
 
 .heading-editor {
   margin-top: 0;
-  color: #1e293b;
+  color: var(--color-text);
 }
 
 /* ==========================================
@@ -63,10 +89,10 @@
   position: sticky;
   top: 0;
   z-index: 100;
-  background: #ffffff;
+  background: var(--color-bg);
   padding: 14px 0;
   margin-bottom: 24px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--color-border-light);
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
   display: flex;
   justify-content: space-between;
@@ -75,7 +101,7 @@
 }
 
 .toolbar-divider {
-  border-left: 1px solid #ccc;
+  border-left: 1px solid var(--color-border-light);
   height: 20px;
   margin: 0 5px;
 }
@@ -90,103 +116,101 @@
 .btn {
   padding: 6px 12px;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 14px;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+  transition: var(--transition-base);
 }
 
 .btn-secondary {
-  background: #f1f5f9;
-  border: 1px solid #cbd5e1;
-  color: #334155;
+  background: var(--color-bg-muted);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
 }
-.btn-secondary:hover { background: #e2e8f0; }
+.btn-secondary:hover { background: var(--color-border-light); }
 
 .btn-primary {
-  background: #4f46e5;
-  color: white;
+  background: var(--color-primary);
+  color: var(--color-bg);
   border: none;
 }
-.btn-primary:hover { background: #4338ca; }
+.btn-primary:hover { background: var(--color-primary-hover); }
 
 .btn-danger {
-  background: #dc3545;
-  color: white;
+  background: var(--color-danger);
+  color: var(--color-bg);
   border: none;
 }
-.btn-danger:hover { background: #bd2130; }
+.btn-danger:hover { background: var(--color-danger-hover); }
 
 .btn-outline {
   background: transparent;
-  border: 1px solid #cbd5e1;
-  color: #475569;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
 }
-.btn-outline:hover { background: #f8fafc; }
+.btn-outline:hover { background: var(--color-bg-muted); }
 
 .btn-add-block {
   margin-top: 15px;
   padding: 12px 20px;
   cursor: pointer;
-  background: #007bff;
-  color: white;
+  background: var(--color-primary); /* Unified with brand color */
+  color: var(--color-bg);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-weight: bold;
   width: 100%;
-  transition: background-color 0.15s ease;
+  transition: var(--transition-base);
 }
-.btn-add-block:hover { background: #0056b3; }
+.btn-add-block:hover { background: var(--color-primary-hover); }
 
-/* Dynamic Memory State Engine Button classes */
 .btn-save {
   padding: 6px 12px;
   cursor: pointer;
   font-weight: bold;
-  color: white;
+  color: var(--color-bg);
   border: none;
-  border-radius: 4px;
-  background: #22c55e; /* Clean success green */
+  border-radius: var(--radius-sm);
+  background: var(--color-success); 
 }
 .btn-save.is-unsaved {
-  background: #eab308; /* Warning amber/yellow */
+  background: var(--color-warning); 
 }
 
 .select-input {
   padding: 6px;
-  border-radius: 4px;
-  border: 1px solid #cbd5e1;
-  background: #fff;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
 }
 
 /* ==========================================
    NODE CANVAS & CARD STRUCTURAL STATES
    ========================================== */
 .key-card {
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--color-border);
   padding: 16px;
   margin-bottom: 16px;
-  border-radius: 8px;
-  background: #ffffff;
+  border-radius: var(--radius-lg);
+  background: var(--color-bg);
   cursor: grab;
   position: relative;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-  transition: border-color 0.15s ease, background-color 0.15s ease;
+  transition: var(--transition-base);
 }
 .key-card:hover {
-  border-color: #94a3b8;
+  border-color: var(--color-border-hover);
 }
 
-/* State Modifiers managed by JS classList API */
 .key-card.is-selected {
-  border-color: #007bff; /* Change the color of the existing 1px border */
-  box-shadow: 0 0 0 1px #007bff; /* Adds an extra 1px visual ring on the outside */
-  background: #f0f7ff;
+  border-color: var(--color-primary); 
+  box-shadow: 0 0 0 1px var(--color-primary); 
+  background: var(--color-primary-light);
 }
 
 .key-card.has-errors {
-  /* For dashed lines, box-shadow can't do dashes, see Option 2 or 3 if you love dashes */
-  border-color: #ef4444;
-  box-shadow: 0 0 0 1px #ef4444;
+  border-color: var(--color-danger);
+  box-shadow: 0 0 0 1px var(--color-danger);
+  background: var(--color-danger-light); /* Added a subtle tint context for error nodes */
 }
 
 .card-header {
@@ -205,13 +229,13 @@
 
 .card-title {
   margin: 0;
-  color: #1e293b;
+  color: var(--color-text);
   font-size: 15px;
 }
 
 .drag-handle {
   font-size: 18px;
-  color: #94a3b8;
+  color: var(--color-border);
   cursor: grab;
 }
 
@@ -219,16 +243,16 @@
 .badge {
   font-size: 11px;
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-weight: 500;
 }
 .badge-linked {
-  background: #e0f2fe;
-  color: #0369a1;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
 }
 .badge-isolated {
-  background: #fee2e2;
-  color: #991b1b;
+  background: var(--color-danger-light);
+  color: var(--color-danger);
 }
 
 /* Card Fields layout */
@@ -244,8 +268,8 @@
   min-height: 50px;
   font-family: sans-serif;
   padding: 8px;
-  border-radius: 6px;
-  border: 1px solid #cbd5e1;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
   resize: vertical;
   font-size: 14px;
   line-height: 1.4;
@@ -258,10 +282,10 @@
   justify-content: center;
   font-size: 12px;
   min-width: 190px;
-  border-left: 1px solid #e2e8f0;
+  border-left: 1px solid var(--color-border-light);
   padding-left: 12px;
-  background: #fafafa;
-  border-radius: 0 6px 6px 0;
+  background: var(--color-bg-muted);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
 }
 
 .meta-label {
@@ -273,32 +297,44 @@
 .input-taxa {
   width: 110px;
   padding: 3px 6px;
-  border: 1px solid #cbd5e1;
-  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
 }
 
 .input-goto {
   width: 55px;
   padding: 3px 6px;
-  border: 1px solid #cbd5e1;
-  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+/* Highlight textboxes with native validation failures (e.g., numbers out of range) */
+.input-sync:invalid {
+  border-color: var(--color-danger);
+  background-color: var(--color-danger-light);
+  color: var(--color-danger);
+}
+
+/* Optional: Subtle focus indicator when correcting an invalid number */
+.input-sync:invalid:focus {
+  outline: 1px solid var(--color-danger);
 }
 
 /* Diagnostic Error Blocks */
 .warning-block {
   margin-top: 10px;
   padding: 8px;
-  background: #fff7ed;
-  border-left: 3px solid #f97316;
-  border-radius: 4px;
+  background: var(--color-warning-light);
+  border-left: 3px solid var(--color-warning);
+  border-radius: var(--radius-sm);
   font-size: 12px;
-  color: #c2410c;
+  color: var(--color-warning);
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
-.error-text { color: #dc2626; }
-.warning-text { color: #c2410c; }
+.error-text { color: var(--color-danger); }
+.warning-text { color: var(--color-warning); }
 
 /* ==========================================
    PASSIVE PUBLICATION PRINT VIEW PANELS
@@ -306,19 +342,19 @@
 .print-column {
   flex: 0.8;
   padding: 25px;
-  border-radius: 8px;
-  border: 1px solid #000;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-text);
   position: sticky;
   top: 20px;
   max-height: 85vh;
   overflow-y: auto;
-  background: #fff;
-  color: #000;
+  background: var(--color-bg);
+  color: var(--color-text);
 }
 
 .hr-print {
   border: 0;
-  border-top: 1px solid #000;
+  border-top: 1px solid var(--color-text);
   margin-bottom: 20px;
 }
 
@@ -327,7 +363,7 @@
   grid-template-columns: auto 1fr;
   gap: 6px 10px;
   align-items: end;
-  color: #000;
+  color: var(--color-text);
   line-height: 1.6;
   font-family: serif;
   font-size: 15px;
@@ -336,7 +372,7 @@
 .print-step-num {
   font-weight: bold;
   align-self: start;
-  color: #000;
+  color: var(--color-text);
 }
 
 .print-row {
@@ -354,7 +390,7 @@
 
 .print-dots {
   flex-grow: 1;
-  border-bottom: 1px dotted #000;
+  border-bottom: 1px dotted var(--color-text);
   margin: 0 8px 4px 8px;
 }
 
@@ -375,7 +411,7 @@
   font-weight: bold;
   text-align: center;
   align-self: start;
-  color: #000;
+  color: var(--color-text);
 }
 
 .print-spacer {
@@ -386,7 +422,6 @@
 /* ==========================================
    TOAST NOTIFICATION ENGINE
    ========================================== */
-   
 .toast-container {
   position: fixed;
   bottom: 24px;
@@ -398,10 +433,10 @@
 }
 
 .toast {
-  background: #1e293b;
-  color: #ffffff;
+  background: var(--color-text); /* Reuses dark main text token for a sharp dark theme popout */
+  color: var(--color-bg);
   padding: 12px 16px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   font-size: 14px;
   font-family: sans-serif;
@@ -415,8 +450,8 @@
     toastFadeOut 0.3s ease 2.7s forwards;
 }
 
-.toast-success { border-left: 4px solid #22c55e; }
-.toast-error { border-left: 4px solid #ef4444; }
+.toast-success { border-left: 4px solid var(--color-success); }
+.toast-error { border-left: 4px solid var(--color-danger); }
 
 @keyframes toastSlideIn {
   from { transform: translateX(120%); opacity: 0; }

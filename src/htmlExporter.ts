@@ -1,6 +1,6 @@
 // htmlExporter.ts
 import type { KeyStore } from './store.ts';
-import { escapeHTML, getStepNumberById } from './uiRenderer.ts';
+import { escapeHTML, getStepNumberById } from './utils.ts';
 
 /**
  * Compiles the current KeyStore state into a single standalone static HTML document
@@ -56,14 +56,6 @@ export function exportKeyToHTML(store: KeyStore): void {
       padding: 40px 24px;
       max-width: 850px;
       margin: 0 auto;
-    }
-    h1 {
-      font-family: sans-serif;
-      color: #1e293b;
-      border-bottom: 2px solid #000000;
-      padding-bottom: 12px;
-      margin-bottom: 32px;
-      font-size: 24px;
     }
     
     /* Live Publication Grid Renderer CSS Match */

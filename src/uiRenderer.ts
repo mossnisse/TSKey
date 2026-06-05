@@ -1,25 +1,10 @@
 // uiRenderer.ts
-import type { KeyStore, Couplet } from './store.ts';
+import type { KeyStore } from './store.ts';
+import { escapeHTML, getStepNumberById } from './utils.ts';
 
 // ==========================================
 // CORE LAYOUT HELPERS
 // ==========================================
-
-export function escapeHTML(str: string): string {
-    if (!str) return '';
-    return str
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-}
-
-export function getStepNumberById(key: readonly Couplet[], targetId: number): string {
-    if (targetId === 0) return '0';
-    const index = key.findIndex(c => c.id === targetId);
-    return index !== -1 ? (index + 1).toString() : 'INVALID ID';
-}
 
 /** Helper to target and patch changing attributes safely without dropping cursor focus */
 function syncField(parent: HTMLElement, selector: string, value: string, maxAttr?: string) {
@@ -305,7 +290,7 @@ export function showToast(message: string, type: 'success' | 'error' = 'success'
 
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
-    toast.innerHTML = message;
+    toast.textContent = message;
 
     container.appendChild(toast);
 

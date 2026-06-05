@@ -1,8 +1,10 @@
 // eventController.ts
 import type { KeyStore } from './store.ts';
-import { getStepNumberById, renderPrintView, showToast } from './uiRenderer.ts';
+import { renderPrintView, showToast } from './uiRenderer.ts';
+import { getStepNumberById } from './utils.ts';
 import { exportKeyToHTML } from './htmlExporter.ts';
 import { exportKeyToLaTeX } from './latexExporter.ts';
+
 
 function parseLinkInput(val: string, maxItems: number): number {
     const num = parseInt(val) || 0;
@@ -50,15 +52,31 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
         store.setActiveCard(id);
 
-        if (!typingSessionActive && typeof store.commitHistoryCheckpoint === 'function') {
+        if (!typingSessionActive) {
             store.commitHistoryCheckpoint();
             typingSessionActive = true;
         }
 
+        /*
         let value: any = target.value;
         if (field === 'link1' || field === 'link2') {
             const stepNum = parseLinkInput(value, key.length);
             value = stepNum > 0 ? key[stepNum - 1].id : 0;
+        }*/
+
+        let value: any = target.value;
+        if (field === 'link1' || field === 'link2') {
+            const num = parseInt(value) || 0;
+
+            // Check if the user typed an explicit out-of-bounds number
+            if (value !== '' && (num <= 0 || num > key.length)) {
+                target.classList.add('input-error'); // Flag visual error
+                value = 0; // Fallback back-end state safely to 0
+            } else {
+                target.classList.remove('input-error');
+                const stepNum = parseLinkInput(value, key.length);
+                value = stepNum > 0 ? key[stepNum - 1].id : 0;
+            }
         }
 
         store.updateCouplet(id, { [field]: value });
@@ -86,6 +104,13 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             if (card) card.draggable = true;
 
             typingSessionActive = false;
+
+            // 💡 Catch invalid link entry right before refreshAll() clears it
+            if (target.classList.contains('input-error') && target instanceof HTMLInputElement) {
+                const invalidVal = target.value;
+                showToast(`⚠️ Step "${invalidVal}" does not exist yet. Link reset to unassigned.`, "error");
+                target.classList.remove('input-error');
+            }
 
             setTimeout(() => {
                 if (card && !card.contains(document.activeElement)) {
@@ -280,7 +305,7 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
     window.addEventListener('keydown', (evt: KeyboardEvent) => {
         const e = evt;
         // Cross-platform modifier detection (Command key on macOS, Control on Windows/Linux)
-        const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+        const isMac = (navigator as any).userAgentData?.platform === 'macOS';
         const hasModifier = isMac ? e.metaKey : e.ctrlKey;
 
         // Determine context state
