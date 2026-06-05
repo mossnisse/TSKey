@@ -131,8 +131,6 @@ export class KeyStore {
 
         this.state = this.redoStack.pop()!;
 
-        // Moving forwards down the timeline
-        this.currentHistoryIndex++;
         this.isDirty = false;
         return true;
     }
@@ -297,25 +295,51 @@ export class KeyStore {
         return true;
     }
 
-    public autoOrderBFS() {
+    // should also flip alt1/alt2 when needed. alt1 shouldbe the shorter branch.
+    public autoOrder() {
         if (this.state.dichotomousKey.length === 0) return;
         this.saveCheckpoint();
 
         const key = this.state.dichotomousKey;
 
+        // BRANCH OPTIMIZATION PASS (Taxon Mirroring Swap)
+        // If Choice B resolves to a taxon, but Choice A is a deep continuation link,
+        // swap their internals to prioritize the shorter branch on Choice A.
+        key.forEach(c => {
+            const hasTaxa1 = !!c.taxa1 && c.taxa1.trim() !== '';
+            const hasTaxa2 = !!c.taxa2 && c.taxa2.trim() !== '';
+
+            // Swap condition: Choice B has an endpoint taxon, Choice A does not
+            if (hasTaxa2 && !hasTaxa1) {
+                // Swap Alternative descriptions
+                const tempAlt = c.alt1;
+                c.alt1 = c.alt2;
+                c.alt2 = tempAlt;
+
+                // Swap Destination Links
+                const tempLink = c.link1;
+                c.link1 = c.link2;
+                c.link2 = tempLink;
+
+                // Swap Target Taxa names
+                const tempTaxa = c.taxa1;
+                c.taxa1 = c.taxa2;
+                c.taxa2 = tempTaxa;
+            }
+        });
+
+        // GRAPH REBUILDING (Based on fresh, optimized links)
         const idToCoupletMap = new Map<number, Couplet>(key.map(c => [c.id, c]));
 
-        // Calculate incoming counts (in-degree) for all nodes
+        // Recompute structural in-degrees
         const incomingCounts = new Map<number, number>();
         key.forEach(c => {
             if (c.link1) incomingCounts.set(c.link1, (incomingCounts.get(c.link1) || 0) + 1);
             if (c.link2) incomingCounts.set(c.link2, (incomingCounts.get(c.link2) || 0) + 1);
         });
 
-        // Identify all structural roots (nodes with 0 incoming links)
+        // Identify structural roots
         const roots = key.filter(c => !incomingCounts.has(c.id));
-
-        // Fallback: Loop protection seed
         if (roots.length === 0) {
             roots.push(key[0]);
         }
@@ -323,14 +347,14 @@ export class KeyStore {
         const visited = new Set<number>();
         const orderedCouplets: Couplet[] = [];
 
-        // Process each structural root sequentially
+        // PRE-ORDER DFS STRUCTURAL LAYOUT=
         roots.forEach(root => {
             if (visited.has(root.id)) return;
 
-            const queue: number[] = [root.id];
+            const stack: number[] = [root.id];
 
-            while (queue.length > 0) {
-                const currentId = queue.shift()!;
+            while (stack.length > 0) {
+                const currentId = stack.pop()!;
                 if (currentId === 0 || visited.has(currentId)) continue;
 
                 const couplet = idToCoupletMap.get(currentId);
@@ -339,22 +363,21 @@ export class KeyStore {
                 visited.add(currentId);
                 orderedCouplets.push(couplet);
 
-                // Add children to the queue (Cleaned up falsy 0 conditions)
-                if (couplet.link1 && !visited.has(couplet.link1)) {
-                    queue.push(couplet.link1);
-                }
                 if (couplet.link2 && !visited.has(couplet.link2)) {
-                    queue.push(couplet.link2);
+                    stack.push(couplet.link2);
+                }
+                if (couplet.link1 && !visited.has(couplet.link1)) {
+                    stack.push(couplet.link1);
                 }
             }
         });
 
-        // Clean sweep: Catches completely cyclical islands
+        // CLEANUP SWEEP (Orphaned / Cyclical islands)
         key.forEach(c => {
             if (!visited.has(c.id)) {
-                const orphanQueue = [c.id];
-                while (orphanQueue.length > 0) {
-                    const orphanId = orphanQueue.shift()!;
+                const orphanStack = [c.id];
+                while (orphanStack.length > 0) {
+                    const orphanId = orphanStack.pop()!;
                     if (orphanId === 0 || visited.has(orphanId)) continue;
 
                     const orphanCouplet = idToCoupletMap.get(orphanId);
@@ -363,14 +386,19 @@ export class KeyStore {
                     visited.add(orphanId);
                     orderedCouplets.push(orphanCouplet);
 
-                    if (orphanCouplet.link1 && !visited.has(orphanCouplet.link1)) orphanQueue.push(orphanCouplet.link1);
-                    if (orphanCouplet.link2 && !visited.has(orphanCouplet.link2)) orphanQueue.push(orphanCouplet.link2);
+                    if (orphanCouplet.link2 && !visited.has(orphanCouplet.link2)) {
+                        orphanStack.push(orphanCouplet.link2);
+                    }
+                    if (orphanCouplet.link1 && !visited.has(orphanCouplet.link1)) {
+                        orphanStack.push(orphanCouplet.link1);
+                    }
                 }
             }
         });
 
-        // Commit the perfectly grouped layout
+        // Commit the cleanly structured hierarchical array back to application state
         this.state.dichotomousKey = orderedCouplets;
+        this.isDirty = true;
     }
 
     public replaceKeyData(newData: Couplet[]) {

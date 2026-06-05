@@ -291,3 +291,29 @@ export function renderPrintView(store: KeyStore) {
 
     container.innerHTML = htmlContent;
 }
+
+/**
+ * Spawns an asynchronous, non-blocking notification banner.
+ */
+export function showToast(message: string, type: 'success' | 'error' = 'success') {
+    let container = document.querySelector('.toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.className = 'toast-container';
+        document.body.appendChild(container);
+    }
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.innerHTML = message;
+
+    container.appendChild(toast);
+
+    // Completely clean up the DOM node after its fade-out animation finishes
+    setTimeout(() => {
+        toast.remove();
+        if (container && container.childElementCount === 0) {
+            container.remove();
+        }
+    }, 3000);
+}

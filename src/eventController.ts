@@ -1,6 +1,8 @@
 // eventController.ts
 import type { KeyStore } from './store.ts';
-import { getStepNumberById, renderPrintView } from './uiRenderer.ts';
+import { getStepNumberById, renderPrintView, showToast } from './uiRenderer.ts';
+import { exportKeyToHTML } from './htmlExporter.ts';
+import { exportKeyToLaTeX } from './latexExporter.ts';
 
 function parseLinkInput(val: string, maxItems: number): number {
     const num = parseInt(val) || 0;
@@ -134,6 +136,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     // STANDALONE TOOLBAR ACTIONS
     // ==========================================
     document.querySelector('#cmd-undo')?.addEventListener('click', () => { if (store.undo()) refreshAll(); });
+
     document.querySelector('#cmd-redo')?.addEventListener('click', () => { if (store.redo()) refreshAll(); });
 
     document.querySelector('#cmd-save')?.addEventListener('click', () => {
@@ -147,7 +150,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             localStorage.setItem('dichotomous_key', serializedData);
 
             store.markSaved();
-            alert("💾 Saved successfully to local engine database!");
+            showToast("💾 Changes saved to local browser data!", "success");
             refreshAll();
 
         } catch (error: any) {
@@ -205,15 +208,15 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
     document.querySelector('#cmd-delete-selected')?.addEventListener('click', () => {
         if (store.getSelectedIds().length === 0) return;
-        if (confirm("Confirm removing highlighted element blocks?")) {
+        if (confirm("Confirm removing highlighted key steps?")) {
             store.deleteSelected();
             refreshAll();
         }
     });
 
     document.querySelector('#cmd-reorder')?.addEventListener('click', () => {
-        store.autoOrderBFS();
-        alert("Memory re-indexed sequentially using BFS sibling grouping!");
+        store.autoOrder();
+        showToast("Key steps reordered with shorter branches first!", "success");
         refreshAll();
     });
 
@@ -257,8 +260,12 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             dlAnchor.click();
 
             URL.revokeObjectURL(url);
+        } else if (format === 'html') {
+            exportKeyToHTML(store);
+        } else if (format === 'latex') {
+            exportKeyToLaTeX(store);
         } else {
-            alert(`Format conversion engine initiated for: [${format.toUpperCase()}].`);
+            alert(`Export not implemented for: [${format.toUpperCase()}].`);
         }
 
         selectEl.value = "";
@@ -275,12 +282,12 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
         // Cross-platform modifier detection (Command key on macOS, Control on Windows/Linux)
         const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
         const hasModifier = isMac ? e.metaKey : e.ctrlKey;
-        
+
         // Determine context state
         const activeElement = document.activeElement;
         const isTyping = activeElement && (
-            activeElement.tagName === 'INPUT' || 
-            activeElement.tagName === 'TEXTAREA' || 
+            activeElement.tagName === 'INPUT' ||
+            activeElement.tagName === 'TEXTAREA' ||
             activeElement.hasAttribute('contenteditable')
         );
 
@@ -297,7 +304,7 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
         // CANVAS CONTEXT COMMANDS (Only if NOT typing)
         // ==========================================
         if (!isTyping) {
-            
+
             // Ctrl + A: Select All Cards
             if (hasModifier && e.key.toLowerCase() === 'a') {
                 e.preventDefault();
