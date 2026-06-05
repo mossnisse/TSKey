@@ -1,10 +1,9 @@
 // eventController.ts
 import type { KeyStore } from './store.ts';
 import { renderPrintView, showToast } from './uiRenderer.ts';
-import { getStepNumberById } from './utils.ts';
-import { exportKeyToHTML } from './htmlExporter.ts';
-import { exportKeyToLaTeX } from './latexExporter.ts';
-
+import { exportKeyToHTML } from './exporters/htmlExporter.ts';
+import { exportKeyToLaTeX } from './exporters/latexExporter.ts';
+import { exportKeyToPlainText } from './exporters/plainTextExporter.ts';
 
 function parseLinkInput(val: string, maxItems: number): number {
     const num = parseInt(val) || 0;
@@ -21,24 +20,30 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     if (!container) return;
 
     let typingSessionActive = false;
+    let currentEditingFieldKey: string | null = null; // Tracks exactly which card + field is active
+    let typingTimeoutId: number | null = null;        // Holds the debounce timer reference
 
-    // Centralized Multi-Selection Router Click
-    container.addEventListener('click', (evt: Event) => {
-        const e = evt as MouseEvent;
+    container.addEventListener('click', (e) => {
+        const mouseEvent = e as MouseEvent;
         const target = e.target as HTMLElement;
-        if (target.closest('input, textarea, button, select')) return;
+
+        // Prevent card selection if the user is interacting with text inputs or textareas
+        if (target.closest('input, textarea')) return;
 
         const card = target.closest('.key-card') as HTMLElement;
         if (!card) return;
 
         const id = Number(card.getAttribute('data-id'));
-        const isMulti = e.ctrlKey || e.metaKey;
 
-        store.toggleSelection(id, isMulti);
+        // Enable multi-select when holding Control, Command (Mac), or Shift keys
+        const multiSelect = mouseEvent.ctrlKey || mouseEvent.metaKey || mouseEvent.shiftKey;
+
+        store.toggleSelection(id, multiSelect);
         refreshAll();
     });
 
-    // Centralized Input Streaming Optimization Router
+    // Centralized Multi-Selection Router Click
+    // CONSOLIDATED INPUT ROUTER (Handles Undo Debouncing + Link Validation)
     container.addEventListener('input', (e) => {
         const target = e.target as HTMLInputElement | HTMLTextAreaElement;
         if (!target.classList.contains('input-sync')) return;
@@ -49,29 +54,39 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         const id = Number(card.getAttribute('data-id'));
         const field = target.getAttribute('data-field')!;
         const key = store.getKey();
+        const fieldKey = `${id}-${field}`;
 
         store.setActiveCard(id);
 
-        if (!typingSessionActive) {
-            store.commitHistoryCheckpoint();
+        // Undo History Checkpoint Manager
+        // Trigger a checkpoint ONLY if this is a fresh typing session or we jumped to a new input field
+        if (!typingSessionActive || currentEditingFieldKey !== fieldKey) {
+            store.commitHistoryCheckpoint(); // Save state BEFORE these new edits apply
             typingSessionActive = true;
+            currentEditingFieldKey = fieldKey;
         }
 
-        /*
-        let value: any = target.value;
-        if (field === 'link1' || field === 'link2') {
-            const stepNum = parseLinkInput(value, key.length);
-            value = stepNum > 0 ? key[stepNum - 1].id : 0;
-        }*/
+        // Clear the previous timer to extend the active typing chunk
+        if (typingTimeoutId !== null) {
+            clearTimeout(typingTimeoutId);
+        }
 
+        // If the user stops typing for 800ms, clear the session flag.
+        // The next character typed will trigger a brand new Undo checkpoint.
+        typingTimeoutId = window.setTimeout(() => {
+            typingSessionActive = false;
+            typingTimeoutId = null;
+        }, 800);
+
+        // Input Validation & Value Extraction
         let value: any = target.value;
         if (field === 'link1' || field === 'link2') {
             const num = parseInt(value) || 0;
 
-            // Check if the user typed an explicit out-of-bounds number
+            // Check for explicit out-of-bounds numbers
             if (value !== '' && (num <= 0 || num > key.length)) {
-                target.classList.add('input-error'); // Flag visual error
-                value = 0; // Fallback back-end state safely to 0
+                target.classList.add('input-error');
+                value = 0; // Fallback safely to prevent graph corruption
             } else {
                 target.classList.remove('input-error');
                 const stepNum = parseLinkInput(value, key.length);
@@ -79,8 +94,10 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             }
         }
 
+        // State Mutation & Render
+        // Update in-memory state silently, bypassing automatic history tracking
         store.updateCouplet(id, { [field]: value });
-        renderPrintView(store); // Fast, single-column incremental updates on input events
+        renderPrintView(store);
     });
 
     // Centralized Drag and Form Text Highlight Mitigation
@@ -97,27 +114,35 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     });
 
     // Centralized Serialization Execution Focusout
-    container.addEventListener('focusout', (e) => {
+    container.addEventListener('focusout', (evt: Event) => {
+        const e = evt as FocusEvent;
         const target = e.target as HTMLElement;
+
         if (target.matches('input, textarea')) {
             const card = target.closest('.key-card') as HTMLElement;
             if (card) card.draggable = true;
 
+            // HARD RESET: The user exited the current text input context.
             typingSessionActive = false;
+            currentEditingFieldKey = null;
+            if (typingTimeoutId !== null) {
+                clearTimeout(typingTimeoutId);
+                typingTimeoutId = null;
+            }
 
-            // 💡 Catch invalid link entry right before refreshAll() clears it
             if (target.classList.contains('input-error') && target instanceof HTMLInputElement) {
                 const invalidVal = target.value;
                 showToast(`⚠️ Step "${invalidVal}" does not exist yet. Link reset to unassigned.`, "error");
                 target.classList.remove('input-error');
             }
 
-            setTimeout(() => {
-                if (card && !card.contains(document.activeElement)) {
-                    store.clearActiveCard();
-                    refreshAll();
-                }
-            }, 0);
+            store.clearActiveCard();
+
+            const destination = e.relatedTarget as HTMLElement | null;
+            // Prevent destructive DOM re-renders if jumping directly to a sister card
+            if (!destination || !destination.closest('.key-card')) {
+                refreshAll();
+            }
         }
     });
 
@@ -257,34 +282,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         if (!format) return;
 
         if (format === 'text') {
-            const key = store.getKey();
-            let textContent = '';
-
-            key.forEach((c, index) => {
-                const currentDisplayNum = index + 1;
-
-                const step1Dest = getStepNumberById(key, c.link1);
-                const step2Dest = getStepNumberById(key, c.link2);
-
-                const end1 = c.taxa1 ? c.taxa1 : (c.link1 ? step1Dest : '...');
-                const end2 = c.taxa2 ? c.taxa2 : (c.link2 ? step2Dest : '...');
-
-                const alt1Text = c.alt1 || '___';
-                const alt2Text = c.alt2 || '___';
-
-                textContent += `${currentDisplayNum}.\t${alt1Text}\t${end1}\n`;
-                textContent += `—\t${alt2Text}\t${end2}\n\n`;
-            });
-
-            const blob = new Blob([textContent], { type: 'text/plain;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
-            const dlAnchor = document.createElement('a');
-
-            dlAnchor.setAttribute("href", url);
-            dlAnchor.setAttribute("download", "dichotomous_key_render.txt");
-            dlAnchor.click();
-
-            URL.revokeObjectURL(url);
+            exportKeyToPlainText(store);
         } else if (format === 'html') {
             exportKeyToHTML(store);
         } else if (format === 'latex') {

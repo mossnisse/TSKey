@@ -90,25 +90,17 @@ export function renderEditorCards(store: KeyStore) {
     const deleteBtn = document.querySelector('#cmd-delete-selected') as HTMLButtonElement;
     if (deleteBtn) deleteBtn.textContent = `🗑️ Delete Selected (${selectedIds.length})`;
 
+    // FIX 1: Populate the ID-to-Index lookup map in an efficient single pass
     const idToIndexMap = new Map<number, number>();
-    const inboundLinksMap = new Map<number, string[]>();
+    key.forEach((couplet, index) => {
+        idToIndexMap.set(couplet.id, index);
+    });
+
+    // FIX 2: Pull the pre-calculated global inbound index map from the store
+    const inboundLinksMap = store.generateInboundLinksMap();
     const selectedIdsSet = new Set(selectedIds);
 
-    key.forEach((couplet, idx) => {
-        idToIndexMap.set(couplet.id, idx);
-    });
-
-    key.forEach((searchNode, searchIdx) => {
-        if (searchNode.link1) {
-            if (!inboundLinksMap.has(searchNode.link1)) inboundLinksMap.set(searchNode.link1, []);
-            inboundLinksMap.get(searchNode.link1)!.push(`#${searchIdx + 1}a`);
-        }
-        if (searchNode.link2) {
-            if (!inboundLinksMap.has(searchNode.link2)) inboundLinksMap.set(searchNode.link2, []);
-            inboundLinksMap.get(searchNode.link2)!.push(`#${searchIdx + 1}b`);
-        }
-    });
-
+    // Map existing DOM elements to support safe focus-preserving reconciliation
     const existingCards = Array.from(container.querySelectorAll('.key-card')) as HTMLElement[];
     const existingMap = new Map<number, HTMLElement>();
     existingCards.forEach(card => {
@@ -120,19 +112,23 @@ export function renderEditorCards(store: KeyStore) {
         const displayNum = index + 1;
         const isSelected = selectedIdsSet.has(couplet.id);
 
+        // Fetch pre-computed links safely
         const inboundLinks = inboundLinksMap.get(couplet.id) || [];
         const idx1 = couplet.link1 ? idToIndexMap.get(couplet.link1) : undefined;
         const idx2 = couplet.link2 ? idToIndexMap.get(couplet.link2) : undefined;
 
+        // Human-readable 1-based indices for destination goto boxes
         const viewLink1 = idx1 !== undefined ? (idx1 + 1).toString() : '';
         const viewLink2 = idx2 !== undefined ? (idx2 + 1).toString() : '';
 
         const cardErrors = activeDiagnostics.get(couplet.id) || [];
         const hasErrors = cardErrors.some(e => e.severity === 'error');
 
+        // Contextual styling badges
         const badgeClass = inboundLinks.length ? 'badge badge-linked' : (index === 0 ? 'badge badge-linked' : 'badge badge-isolated');
         const badgeLabel = inboundLinks.length ? `Linked from: ${inboundLinks.map(escapeHTML).join(', ')}` : (index === 0 ? '🏁 Root Node' : '⚠️ Isolated Node');
 
+        // Diagnostic validation assembly
         let warningInnerHtml = '';
         cardErrors.forEach(err => {
             const modifierClass = err.severity === 'error' ? 'error-text' : 'warning-text';
@@ -145,6 +141,7 @@ export function renderEditorCards(store: KeyStore) {
 
         let card = existingMap.get(couplet.id);
         if (card) {
+            // ELEMENT RECONCILIATION ROUTE (Updates properties without losing cursor selection)
             existingMap.delete(couplet.id);
 
             card.className = 'key-card';
@@ -162,6 +159,7 @@ export function renderEditorCards(store: KeyStore) {
                 if (badgeEl.textContent !== badgeLabel) badgeEl.textContent = badgeLabel;
             }
 
+            // Sync structural values securely 
             syncField(card, 'textarea[data-field="alt1"]', couplet.alt1);
             syncField(card, 'input[data-field="taxa1"]', couplet.taxa1);
             syncField(card, 'input[data-field="link1"]', viewLink1, key.length.toString());
@@ -170,10 +168,10 @@ export function renderEditorCards(store: KeyStore) {
             syncField(card, 'input[data-field="taxa2"]', couplet.taxa2);
             syncField(card, 'input[data-field="link2"]', viewLink2, key.length.toString());
 
+            // Diagnostic Warnings Update Tree Sync
             const currentWarningBlock = card.querySelector('.warning-block');
             if (cardErrors.length > 0) {
                 if (currentWarningBlock) {
-                    // Direct comparison with no .replace() hacks required
                     if (currentWarningBlock.innerHTML !== warningInnerHtml) {
                         currentWarningBlock.innerHTML = warningInnerHtml;
                     }
@@ -188,6 +186,7 @@ export function renderEditorCards(store: KeyStore) {
 
             container.appendChild(card);
         } else {
+            // INITIAL GENERATION ROUTE (Executes when a brand new card is created)
             card = document.createElement('div');
             card.draggable = true;
             card.setAttribute('data-id', couplet.id.toString());
@@ -234,48 +233,13 @@ export function renderEditorCards(store: KeyStore) {
         }
     });
 
+    // Cleanup redundant steps left behind after changes
     existingMap.forEach(card => card.remove());
 }
 
 /**
  * Renders the passive publication presentation view structure.
  */
-
-/*
-export function renderPrintView(store: KeyStore) {
-    const container = document.querySelector('#print-view-container');
-    if (!container) return;
-
-    const key = store.getKey();
-    let htmlContent = '';
-
-    key.forEach((c, index) => {
-        const currentDisplayNum = index + 1;
-        const step1Dest = getStepNumberById(key, c.link1);
-        const step2Dest = getStepNumberById(key, c.link2);
-
-        const end1 = c.taxa1 ? `<strong class="print-dest-taxon">${escapeHTML(c.taxa1)}</strong>` : (c.link1 ? `<strong class="print-dest-strong">${step1Dest}</strong>` : '<span>...</span>');
-        const end2 = c.taxa2 ? `<strong class="print-dest-taxon">${escapeHTML(c.taxa2)}</strong>` : (c.link2 ? `<strong class="print-dest-strong">${step2Dest}</strong>` : '<span>...</span>');
-
-        htmlContent += `
-            <div class="print-step-num">${currentDisplayNum}.</div>
-            <div class="print-row">
-              <span class="print-text">${escapeHTML(c.alt1) || '___'}</span>
-              <span class="print-dots"></span>
-              <span class="print-dest">${end1}</span>
-            </div>
-            <div class="print-dash">—</div>
-            <div class="print-row">
-              <span class="print-text">${escapeHTML(c.alt2) || '___'}</span>
-              <span class="print-dots"></span>
-              <span class="print-dest">${end2}</span>
-            </div>
-            <div class="print-spacer"></div>
-        `;
-    });
-
-    container.innerHTML = htmlContent;
-}*/
 
 export function renderPrintView(store: KeyStore) {
     const container = document.querySelector('#print-view-container');
@@ -297,16 +261,17 @@ export function renderPrintView(store: KeyStore) {
         const step1Dest = getStepNumberById(key, c.link1);
         const step2Dest = getStepNumberById(key, c.link2);
 
-        const end1 = c.taxa1
-            ? `<strong class="print-dest-taxon">${escapeHTML(c.taxa1)}</strong>`
-            : (c.link1 ? `<strong class="print-dest-strong">${step1Dest}</strong>` : '<span>...</span>');
+        // Compute styling metadata instead of storing HTML markup raw strings
+        const dest1Info = c.taxa1 
+            ? { text: c.taxa1, className: 'print-dest-taxon' } 
+            : (c.link1 ? { text: step1Dest, className: 'print-dest-strong' } : { text: '...', className: '' });
 
-        const end2 = c.taxa2
-            ? `<strong class="print-dest-taxon">${escapeHTML(c.taxa2)}</strong>`
-            : (c.link2 ? `<strong class="print-dest-strong">${step2Dest}</strong>` : '<span>...</span>');
+        const dest2Info = c.taxa2 
+            ? { text: c.taxa2, className: 'print-dest-taxon' } 
+            : (c.link2 ? { text: step2Dest, className: 'print-dest-strong' } : { text: '...', className: '' });
 
-        const val1 = escapeHTML(c.alt1) || '___';
-        const val2 = escapeHTML(c.alt2) || '___';
+        const val1 = c.alt1 || '___';
+        const val2 = c.alt2 || '___';
 
         let block = existingMap.get(c.id);
 
@@ -314,25 +279,37 @@ export function renderPrintView(store: KeyStore) {
             // Element exists: pull from map to protect it from deletion sweep
             existingMap.delete(c.id);
 
-            // 1. Sync Step Index Label
+            // Sync Step Index Label
             const stepNumEl = block.querySelector('.print-step-num');
             if (stepNumEl && stepNumEl.textContent !== `${currentDisplayNum}.`) {
                 stepNumEl.textContent = `${currentDisplayNum}.`;
             }
 
-            // 2. Sync Choice A Text and Destination
+            // Sync Choice A Text
             const txt1 = block.querySelector('.print-row[data-choice="1"] .print-text');
             if (txt1 && txt1.textContent !== val1) txt1.textContent = val1;
 
+            // Safe, consistent updates for Destination A
             const dest1 = block.querySelector('.print-row[data-choice="1"] .print-dest');
-            if (dest1 && dest1.innerHTML !== end1) dest1.innerHTML = end1;
+            if (dest1) {
+                if (dest1.textContent !== dest1Info.text) dest1.textContent = dest1Info.text;
+                if (dest1.className !== `print-dest ${dest1Info.className}`.trim()) {
+                    dest1.className = `print-dest ${dest1Info.className}`.trim();
+                }
+            }
 
-            // 3. Sync Choice B Text and Destination
+            // Sync Choice B Text
             const txt2 = block.querySelector('.print-row[data-choice="2"] .print-text');
             if (txt2 && txt2.textContent !== val2) txt2.textContent = val2;
 
+            // Safe, consistent updates for Destination B
             const dest2 = block.querySelector('.print-row[data-choice="2"] .print-dest');
-            if (dest2 && dest2.innerHTML !== end2) dest2.innerHTML = end2;
+            if (dest2) {
+                if (dest2.textContent !== dest2Info.text) dest2.textContent = dest2Info.text;
+                if (dest2.className !== `print-dest ${dest2Info.className}`.trim()) {
+                    dest2.className = `print-dest ${dest2Info.className}`.trim();
+                }
+            }
 
             // Re-append existing block to update position order instantly 
             container.appendChild(block);
@@ -342,31 +319,43 @@ export function renderPrintView(store: KeyStore) {
             block = document.createElement('div');
             block.className = 'print-step-block';
             block.setAttribute('data-id', c.id.toString());
-
-            // 💡 CRITICAL: display: contents shields this element from grid metrics calculations, 
-            // forcing children to cleanly drop directly into the root .print-grid alignment engine.
             block.style.display = 'contents';
 
+            // Initial building template. No user variables are injected via innerHTML template strings.
+            // This isolates structural configuration setup away from dynamic mutation strings.
             block.innerHTML = `
-                <div class="print-step-num">${currentDisplayNum}.</div>
+                <div class="print-step-num"></div>
                 <div class="print-row" data-choice="1">
-                  <span class="print-text">${val1}</span>
+                  <span class="print-text"></span>
                   <span class="print-dots"></span>
-                  <span class="print-dest">${end1}</span>
+                  <span class="print-dest"></span>
                 </div>
                 <div class="print-dash">—</div>
                 <div class="print-row" data-choice="2">
-                  <span class="print-text">${val2}</span>
+                  <span class="print-text"></span>
                   <span class="print-dots"></span>
-                  <span class="print-dest">${end2}</span>
+                  <span class="print-dest"></span>
                 </div>
                 <div class="print-spacer"></div>
             `;
+
+            // Natively assign text and classes using strict DOM mutations
+            block.querySelector('.print-step-num')!.textContent = `${currentDisplayNum}.`;
+            
+            block.querySelector('.print-row[data-choice="1"] .print-text')!.textContent = val1;
+            const dest1 = block.querySelector('.print-row[data-choice="1"] .print-dest')!;
+            dest1.textContent = dest1Info.text;
+            if (dest1Info.className) dest1.classList.add(dest1Info.className);
+
+            block.querySelector('.print-row[data-choice="2"] .print-text')!.textContent = val2;
+            const dest2 = block.querySelector('.print-row[data-choice="2"] .print-dest')!;
+            dest2.textContent = dest2Info.text;
+            if (dest2Info.className) dest2.classList.add(dest2Info.className);
+
             container.appendChild(block);
         }
     });
 
-    // Cleanup: Remove step nodes that are no longer part of active state configurations
     existingMap.forEach(block => block.remove());
 }
 

@@ -90,21 +90,19 @@ export class KeyStore {
 
     private saveCheckpoint() {
         this.redoStack = [];
-
-        this.undoStack.push(structuredClone(this.state));
+        this.undoStack.push({ dichotomousKey: this.state.dichotomousKey });
 
         if (this.undoStack.length > this.maxHistoryLimit) {
             this.undoStack.shift();
-            if (this.savedHistoryIndex > 0) this.savedHistoryIndex--;
-        } else {
-            this.currentHistoryIndex++;
         }
+        
+        this.currentHistoryIndex++;
     }
 
     public undo(): boolean {
         if (this.undoStack.length === 0) return false;
 
-        this.redoStack.push(structuredClone(this.state));
+        this.redoStack.push({ dichotomousKey: this.state.dichotomousKey });
 
         if (this.redoStack.length > this.maxHistoryLimit) {
             this.redoStack.shift();
@@ -112,22 +110,22 @@ export class KeyStore {
 
         this.state = this.undoStack.pop()!;
 
+        // Decrement down the absolute timeline
         this.currentHistoryIndex--;
         this.isDirty = false;
         return true;
     }
 
-    public redo(): boolean {
+   public redo(): boolean {
         if (this.redoStack.length === 0) return false;
 
-        this.undoStack.push(structuredClone(this.state));
+        this.undoStack.push({ dichotomousKey: this.state.dichotomousKey });
 
         if (this.undoStack.length > this.maxHistoryLimit) {
             this.undoStack.shift();
-            if (this.savedHistoryIndex > 0) this.savedHistoryIndex--;
-        } else {
-            this.currentHistoryIndex++;
         }
+
+        this.currentHistoryIndex++;
 
         this.state = this.redoStack.pop()!;
 
@@ -148,28 +146,49 @@ export class KeyStore {
     }
 
     /**
-     * Sweeps the key matrix to find all parent step routes targeting an internal ID.
-     * Returns human-readable labels like ["#1a", "#4b"].
+     * Computes a highly optimized inverted lookup map of all inbound links 
+     * across the entire key sequence in a single O(N) execution pass.
+     */
+    public generateInboundLinksMap(): Map<number, string[]> {
+        const map = new Map<number, string[]>();
+        const key = this.state.dichotomousKey;
+
+        key.forEach((couplet, index) => {
+            const humanLabel = index + 1;
+
+            if (couplet.link1) {
+                if (!map.has(couplet.link1)) map.set(couplet.link1, []);
+                map.get(couplet.link1)!.push(`#${humanLabel}a`);
+            }
+            if (couplet.link2) {
+                if (!map.has(couplet.link2)) map.set(couplet.link2, []);
+                map.get(couplet.link2)!.push(`#${humanLabel}b`);
+            }
+        });
+
+        return map;
+    }
+
+    /**
+     * Fallback lookup helper for individual node tracking.
+     * Uses the bulk map under the hood to guarantee O(1) retrieval speeds.
      */
     public getInboundLinks(targetId: number): string[] {
-        const inbound: string[] = [];
-        if (!targetId) return inbound;
-
-        this.state.dichotomousKey.forEach((couplet, index) => {
-            if (couplet.link1 === targetId) inbound.push(`#${index + 1}a`);
-            if (couplet.link2 === targetId) inbound.push(`#${index + 1}b`);
-        });
-        return inbound;
+        if (!targetId) return [];
+        return this.generateInboundLinksMap().get(targetId) || [];
     }
 
     /**
      * Executes a Breadth-First Search (BFS) starting from the root node (Index 0).
      * Returns a Set containing all unique, reachable internal IDs.
      */
-    public getReachableNodes(): Set<number> {
+    public getReachableNodes(idMap?: Map<number, Couplet>): Set<number> {
         const reachable = new Set<number>();
         const key = this.state.dichotomousKey;
         if (key.length === 0) return reachable;
+
+        // Use the passed Map, or build an isolated one instantly to guarantee O(1) lookups
+        const lookupMap = idMap || new Map<number, Couplet>(key.map(c => [c.id, c]));
 
         // Start traversal queue at the absolute root step
         const queue: number[] = [key[0].id];
@@ -179,7 +198,8 @@ export class KeyStore {
             if (!reachable.has(activeId)) {
                 reachable.add(activeId);
 
-                const match = key.find(c => c.id === activeId);
+                // OPTIMIZED: Changed from an O(N) array search (.find) to an O(1) hash lookup
+                const match = lookupMap.get(activeId);
                 if (match) {
                     if (match.link1) queue.push(match.link1);
                     if (match.link2) queue.push(match.link2);
@@ -295,59 +315,55 @@ export class KeyStore {
         return true;
     }
 
-    // should also flip alt1/alt2 when needed. alt1 shouldbe the shorter branch.
+    // should also flip alt1/alt2 when needed. alt1 should be the shorter branch.
     public autoOrder() {
         if (this.state.dichotomousKey.length === 0) return;
+
+        // Commit history state SAFELY before transforming data
         this.saveCheckpoint();
 
-        const key = this.state.dichotomousKey;
-
-        // BRANCH OPTIMIZATION PASS (Taxon Mirroring Swap)
-        // If Choice B resolves to a taxon, but Choice A is a deep continuation link,
-        // swap their internals to prioritize the shorter branch on Choice A.
-        key.forEach(c => {
+        // IMMUTABLE BRANCH OPTIMIZATION PASS (Taxon Mirroring Swap)
+        // Map elements into clean objects rather than mutating in place.
+        const optimizedKey = this.state.dichotomousKey.map(c => {
             const hasTaxa1 = !!c.taxa1 && c.taxa1.trim() !== '';
             const hasTaxa2 = !!c.taxa2 && c.taxa2.trim() !== '';
 
             // Swap condition: Choice B has an endpoint taxon, Choice A does not
             if (hasTaxa2 && !hasTaxa1) {
-                // Swap Alternative descriptions
-                const tempAlt = c.alt1;
-                c.alt1 = c.alt2;
-                c.alt2 = tempAlt;
-
-                // Swap Destination Links
-                const tempLink = c.link1;
-                c.link1 = c.link2;
-                c.link2 = tempLink;
-
-                // Swap Target Taxa names
-                const tempTaxa = c.taxa1;
-                c.taxa1 = c.taxa2;
-                c.taxa2 = tempTaxa;
+                return {
+                    ...c,
+                    alt1: c.alt2,
+                    alt2: c.alt1,
+                    link1: c.link2,
+                    link2: c.link1,
+                    taxa1: c.taxa2,
+                    taxa2: c.taxa1
+                };
             }
+            // Return unchanged copy to maintain pure array sequence isolation
+            return { ...c };
         });
 
-        // GRAPH REBUILDING (Based on fresh, optimized links)
-        const idToCoupletMap = new Map<number, Couplet>(key.map(c => [c.id, c]));
+        // GRAPH REBUILDING (Using the freshly optimized copies)
+        const idToCoupletMap = new Map<number, Couplet>(optimizedKey.map(c => [c.id, c]));
 
         // Recompute structural in-degrees
         const incomingCounts = new Map<number, number>();
-        key.forEach(c => {
+        optimizedKey.forEach(c => {
             if (c.link1) incomingCounts.set(c.link1, (incomingCounts.get(c.link1) || 0) + 1);
             if (c.link2) incomingCounts.set(c.link2, (incomingCounts.get(c.link2) || 0) + 1);
         });
 
         // Identify structural roots
-        const roots = key.filter(c => !incomingCounts.has(c.id));
+        const roots = optimizedKey.filter(c => !incomingCounts.has(c.id));
         if (roots.length === 0) {
-            roots.push(key[0]);
+            roots.push(optimizedKey[0]);
         }
 
         const visited = new Set<number>();
         const orderedCouplets: Couplet[] = [];
 
-        // PRE-ORDER DFS STRUCTURAL LAYOUT=
+        // PRE-ORDER DFS STRUCTURAL LAYOUT
         roots.forEach(root => {
             if (visited.has(root.id)) return;
 
@@ -373,7 +389,7 @@ export class KeyStore {
         });
 
         // CLEANUP SWEEP (Orphaned / Cyclical islands)
-        key.forEach(c => {
+        optimizedKey.forEach(c => {
             if (!visited.has(c.id)) {
                 const orphanStack = [c.id];
                 while (orphanStack.length > 0) {
@@ -460,9 +476,9 @@ export class KeyStore {
         }
 
         // Safe State Transition
-        this.saveCheckpoint(); //
-        this.state.dichotomousKey = validatedData; //
-        this.selectedIds = []; //
+        this.saveCheckpoint();
+        this.state.dichotomousKey = validatedData;
+        this.selectedIds = [];
 
         return { success: true, errors: [] };
     }
@@ -507,9 +523,8 @@ export class KeyStore {
             idToIndexMap.set(c.id, index);
         });
 
-        // ─── REFACTORED TO USE EXSTING TRAVERSAL HELPER ─────────────────────
-        const reachableNodes = this.getReachableNodes();
-        // ────────────────────────────────────────────────────────────────────
+        // OPTIMIZED: Pass the pre-built lookup map to completely bypass inner nested loops
+        const reachableNodes = this.getReachableNodes(idMap);
 
         // Parent Map grouping
         const inboundParentMap = new Map<number, Set<number>>();
@@ -533,8 +548,11 @@ export class KeyStore {
             }
             if (c.link1 === c.id) issues.push({ severity: 'error', message: 'Choice A loops directly into its own card.' });
             if (c.link2 === c.id) issues.push({ severity: 'error', message: 'Choice B loops directly into its own card.' });
+
+            // OPTIMIZED: These lookups use our Map perfectly and efficiently
             if (c.link1 && !idMap.has(c.link1)) issues.push({ severity: 'error', message: 'Choice A points to an invalid or deleted step.' });
             if (c.link2 && !idMap.has(c.link2)) issues.push({ severity: 'error', message: 'Choice B points to an invalid or deleted step.' });
+
             if (!c.taxa1 && !c.link1) issues.push({ severity: 'warning', message: 'Choice A is incomplete. Assign a Taxa or destination step.' });
             if (!c.taxa2 && !c.link2) issues.push({ severity: 'warning', message: 'Choice B is incomplete. Assign a Taxa or destination step.' });
             if (c.taxa1 && c.link1) issues.push({ severity: 'warning', message: 'Choice A contains both Taxa and a Goto jump (Hint Mode activated).' });

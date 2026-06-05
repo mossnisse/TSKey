@@ -1,15 +1,13 @@
 // htmlExporter.ts
-import type { KeyStore } from './store.ts';
-import { escapeHTML, getStepNumberById } from './utils.ts';
-import { showToast } from './uiRenderer.ts';
+import type { KeyStore } from '../store.ts';
+import { escapeHTML, getStepNumberById, triggerFileDownload } from '../utils.ts';
+import { showToast } from '../uiRenderer.ts';
 
 /**
  * Compiles the current KeyStore state into a single standalone static HTML document.
  * Includes semantic validation protection and bulletproof DOM safety checks.
  */
 export function exportKeyToHTML(store: KeyStore): void {
-    let downloadUrl: string | null = null;
-
     try {
         const key = store.getKey();
         let gridContent = '';
@@ -76,26 +74,10 @@ export function exportKeyToHTML(store: KeyStore): void {
 </body>
 </html>`;
 
-        const blob = new Blob([htmlDocument], { type: 'text/html;charset=utf-8' });
-        downloadUrl = URL.createObjectURL(blob);
-
-        // Modern browsers do NOT require an anchor element to be appended to document.body 
-        // to call trigger execution routines. We instantiate and click completely in isolation.
-        const link = document.createElement('a');
-        link.href = downloadUrl;
-        link.download = 'dichotomous_key.html';
+        triggerFileDownload(htmlDocument, 'dichotomous_key_publication.html', 'text/html;charset=utf-8;');
         
-        link.click(); // Fires successfully without dirtying the DOM tree
-
-        showToast('Key successfully compiled and exported!', 'success');
-
     } catch (error) {
         console.error('HTML Export system failure:', error);
         showToast('❌ An unexpected error disrupted the HTML file compilation pipeline.', 'error');
-    } finally {
-        // PREVENT MEMORY LEAKS: Revoke Object URL immediately
-        if (downloadUrl) {
-            URL.revokeObjectURL(downloadUrl);
-        }
     }
 }

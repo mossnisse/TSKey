@@ -73,6 +73,7 @@ const refreshAll = () => {
 window.addEventListener('beforeunload', (event) => {
     if (store.hasUnsavedChanges()) {
         event.preventDefault();
+        event.returnValue = '';
     }
 });
 
