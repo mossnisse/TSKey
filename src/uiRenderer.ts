@@ -133,18 +133,17 @@ export function renderEditorCards(store: KeyStore) {
         const badgeClass = inboundLinks.length ? 'badge badge-linked' : (index === 0 ? 'badge badge-linked' : 'badge badge-isolated');
         const badgeLabel = inboundLinks.length ? `Linked from: ${inboundLinks.map(escapeHTML).join(', ')}` : (index === 0 ? '🏁 Root Node' : '⚠️ Isolated Node');
 
-        let warningBlockHtml = '';
-        if (cardErrors.length > 0) {
-            warningBlockHtml = `<div class="warning-block">`;
-            cardErrors.forEach(err => {
-                const modifierClass = err.severity === 'error' ? 'error-text' : 'warning-text';
-                warningBlockHtml += `<span class="${modifierClass}">⚠️ ${err.message}</span>`;
-            });
-            warningBlockHtml += `</div>`;
-        }
+        let warningInnerHtml = '';
+        cardErrors.forEach(err => {
+            const modifierClass = err.severity === 'error' ? 'error-text' : 'warning-text';
+            warningInnerHtml += `<span class="${modifierClass}">⚠️ ${err.message}</span>`;
+        });
+
+        const warningBlockHtml = cardErrors.length > 0
+            ? `<div class="warning-block">${warningInnerHtml}</div>`
+            : '';
 
         let card = existingMap.get(couplet.id);
-
         if (card) {
             existingMap.delete(couplet.id);
 
@@ -172,11 +171,11 @@ export function renderEditorCards(store: KeyStore) {
             syncField(card, 'input[data-field="link2"]', viewLink2, key.length.toString());
 
             const currentWarningBlock = card.querySelector('.warning-block');
-            if (warningBlockHtml) {
-                const strippedInner = warningBlockHtml.replace('<div class="warning-block">', '').replace('</div>', '');
+            if (cardErrors.length > 0) {
                 if (currentWarningBlock) {
-                    if (currentWarningBlock.innerHTML !== strippedInner) {
-                        currentWarningBlock.innerHTML = strippedInner;
+                    // Direct comparison with no .replace() hacks required
+                    if (currentWarningBlock.innerHTML !== warningInnerHtml) {
+                        currentWarningBlock.innerHTML = warningInnerHtml;
                     }
                 } else {
                     const tempDiv = document.createElement('div');
@@ -188,7 +187,6 @@ export function renderEditorCards(store: KeyStore) {
             }
 
             container.appendChild(card);
-
         } else {
             card = document.createElement('div');
             card.draggable = true;
@@ -242,6 +240,8 @@ export function renderEditorCards(store: KeyStore) {
 /**
  * Renders the passive publication presentation view structure.
  */
+
+/*
 export function renderPrintView(store: KeyStore) {
     const container = document.querySelector('#print-view-container');
     if (!container) return;
@@ -275,6 +275,99 @@ export function renderPrintView(store: KeyStore) {
     });
 
     container.innerHTML = htmlContent;
+}*/
+
+export function renderPrintView(store: KeyStore) {
+    const container = document.querySelector('#print-view-container');
+    if (!container) return;
+
+    const key = store.getKey();
+
+    // Map existing DOM blocks currently residing on the preview canvas
+    const existingBlocks = Array.from(container.querySelectorAll('.print-step-block')) as HTMLElement[];
+    const existingMap = new Map<number, HTMLElement>();
+    existingBlocks.forEach(block => {
+        const id = Number(block.getAttribute('data-id'));
+        existingMap.set(id, block);
+    });
+
+    // Reconcile or build blocks based on current KeyStore sequence state
+    key.forEach((c, index) => {
+        const currentDisplayNum = index + 1;
+        const step1Dest = getStepNumberById(key, c.link1);
+        const step2Dest = getStepNumberById(key, c.link2);
+
+        const end1 = c.taxa1
+            ? `<strong class="print-dest-taxon">${escapeHTML(c.taxa1)}</strong>`
+            : (c.link1 ? `<strong class="print-dest-strong">${step1Dest}</strong>` : '<span>...</span>');
+
+        const end2 = c.taxa2
+            ? `<strong class="print-dest-taxon">${escapeHTML(c.taxa2)}</strong>`
+            : (c.link2 ? `<strong class="print-dest-strong">${step2Dest}</strong>` : '<span>...</span>');
+
+        const val1 = escapeHTML(c.alt1) || '___';
+        const val2 = escapeHTML(c.alt2) || '___';
+
+        let block = existingMap.get(c.id);
+
+        if (block) {
+            // Element exists: pull from map to protect it from deletion sweep
+            existingMap.delete(c.id);
+
+            // 1. Sync Step Index Label
+            const stepNumEl = block.querySelector('.print-step-num');
+            if (stepNumEl && stepNumEl.textContent !== `${currentDisplayNum}.`) {
+                stepNumEl.textContent = `${currentDisplayNum}.`;
+            }
+
+            // 2. Sync Choice A Text and Destination
+            const txt1 = block.querySelector('.print-row[data-choice="1"] .print-text');
+            if (txt1 && txt1.textContent !== val1) txt1.textContent = val1;
+
+            const dest1 = block.querySelector('.print-row[data-choice="1"] .print-dest');
+            if (dest1 && dest1.innerHTML !== end1) dest1.innerHTML = end1;
+
+            // 3. Sync Choice B Text and Destination
+            const txt2 = block.querySelector('.print-row[data-choice="2"] .print-text');
+            if (txt2 && txt2.textContent !== val2) txt2.textContent = val2;
+
+            const dest2 = block.querySelector('.print-row[data-choice="2"] .print-dest');
+            if (dest2 && dest2.innerHTML !== end2) dest2.innerHTML = end2;
+
+            // Re-append existing block to update position order instantly 
+            container.appendChild(block);
+
+        } else {
+            // Element does not exist: perform isolated node construction
+            block = document.createElement('div');
+            block.className = 'print-step-block';
+            block.setAttribute('data-id', c.id.toString());
+
+            // 💡 CRITICAL: display: contents shields this element from grid metrics calculations, 
+            // forcing children to cleanly drop directly into the root .print-grid alignment engine.
+            block.style.display = 'contents';
+
+            block.innerHTML = `
+                <div class="print-step-num">${currentDisplayNum}.</div>
+                <div class="print-row" data-choice="1">
+                  <span class="print-text">${val1}</span>
+                  <span class="print-dots"></span>
+                  <span class="print-dest">${end1}</span>
+                </div>
+                <div class="print-dash">—</div>
+                <div class="print-row" data-choice="2">
+                  <span class="print-text">${val2}</span>
+                  <span class="print-dots"></span>
+                  <span class="print-dest">${end2}</span>
+                </div>
+                <div class="print-spacer"></div>
+            `;
+            container.appendChild(block);
+        }
+    });
+
+    // Cleanup: Remove step nodes that are no longer part of active state configurations
+    existingMap.forEach(block => block.remove());
 }
 
 /**
