@@ -1,6 +1,7 @@
 // eventController.ts
 import type { KeyStore } from './store.ts';
 import { renderPrintView, showToast } from './uiRenderer.ts';
+import { triggerFileDownload } from './utils.ts';
 import { exportKeyToHTML } from './exporters/htmlExporter.ts';
 import { exportKeyToLaTeX } from './exporters/latexExporter.ts';
 import { exportKeyToPlainText } from './exporters/plainTextExporter.ts';
@@ -216,13 +217,8 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     });
 
     document.querySelector('#cmd-export-json')?.addEventListener('click', () => {
-        const blob = new Blob([JSON.stringify(store.getKey(), null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const dlAnchor = document.createElement('a');
-        dlAnchor.setAttribute("href", url);
-        dlAnchor.setAttribute("download", "dichotomous_key_export.json");
-        dlAnchor.click();
-        URL.revokeObjectURL(url);
+        const content = JSON.stringify(store.getKey(), null, 2);
+        triggerFileDownload(content, 'dichotomous_key_export.json', 'application/json');
     });
 
     const hiddenInput = document.querySelector('#file-import-hidden') as HTMLInputElement;
