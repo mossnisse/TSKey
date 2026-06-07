@@ -1,8 +1,9 @@
 // main.ts
 import './style.css'; // INJECT GLOBAL PROJECT STYLES
-import { KeyStore, type Couplet  } from './store.ts';
+import { KeyStore } from './store.ts';
 import { initializeShell, renderEditorCards, renderPrintView } from './uiRenderer.ts';
 import { setupGlobalListeners, setupKeyboardShortcuts} from './eventController.ts'
+import { isValidCoupletArray } from './utils.ts';
 
 const fallbackData = [
     { id: 101, alt1: "Has feathers", alt2: "Lacks feathers", link1: 0, link2: 102, taxa1: "Bird", taxa2: "" },
@@ -10,39 +11,20 @@ const fallbackData = [
     { id: 103, alt1: "Has scales", alt2: "Skin is smooth and moist", link1: 0, link2: 0, taxa1: "Reptile2", taxa2: "Amphibian" }
 ];
 
-function isValidCoupletArray(data: any): data is Couplet[] {
-    if (!Array.isArray(data)) return false;
-    
-    return data.every(item => 
-        item &&
-        typeof item === 'object' &&
-        typeof item.id === 'number' &&
-        typeof item.alt1 === 'string' &&
-        typeof item.alt2 === 'string' &&
-        typeof item.link1 === 'number' &&
-        typeof item.link2 === 'number' &&
-        typeof item.taxa1 === 'string' &&
-        typeof item.taxa2 === 'string'
-    );
-}
-
-let initialData: Couplet[];
+let initialData = fallbackData;
 try {
     const rawStorage = localStorage.getItem('dichotomous_key');
-    const parsedData = rawStorage ? JSON.parse(rawStorage) : null;
-    
-    // Explicitly validate the schema structure before accepting it
-    if (parsedData && isValidCoupletArray(parsedData)) {
-        initialData = parsedData;
-    } else {
-        if (rawStorage) {
+    if (rawStorage) {
+        const parsed = JSON.parse(rawStorage);
+        // Using the single unified validation check
+        if (isValidCoupletArray(parsed)) {
+            initialData = parsed;
+        } else {
             console.warn('Invalid data schema detected in localStorage. Loading defaults.');
         }
-        initialData = fallbackData;
     }
 } catch {
     console.warn('Corrupted localStorage JSON format. Loading defaults.');
-    initialData = fallbackData;
 }
 
 const store = new KeyStore(initialData);

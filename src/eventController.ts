@@ -1,7 +1,7 @@
 // eventController.ts
 import type { KeyStore } from './store.ts';
 import { renderPrintView, showToast } from './uiRenderer.ts';
-import { triggerFileDownload } from './utils.ts';
+import { triggerFileDownload, isMacUser } from './utils.ts';
 import { exportKeyToHTML } from './exporters/htmlExporter.ts';
 import { exportKeyToLaTeX } from './exporters/latexExporter.ts';
 import { exportKeyToPlainText } from './exporters/plainTextExporter.ts';
@@ -17,16 +17,27 @@ function parseLinkInput(val: string, maxItems: number): number {
  * Wires behavioral controls directly onto DOM structural layouts.
  */
 export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
-    const container = document.querySelector('#editor-container');
+    const container = document.querySelector('#editor-container') as HTMLElement;
     if (!container) return;
 
     let typingSessionActive = false;
     let currentEditingFieldKey: string | null = null; // Tracks exactly which card + field is active
     let typingTimeoutId: number | null = null;        // Holds the debounce timer reference
 
+    // Track state of the insertion location
+    let currentDropTargetCard: HTMLElement | null = null;
+    let insertionPosition: 'above' | 'below' | null = null;
+
     container.addEventListener('click', (e) => {
         const mouseEvent = e as MouseEvent;
         const target = e.target as HTMLElement;
+
+        // If the user clicked the editor background layout area itself, drop focus
+        if (target.id === 'editor-container' || target.classList.contains('editor-workspace')) {
+            store.clearSelection(); // ← Uniform API Call
+            refreshAll();
+            return;
+        }
 
         // Prevent card selection if the user is interacting with text inputs or textareas
         if (target.closest('input, textarea')) return;
@@ -80,7 +91,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         }, 800);
 
         // Input Validation & Value Extraction
-        let value: any = target.value;
+        let value: string | number = target.value;
         if (field === 'link1' || field === 'link2') {
             const num = parseInt(value) || 0;
 
@@ -166,9 +177,55 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
         card.style.opacity = '1';
         store.stopDragging();
+        clearDropMarkers();
     });
 
-    container.addEventListener('dragover', (e) => e.preventDefault());
+    // Clear marker lines across the entire container
+    const clearDropMarkers = () => {
+        container.querySelectorAll('.key-card').forEach(el => {
+            el.classList.remove('drag-drop-above', 'drag-drop-below');
+        });
+    };
+
+    container.addEventListener('dragover', (e: DragEvent) => {
+        e.preventDefault();
+
+        const target = e.target as HTMLElement;
+        const cardEl = target.closest('.key-card') as HTMLElement;
+
+        if (!cardEl) {
+            clearDropMarkers();
+            currentDropTargetCard = null;
+            insertionPosition = null;
+            return;
+        }
+
+        currentDropTargetCard = cardEl;
+
+        const rect = cardEl.getBoundingClientRect();
+        const relativeMouseY = e.clientY - rect.top;
+
+        clearDropMarkers();
+
+        if (relativeMouseY < rect.height / 2) {
+            cardEl.classList.add('drag-drop-above');
+            insertionPosition = 'above';
+        } else {
+            cardEl.classList.add('drag-drop-below');
+            insertionPosition = 'below';
+        }
+
+        // for copy/paste editor cards functionality
+        updateTargetTrackers(e.clientX, e.clientY, e.target as HTMLElement);
+    });
+
+    container.addEventListener('dragleave', (e: DragEvent) => {
+        // Only clear if exiting the editor window entirely
+        const target = e.relatedTarget as HTMLElement;
+        if (!target || !container.contains(target)) {
+            clearDropMarkers();
+        }
+    });
 
     container.addEventListener('drop', (e) => {
         e.preventDefault();
@@ -181,6 +238,52 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
         store.reorderCouplets(store.draggedId, coupletId);
         refreshAll();
+    });
+
+    // copy paste editor cards functionality
+
+    // --- REUSED MATHEMATICS CONTROLLER FUNCTION ---
+    const updateTargetTrackers = (clientX: number, clientY: number, targetElement: HTMLElement) => {
+        const cardEl = targetElement.closest('.key-card') as HTMLElement;
+        if (!cardEl) {
+            clearDropMarkers();
+            currentDropTargetCard = null;
+            insertionPosition = null;
+            return;
+        }
+
+        currentDropTargetCard = cardEl;
+        const rect = cardEl.getBoundingClientRect();
+        const relativeMouseY = clientY - rect.top;
+
+        clearDropMarkers();
+
+        if (relativeMouseY < rect.height / 2) {
+            cardEl.classList.add('drag-drop-above');
+            insertionPosition = 'above';
+        } else {
+            cardEl.classList.add('drag-drop-below');
+            insertionPosition = 'below';
+        }
+    };
+
+    // MOUSE TRACKER FOR PASTE ROUTING
+    // This watches where the cursor is, so if the user hits Ctrl+V, it uses the exact same visual target!
+    container.addEventListener('mousemove', (e: MouseEvent) => {
+        // Only show visual line highlights during copy-paste tracking if NOT dragging an item
+        if (e.buttons === 0) {
+            const target = e.target as HTMLElement;
+            // Only draw line indicators if hovering near the edges of a key card and clipboard has data
+            if (target.closest('.key-card') && store.hasClipboardData()) {
+                updateTargetTrackers(e.clientX, e.clientY, target);
+            } else {
+                clearDropMarkers();
+            }
+        }
+    });
+
+    container.addEventListener('mouseleave', () => {
+        clearDropMarkers();
     });
 
     // ==========================================
@@ -233,12 +336,16 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         try {
             const fileText = await file.text();
             const rawData = JSON.parse(fileText);
+
+            // This now returns an ImportResult object { success: boolean, errors: string[] }
             const importResult = store.importJsonData(rawData);
 
             if (!importResult.success) {
-                alert(`Failed to import JSON schema:\n• ${importResult.errors.join('\\n• ')}`);
+                alert(`Failed to import JSON schema:\n• ${importResult.errors.join('\n• ')}`);
                 return;
             }
+
+            showToast("Key configuration data imported successfully!", "success");
             refreshAll();
         } catch (err) {
             alert("Malformed JSON structure: Unable to parse file stream.");
@@ -253,7 +360,8 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     });
 
     document.querySelector('#cmd-delete-selected')?.addEventListener('click', () => {
-        if (store.getSelectedIds().length === 0) return;
+        if (store.getSelectedIds().size === 0) return;
+
         if (confirm("Confirm removing highlighted key steps?")) {
             store.deleteSelected();
             refreshAll();
@@ -299,7 +407,7 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
     window.addEventListener('keydown', (evt: KeyboardEvent) => {
         const e = evt;
         // Cross-platform modifier detection (Command key on macOS, Control on Windows/Linux)
-        const isMac = (navigator as any).userAgentData?.platform === 'macOS';
+        const isMac = isMacUser();
         const hasModifier = isMac ? e.metaKey : e.ctrlKey;
 
         // Determine context state
@@ -352,7 +460,7 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
 
             // Delete / Backspace: Remove Selected Card Blocks
             if (e.key === 'Delete' || e.key === 'Backspace') {
-                if (store.getSelectedIds().length > 0) {
+                if (store.getSelectedIds().size > 0) {
                     e.preventDefault();
                     document.querySelector<HTMLButtonElement>('#cmd-delete-selected')?.click();
                 }
@@ -364,6 +472,33 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
                 e.preventDefault();
                 store.clearSelection();
                 refreshAll();
+                return;
+            }
+
+            // Ctrl + C / Cmd + C: Copy Selected Cards
+            if (hasModifier && e.key.toLowerCase() === 'c') {
+                e.preventDefault();
+                if (store.getSelectedIds().size > 0) {
+                    store.copySelectedCards();
+                    // We can utilize your existing Toast notification system!
+                    showToast(`Copied ${store.getSelectedIds().size} step(s) to clipboard.`, 'success');
+                }
+                return;
+            }
+
+            // Ctrl + V / Cmd + V: Paste Cards
+            if (hasModifier && e.key.toLowerCase() === 'v') {
+                e.preventDefault();
+
+                // Determine insertion context: paste below the last selected card, 
+                // or safely default to the end of the list if nothing is selected.
+                const selectedArray = Array.from(store.getSelectedIds());
+                const targetId = selectedArray.length > 0 ? selectedArray[selectedArray.length - 1] : undefined;
+
+                if (store.pasteCards(targetId, 'below')) {
+                    showToast("Pasted steps from clipboard.", "success");
+                    refreshAll();
+                }
                 return;
             }
         }

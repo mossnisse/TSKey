@@ -1,6 +1,6 @@
 // uiRenderer.ts
 import type { KeyStore } from './store.ts';
-import { escapeHTML, getStepNumberById } from './utils.ts';
+import { escapeHTML, getStepNumberById, buildIdToIndexMap } from './utils.ts';
 
 // ==========================================
 // CORE LAYOUT HELPERS
@@ -86,7 +86,7 @@ export function renderEditorCards(store: KeyStore) {
     const selectedIds = store.getSelectedIds();
     const activeDiagnostics = store.runDiagnostics();
 
-    const idToIndexMap = new Map<number, number>();
+    const idToIndexMap = buildIdToIndexMap(key);
     key.forEach((couplet, index) => {
         idToIndexMap.set(couplet.id, index);
     });
@@ -103,6 +103,7 @@ export function renderEditorCards(store: KeyStore) {
     key.forEach((couplet, index) => {
         const displayNum = index + 1;
         const isSelected = selectedIds.has(couplet.id);
+        //const cardClass = isSelected ? 'editor-card is-selected' : 'editor-card';
 
         const inboundLinks = inboundLinksMap.get(couplet.id) || [];
         const idx1 = couplet.link1 ? idToIndexMap.get(couplet.link1) : undefined;
@@ -224,6 +225,7 @@ export function renderPrintView(store: KeyStore) {
     if (!container) return;
 
     const key = store.getKey();
+    const idToIndexMap = buildIdToIndexMap(key);
 
     // Map existing DOM blocks currently residing on the preview canvas
     const existingBlocks = Array.from(container.querySelectorAll('.print-step-block')) as HTMLElement[];
@@ -236,8 +238,8 @@ export function renderPrintView(store: KeyStore) {
     // Reconcile or build blocks based on current KeyStore sequence state
     key.forEach((c, index) => {
         const currentDisplayNum = index + 1;
-        const step1Dest = getStepNumberById(key, c.link1);
-        const step2Dest = getStepNumberById(key, c.link2);
+        const step1Dest = getStepNumberById(idToIndexMap, c.link1);
+        const step2Dest = getStepNumberById(idToIndexMap, c.link2);
 
         // Compute styling metadata instead of storing HTML markup raw strings
         const dest1Info = c.taxa1 
@@ -341,16 +343,32 @@ export function renderPrintView(store: KeyStore) {
  * Spawns an asynchronous, non-blocking notification banner.
  */
 export function showToast(message: string, type: 'success' | 'error' = 'success') {
-    let container = document.querySelector('.toast-container');
+    let container = document.querySelector('.toast-container') as HTMLDivElement;
+    
+    // If the wrapper container doesn't exist, build it and register the live region defaults
     if (!container) {
         container = document.createElement('div');
         container.className = 'toast-container';
+        
+        // 'aria-live="polite"' acts as a safe catch-all wrapper context
+        container.setAttribute('aria-live', 'polite');
+        container.setAttribute('aria-atomic', 'true');
+        
         document.body.appendChild(container);
     }
 
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
     toast.textContent = message;
+
+    // Assign semantic ARIA alert states based on the priority of the notification
+    if (type === 'error') {
+        // Errors require an assertive interruption profile
+        toast.setAttribute('role', 'alert'); 
+    } else {
+        // Success states use standard status messaging profiles
+        toast.setAttribute('role', 'status'); 
+    }
 
     container.appendChild(toast);
 

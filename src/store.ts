@@ -1,4 +1,6 @@
 // store.ts
+import { isValidCoupletArray } from './utils.ts';
+
 export interface Couplet {
     id: number;    // Permanent internal unique ID
     alt1: string;
@@ -18,6 +20,11 @@ interface AppState {
     dichotomousKey: Couplet[];
 }
 
+export interface ImportResult {
+    success: boolean;
+    errors: string[];
+}
+
 export class KeyStore {
     private state: AppState;
     private isDirty: boolean = false;
@@ -31,6 +38,9 @@ export class KeyStore {
     private selectedIds: Set<number> = new Set();
     private _draggedId: number | null = null;
     private activeEditingCardId: number | null = null;
+
+    // Shared clipboard state structure
+    private clipboardBuffer: Omit<Couplet, 'id'>[] = [];
 
     constructor(initialKey: Couplet[], maxHistoryLimit = 100) {
         this.state = { dichotomousKey: initialKey };
@@ -95,7 +105,7 @@ export class KeyStore {
         if (this.undoStack.length > this.maxHistoryLimit) {
             this.undoStack.shift();
         }
-        
+
         this.currentHistoryIndex++;
     }
 
@@ -116,7 +126,7 @@ export class KeyStore {
         return true;
     }
 
-   public redo(): boolean {
+    public redo(): boolean {
         if (this.redoStack.length === 0) return false;
 
         this.undoStack.push({ dichotomousKey: this.state.dichotomousKey });
@@ -133,17 +143,68 @@ export class KeyStore {
         return true;
     }
 
+    public copySelectedCards(): void {
+        const selectedIds = this.getSelectedIds();
+        if (selectedIds.size === 0) return;
+
+        // Clone internal objects omitting their structural identity keys
+        this.clipboardBuffer = this.state.dichotomousKey
+            .filter(c => selectedIds.has(c.id))
+            .map(({ id, ...rest }) => ({ ...rest }));
+    }
+
+    public hasClipboardData(): boolean {
+        return this.clipboardBuffer.length > 0;
+    }
+
+    /**
+     * Pastes cards from the clipboard buffer.
+     * @param targetId Optional ID to paste relative to. If omitted, appends to the end of the key.
+     */
+    public pasteCards(targetId?: number, position: 'above' | 'below' = 'below'): boolean {
+        if (this.clipboardBuffer.length === 0) return false;
+
+        // Hook into the history engine!
+        this.saveCheckpoint();
+
+        let insertIndex = this.state.dichotomousKey.length; // Default to appending
+
+        // Find contextual insertion point if a target is provided
+        if (targetId !== undefined) {
+            const targetIndex = this.state.dichotomousKey.findIndex(c => c.id === targetId);
+            if (targetIndex !== -1) {
+                insertIndex = position === 'above' ? targetIndex : targetIndex + 1;
+            }
+        }
+
+        // Generate safe unique IDs and untangle the graph links
+        const newCards: Couplet[] = this.clipboardBuffer.map((item, index) => ({
+            ...item,
+            // Add 'index' to ensure IDs don't collide during synchronous loop execution
+            id: Date.now() + Math.floor(Math.random() * 10000) + index,
+
+            // UNTANGLE: Reset structural Goto links. 
+            // If we keep the old links, the pasted cards will converge on the original targets.
+            link1: 0,
+            link2: 0
+        }));
+
+        // Splice items into the key array
+        this.saveCheckpoint();
+        const newKey = [...this.state.dichotomousKey];
+        newKey.splice(insertIndex, 0, ...newCards);
+        this.state.dichotomousKey = newKey;
+
+        // Shift the selection context to the newly pasted items for UX clarity
+        this.setSelectionBatch(newCards.map(c => c.id));
+        this.isDirty = true;
+
+        return true;
+    }
+
     // ==========================================
     // GRAPH ANALYSIS HELPERS
     // ==========================================
-
-    /**
-     * Finds the 0-based array index of a couplet by its internal unique ID.
-     * Returns -1 if the ID does not exist.
-     */
-    public getIndexById(id: number): number {
-        return this.state.dichotomousKey.findIndex(c => c.id === id);
-    }
 
     /**
      * Computes a highly optimized inverted lookup map of all inbound links 
@@ -167,15 +228,6 @@ export class KeyStore {
         });
 
         return map;
-    }
-
-    /**
-     * Fallback lookup helper for individual node tracking.
-     * Uses the bulk map under the hood to guarantee O(1) retrieval speeds.
-     */
-    public getInboundLinks(targetId: number): string[] {
-        if (!targetId) return [];
-        return this.generateInboundLinksMap().get(targetId) || [];
     }
 
     /**
@@ -279,7 +331,7 @@ export class KeyStore {
     public deleteSelected() {
         if (this.selectedIds.size === 0) return;
         this.saveCheckpoint();
-        
+
         const removedIds = this.selectedIds;
         this.state.dichotomousKey = this.state.dichotomousKey
             .filter(c => !removedIds.has(c.id))
@@ -288,7 +340,7 @@ export class KeyStore {
                 link1: removedIds.has(c.link1) ? 0 : c.link1,
                 link2: removedIds.has(c.link2) ? 0 : c.link2,
             }));
-            
+
         this.selectedIds = new Set();
         this.isDirty = true;
     }
@@ -430,66 +482,42 @@ export class KeyStore {
      * Validates external JSON data shapes safely before committing to the state tree.
      * Blocks corruption entirely if basic structural parameters are breached.
      */
-    public importJsonData(rawData: unknown): { success: boolean; errors: string[] } {
-        const errors: string[] = [];
 
-        // Verify root structure type
-        if (!rawData || !Array.isArray(rawData)) {
-            return { success: false, errors: ['Invalid file format: Imported root data must be a JSON array.'] };
-        }
-
-        const validatedData: Couplet[] = [];
-        const seenIds = new Set<number>();
-
-        rawData.forEach((item: any, index) => {
-            const structuralLocation = `Item at index ${index + 1}`;
-
-            // Strict ID verification (Lookups will shatter if ID properties fail)
-            if (item.id === undefined || item.id === null) {
-                errors.push(`${structuralLocation} is missing its mandatory 'id' parameter.`);
-            } else if (typeof item.id !== 'number' || isNaN(item.id)) {
-                errors.push(`${structuralLocation} has an invalid 'id' type (must be a number).`);
-            } else if (seenIds.has(item.id)) {
-                errors.push(`Data Integrity Breach: Duplicate internal 'id' (${item.id}) found at index ${index + 1}.`);
-            } else {
-                seenIds.add(item.id);
+    public importJsonData(rawData: unknown): ImportResult {
+        try {
+            // Run our shared strict schema validation check
+            if (!isValidCoupletArray(rawData)) {
+                return {
+                    success: false,
+                    errors: ["The uploaded file does not match the required schema structure (missing properties or incorrect types)."]
+                };
             }
 
-            // Graceful type coercion & sanitation for standard fields
-            // Rather than instantly crashing the app for a missing description string,
-            // we sanitize individual fields safely to empty parameters.
-            const sanitizedCouplet: Couplet = {
-                id: Number(item.id) || 0,
-                alt1: typeof item.alt1 === 'string' ? item.alt1 : '',
-                alt2: typeof item.alt2 === 'string' ? item.alt2 : '',
-                link1: typeof item.link1 === 'number' && !isNaN(item.link1) ? item.link1 : 0,
-                link2: typeof item.link2 === 'number' && !isNaN(item.link2) ? item.link2 : 0,
-                taxa1: typeof item.taxa1 === 'string' ? item.taxa1 : '',
-                taxa2: typeof item.taxa2 === 'string' ? item.taxa2 : ''
+            // Save state snapshot for structural Undo/Redo tracking before updating
+            this.saveCheckpoint();
+
+            this.state.dichotomousKey = rawData;
+            this.clearSelection();
+            this.isDirty = true;
+
+            return {
+                success: true,
+                errors: []
             };
 
-            validatedData.push(sanitizedCouplet);
-        });
-
-        // Critical Gatekeeper Check
-        // If any structural issues were discovered, abort state changes completely
-        if (errors.length > 0) {
-            return { success: false, errors };
+        } catch (e) {
+            return {
+                success: false,
+                errors: [e instanceof Error ? e.message : "Unknown engine exception during state hydration parsing."]
+            };
         }
-
-        // Safe State Transition
-        this.saveCheckpoint();
-        this.state.dichotomousKey = validatedData;
-        this.selectedIds = new Set();
-
-        return { success: true, errors: [] };
     }
 
     // ==========================================
     // SELECTION MANAGEMENT (Bypasses history)
     // ==========================================
 
-   public toggleSelection(id: number, multiSelect: boolean) {
+    public toggleSelection(id: number, multiSelect: boolean) {
         if (multiSelect) {
             if (this.selectedIds.has(id)) {
                 this.selectedIds.delete(id);
@@ -501,8 +529,28 @@ export class KeyStore {
         }
     }
 
-    public clearSelection() {
+    public clearSelection(): void {
+        if (this.selectedIds.size === 0) return; // Optimize: don't trigger updates if already empty
         this.selectedIds.clear();
+        this.isDirty = true;
+    }
+
+    /**
+     * Clears current selections and instantly sets focus to a single target card.
+     * Ideal for post-paste behavior or structural card additions.
+     */
+    public setSelectionToSingle(cardId: number): void {
+        this.selectedIds.clear();
+        this.selectedIds.add(cardId);
+        this.isDirty = true;
+    }
+
+    /**
+    * Bulk updates the selection pool cleanly using an array or iterable set.
+    */
+    public setSelectionBatch(cardIds: number[] | Set<number>): void {
+        this.selectedIds = new Set(cardIds);
+        this.isDirty = true;
     }
 
     public selectAll() {

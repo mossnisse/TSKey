@@ -385,6 +385,34 @@
 .error-text { color: var(--color-danger); }
 .warning-text { color: var(--color-warning); }
 
+/* Drop Marker Transitions */
+.key-card {
+  position: relative;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+/* The visual line that marks where the paste or drop will happen */
+.key-card.drag-drop-above::before,
+.key-card.drag-drop-below::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background-color: var(--color-primary);
+  border-radius: 2px;
+  z-index: 10;
+  pointer-events: none; /* Crucial: stops the line from interfering with mouse coords */
+}
+
+.key-card.drag-drop-above::before {
+  top: -6px; /* Positioned precisely between cards */
+}
+
+.key-card.drag-drop-below::after {
+  bottom: -6px;
+}
+
 /* ==========================================
    PASSIVE PUBLICATION PRINT VIEW PANELS
    ========================================== */
