@@ -54,7 +54,6 @@ export function initializeShell(appDiv: HTMLDivElement) {
           <option value="text">Plain Text (.txt)</option>
           <option value="html">Structured HTML/CSS</option>
           <option value="latex">Academic LaTeX Document</option>
-          <option value="lucid">Lucid Key Exchange Interchange</option>
         </select>
       </div>
     
@@ -87,20 +86,13 @@ export function renderEditorCards(store: KeyStore) {
     const selectedIds = store.getSelectedIds();
     const activeDiagnostics = store.runDiagnostics();
 
-    const deleteBtn = document.querySelector('#cmd-delete-selected') as HTMLButtonElement;
-    if (deleteBtn) deleteBtn.textContent = `🗑️ Delete Selected (${selectedIds.length})`;
-
-    // FIX 1: Populate the ID-to-Index lookup map in an efficient single pass
     const idToIndexMap = new Map<number, number>();
     key.forEach((couplet, index) => {
         idToIndexMap.set(couplet.id, index);
     });
 
-    // FIX 2: Pull the pre-calculated global inbound index map from the store
     const inboundLinksMap = store.generateInboundLinksMap();
-    const selectedIdsSet = new Set(selectedIds);
 
-    // Map existing DOM elements to support safe focus-preserving reconciliation
     const existingCards = Array.from(container.querySelectorAll('.key-card')) as HTMLElement[];
     const existingMap = new Map<number, HTMLElement>();
     existingCards.forEach(card => {
@@ -110,47 +102,43 @@ export function renderEditorCards(store: KeyStore) {
 
     key.forEach((couplet, index) => {
         const displayNum = index + 1;
-        const isSelected = selectedIdsSet.has(couplet.id);
+        const isSelected = selectedIds.has(couplet.id);
 
-        // Fetch pre-computed links safely
         const inboundLinks = inboundLinksMap.get(couplet.id) || [];
         const idx1 = couplet.link1 ? idToIndexMap.get(couplet.link1) : undefined;
         const idx2 = couplet.link2 ? idToIndexMap.get(couplet.link2) : undefined;
 
-        // Human-readable 1-based indices for destination goto boxes
         const viewLink1 = idx1 !== undefined ? (idx1 + 1).toString() : '';
         const viewLink2 = idx2 !== undefined ? (idx2 + 1).toString() : '';
 
         const cardErrors = activeDiagnostics.get(couplet.id) || [];
         const hasErrors = cardErrors.some(e => e.severity === 'error');
 
-        // Contextual styling badges
+        // Centralized UI text bindings to prevent DOM reconciler mismatches
+        const computedTitle = `${displayNum}.`; 
         const badgeClass = inboundLinks.length ? 'badge badge-linked' : (index === 0 ? 'badge badge-linked' : 'badge badge-isolated');
-        const badgeLabel = inboundLinks.length ? `Linked from: ${inboundLinks.map(escapeHTML).join(', ')}` : (index === 0 ? '🏁 Root Node' : '⚠️ Isolated Node');
+        const badgeLabel = inboundLinks.length ? `← ${inboundLinks.join(', ')}` : (index === 0 ? '🏁 root' : '⚠️ isolated');
 
-        // Diagnostic validation assembly
         let warningInnerHtml = '';
         cardErrors.forEach(err => {
             const modifierClass = err.severity === 'error' ? 'error-text' : 'warning-text';
             warningInnerHtml += `<span class="${modifierClass}">⚠️ ${err.message}</span>`;
         });
 
-        const warningBlockHtml = cardErrors.length > 0
-            ? `<div class="warning-block">${warningInnerHtml}</div>`
-            : '';
+        const warningBlockHtml = cardErrors.length > 0 ? `<div class="warning-block">${warningInnerHtml}</div>` : '';
 
         let card = existingMap.get(couplet.id);
         if (card) {
-            // ELEMENT RECONCILIATION ROUTE (Updates properties without losing cursor selection)
             existingMap.delete(couplet.id);
 
             card.className = 'key-card';
             if (isSelected) card.classList.add('is-selected');
             if (hasErrors) card.classList.add('has-errors');
 
+            // Flawless reconciliation matching via variables
             const titleEl = card.querySelector('.card-title');
-            if (titleEl && titleEl.textContent !== `Step #${displayNum}`) {
-                titleEl.textContent = `Step #${displayNum}`;
+            if (titleEl && titleEl.textContent !== computedTitle) {
+                titleEl.textContent = computedTitle;
             }
 
             const badgeEl = card.querySelector('.badge');
@@ -159,7 +147,6 @@ export function renderEditorCards(store: KeyStore) {
                 if (badgeEl.textContent !== badgeLabel) badgeEl.textContent = badgeLabel;
             }
 
-            // Sync structural values securely 
             syncField(card, 'textarea[data-field="alt1"]', couplet.alt1);
             syncField(card, 'input[data-field="taxa1"]', couplet.taxa1);
             syncField(card, 'input[data-field="link1"]', viewLink1, key.length.toString());
@@ -168,13 +155,10 @@ export function renderEditorCards(store: KeyStore) {
             syncField(card, 'input[data-field="taxa2"]', couplet.taxa2);
             syncField(card, 'input[data-field="link2"]', viewLink2, key.length.toString());
 
-            // Diagnostic Warnings Update Tree Sync
             const currentWarningBlock = card.querySelector('.warning-block');
             if (cardErrors.length > 0) {
                 if (currentWarningBlock) {
-                    if (currentWarningBlock.innerHTML !== warningInnerHtml) {
-                        currentWarningBlock.innerHTML = warningInnerHtml;
-                    }
+                    if (currentWarningBlock.innerHTML !== warningInnerHtml) currentWarningBlock.innerHTML = warningInnerHtml;
                 } else {
                     const tempDiv = document.createElement('div');
                     tempDiv.innerHTML = warningBlockHtml;
@@ -186,7 +170,6 @@ export function renderEditorCards(store: KeyStore) {
 
             container.appendChild(card);
         } else {
-            // INITIAL GENERATION ROUTE (Executes when a brand new card is created)
             card = document.createElement('div');
             card.draggable = true;
             card.setAttribute('data-id', couplet.id.toString());
@@ -197,12 +180,11 @@ export function renderEditorCards(store: KeyStore) {
             card.innerHTML = `
                 <div class="card-header">
                   <div class="card-header-left">
-                    <h4 class="card-title">Step #${displayNum}</h4>
+                    <h4 class="card-title">${computedTitle}</h4>
                     <span class="${badgeClass}">${badgeLabel}</span>
                   </div>
                   <span class="drag-handle">☰</span>
                 </div>
-                
                 <div class="card-row">
                   <textarea class="input-sync card-textarea" data-field="alt1" placeholder="Enter diagnostic trait details...">${escapeHTML(couplet.alt1)}</textarea>
                   <div class="card-meta-pane">
@@ -214,7 +196,6 @@ export function renderEditorCards(store: KeyStore) {
                     </label>
                   </div>
                 </div>
-
                 <div class="card-row">
                   <textarea class="input-sync card-textarea" data-field="alt2" placeholder="Enter contrast alternative description...">${escapeHTML(couplet.alt2)}</textarea>
                   <div class="card-meta-pane">
@@ -226,17 +207,14 @@ export function renderEditorCards(store: KeyStore) {
                     </label>
                   </div>
                 </div>
-                
                 ${warningBlockHtml}
             `;
             container.appendChild(card);
         }
     });
 
-    // Cleanup redundant steps left behind after changes
     existingMap.forEach(card => card.remove());
 }
-
 /**
  * Renders the passive publication presentation view structure.
  */

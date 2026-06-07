@@ -28,7 +28,7 @@ export class KeyStore {
     private savedHistoryIndex: number = 0;
     private currentHistoryIndex: number = 0;
 
-    private selectedIds: number[] = [];
+    private selectedIds: Set<number> = new Set();
     private _draggedId: number | null = null;
     private activeEditingCardId: number | null = null;
 
@@ -46,7 +46,7 @@ export class KeyStore {
         return this.state.dichotomousKey;
     }
 
-    public getSelectedIds(): readonly number[] {
+    public getSelectedIds(): ReadonlySet<number> {
         return this.selectedIds;
     }
 
@@ -277,9 +277,10 @@ export class KeyStore {
     }
 
     public deleteSelected() {
-        if (this.selectedIds.length === 0) return;
+        if (this.selectedIds.size === 0) return;
         this.saveCheckpoint();
-        const removedIds = new Set(this.selectedIds);
+        
+        const removedIds = this.selectedIds;
         this.state.dichotomousKey = this.state.dichotomousKey
             .filter(c => !removedIds.has(c.id))
             .map(c => ({
@@ -287,7 +288,8 @@ export class KeyStore {
                 link1: removedIds.has(c.link1) ? 0 : c.link1,
                 link2: removedIds.has(c.link2) ? 0 : c.link2,
             }));
-        this.selectedIds = [];
+            
+        this.selectedIds = new Set();
         this.isDirty = true;
     }
 
@@ -420,7 +422,7 @@ export class KeyStore {
     public replaceKeyData(newData: Couplet[]) {
         this.saveCheckpoint();
         this.state.dichotomousKey = newData;
-        this.selectedIds = [];
+        this.selectedIds = new Set();
         this.isDirty = true;
     }
 
@@ -478,7 +480,7 @@ export class KeyStore {
         // Safe State Transition
         this.saveCheckpoint();
         this.state.dichotomousKey = validatedData;
-        this.selectedIds = [];
+        this.selectedIds = new Set();
 
         return { success: true, errors: [] };
     }
@@ -487,24 +489,24 @@ export class KeyStore {
     // SELECTION MANAGEMENT (Bypasses history)
     // ==========================================
 
-    public toggleSelection(id: number, multiSelect: boolean) {
+   public toggleSelection(id: number, multiSelect: boolean) {
         if (multiSelect) {
-            if (this.selectedIds.includes(id)) {
-                this.selectedIds = this.selectedIds.filter(x => x !== id);
+            if (this.selectedIds.has(id)) {
+                this.selectedIds.delete(id);
             } else {
-                this.selectedIds.push(id);
+                this.selectedIds.add(id);
             }
         } else {
-            this.selectedIds = [id];
+            this.selectedIds = new Set([id]);
         }
     }
 
     public clearSelection() {
-        this.selectedIds = [];
+        this.selectedIds.clear();
     }
 
     public selectAll() {
-        this.selectedIds = this.state.dichotomousKey.map(c => c.id);
+        this.selectedIds = new Set(this.state.dichotomousKey.map(c => c.id));
     }
 
     // ==========================================

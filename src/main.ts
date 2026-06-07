@@ -56,17 +56,19 @@ const refreshAll = () => {
     if (saveBtn) {
         if (store.hasUnsavedChanges()) {
             saveBtn.innerHTML = '💾 Save Memory *';
-            saveBtn.classList.add('is-unsaved'); // Activates amber alerting state via CSS
+            saveBtn.classList.add('is-unsaved');
         } else {
             saveBtn.innerHTML = '💾 Save Memory';
-            saveBtn.classList.remove('is-unsaved'); // Resets to baseline operational green
+            saveBtn.classList.remove('is-unsaved');
         }
     }
 
+    // Consolidated Button presentation state updates
     const deleteBtn = document.querySelector<HTMLButtonElement>('#cmd-delete-selected');
     if (deleteBtn) {
-        const hasSelection = store.getSelectedIds().length > 0;
-        deleteBtn.disabled = !hasSelection;
+        const selectedCount = store.getSelectedIds().size;
+        deleteBtn.disabled = selectedCount === 0;
+        deleteBtn.textContent = `🗑️ Delete Selected (${selectedCount})`;
     }
 };
 
