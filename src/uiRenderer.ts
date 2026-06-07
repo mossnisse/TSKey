@@ -87,10 +87,6 @@ export function renderEditorCards(store: KeyStore) {
     const activeDiagnostics = store.runDiagnostics();
 
     const idToIndexMap = buildIdToIndexMap(key);
-    key.forEach((couplet, index) => {
-        idToIndexMap.set(couplet.id, index);
-    });
-
     const inboundLinksMap = store.generateInboundLinksMap();
 
     const existingCards = Array.from(container.querySelectorAll('.key-card')) as HTMLElement[];
@@ -116,7 +112,7 @@ export function renderEditorCards(store: KeyStore) {
         const hasErrors = cardErrors.some(e => e.severity === 'error');
 
         // Centralized UI text bindings to prevent DOM reconciler mismatches
-        const computedTitle = `${displayNum}.`; 
+        const computedTitle = `${displayNum}.`;
         const badgeClass = inboundLinks.length ? 'badge badge-linked' : (index === 0 ? 'badge badge-linked' : 'badge badge-isolated');
         const badgeLabel = inboundLinks.length ? `← ${inboundLinks.join(', ')}` : (index === 0 ? '🏁 root' : '⚠️ isolated');
 
@@ -132,9 +128,8 @@ export function renderEditorCards(store: KeyStore) {
         if (card) {
             existingMap.delete(couplet.id);
 
-            card.className = 'key-card';
-            if (isSelected) card.classList.add('is-selected');
-            if (hasErrors) card.classList.add('has-errors');
+            card.classList.toggle('is-selected', isSelected);
+            card.classList.toggle('has-errors', hasErrors);
 
             // Flawless reconciliation matching via variables
             const titleEl = card.querySelector('.card-title');
@@ -161,9 +156,7 @@ export function renderEditorCards(store: KeyStore) {
                 if (currentWarningBlock) {
                     if (currentWarningBlock.innerHTML !== warningInnerHtml) currentWarningBlock.innerHTML = warningInnerHtml;
                 } else {
-                    const tempDiv = document.createElement('div');
-                    tempDiv.innerHTML = warningBlockHtml;
-                    card.appendChild(tempDiv.firstElementChild!);
+                    card.insertAdjacentHTML('beforeend', warningBlockHtml);
                 }
             } else if (currentWarningBlock) {
                 currentWarningBlock.remove();
@@ -242,12 +235,12 @@ export function renderPrintView(store: KeyStore) {
         const step2Dest = getStepNumberById(idToIndexMap, c.link2);
 
         // Compute styling metadata instead of storing HTML markup raw strings
-        const dest1Info = c.taxa1 
-            ? { text: c.taxa1, className: 'print-dest-taxon' } 
+        const dest1Info = c.taxa1
+            ? { text: c.taxa1, className: 'print-dest-taxon' }
             : (c.link1 ? { text: step1Dest, className: 'print-dest-strong' } : { text: '...', className: '' });
 
-        const dest2Info = c.taxa2 
-            ? { text: c.taxa2, className: 'print-dest-taxon' } 
+        const dest2Info = c.taxa2
+            ? { text: c.taxa2, className: 'print-dest-taxon' }
             : (c.link2 ? { text: step2Dest, className: 'print-dest-strong' } : { text: '...', className: '' });
 
         const val1 = c.alt1 || '___';
@@ -321,7 +314,7 @@ export function renderPrintView(store: KeyStore) {
 
             // Natively assign text and classes using strict DOM mutations
             block.querySelector('.print-step-num')!.textContent = `${currentDisplayNum}.`;
-            
+
             block.querySelector('.print-row[data-choice="1"] .print-text')!.textContent = val1;
             const dest1 = block.querySelector('.print-row[data-choice="1"] .print-dest')!;
             dest1.textContent = dest1Info.text;
@@ -344,16 +337,16 @@ export function renderPrintView(store: KeyStore) {
  */
 export function showToast(message: string, type: 'success' | 'error' = 'success') {
     let container = document.querySelector('.toast-container') as HTMLDivElement;
-    
+
     // If the wrapper container doesn't exist, build it and register the live region defaults
     if (!container) {
         container = document.createElement('div');
         container.className = 'toast-container';
-        
+
         // 'aria-live="polite"' acts as a safe catch-all wrapper context
         container.setAttribute('aria-live', 'polite');
         container.setAttribute('aria-atomic', 'true');
-        
+
         document.body.appendChild(container);
     }
 
@@ -364,10 +357,10 @@ export function showToast(message: string, type: 'success' | 'error' = 'success'
     // Assign semantic ARIA alert states based on the priority of the notification
     if (type === 'error') {
         // Errors require an assertive interruption profile
-        toast.setAttribute('role', 'alert'); 
+        toast.setAttribute('role', 'alert');
     } else {
         // Success states use standard status messaging profiles
-        toast.setAttribute('role', 'status'); 
+        toast.setAttribute('role', 'status');
     }
 
     container.appendChild(toast);

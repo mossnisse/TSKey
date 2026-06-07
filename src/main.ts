@@ -1,9 +1,10 @@
-// main.ts
 import './style.css'; // INJECT GLOBAL PROJECT STYLES
 import { KeyStore } from './store.ts';
 import { initializeShell, renderEditorCards, renderPrintView } from './uiRenderer.ts';
-import { setupGlobalListeners, setupKeyboardShortcuts} from './eventController.ts'
+import { setupGlobalListeners, setupKeyboardShortcuts } from './eventController.ts';
 import { isValidCoupletArray } from './utils.ts';
+
+const STORAGE_KEY = 'dichotomous_key';
 
 const fallbackData = [
     { id: 101, alt1: "Has feathers", alt2: "Lacks feathers", link1: 0, link2: 102, taxa1: "Bird", taxa2: "" },
@@ -13,10 +14,9 @@ const fallbackData = [
 
 let initialData = fallbackData;
 try {
-    const rawStorage = localStorage.getItem('dichotomous_key');
+    const rawStorage = localStorage.getItem(STORAGE_KEY);
     if (rawStorage) {
         const parsed = JSON.parse(rawStorage);
-        // Using the single unified validation check
         if (isValidCoupletArray(parsed)) {
             initialData = parsed;
         } else {
@@ -28,25 +28,28 @@ try {
 }
 
 const store = new KeyStore(initialData);
-const appContainer = document.querySelector<HTMLDivElement>('#app')!;
+const appContainer = document.querySelector<HTMLDivElement>('#app');
+
+if (!appContainer) {
+    throw new Error("Application bootstrap failed: DOM target element '#app' was not found.");
+}
+
+// Statically cache sub-element handles to keep refreshAll pipeline lightweight
+let saveBtn: HTMLButtonElement | null = null;
+let deleteBtn: HTMLButtonElement | null = null;
 
 const refreshAll = () => {
+    // 1. Structural rendering passes
     renderEditorCards(store);
     renderPrintView(store);
 
-    const saveBtn = document.querySelector<HTMLButtonElement>('#cmd-save');
+    // 2. Performance-optimized state synchronization using cached elements
     if (saveBtn) {
-        if (store.hasUnsavedChanges()) {
-            saveBtn.innerHTML = '💾 Save Memory *';
-            saveBtn.classList.add('is-unsaved');
-        } else {
-            saveBtn.innerHTML = '💾 Save Memory';
-            saveBtn.classList.remove('is-unsaved');
-        }
+        const hasUnsaved = store.hasUnsavedChanges();
+        saveBtn.textContent = hasUnsaved ? '💾 Save Memory *' : '💾 Save Memory';
+        saveBtn.classList.toggle('is-unsaved', hasUnsaved);
     }
 
-    // Consolidated Button presentation state updates
-    const deleteBtn = document.querySelector<HTMLButtonElement>('#cmd-delete-selected');
     if (deleteBtn) {
         const selectedCount = store.getSelectedIds().size;
         deleteBtn.disabled = selectedCount === 0;
@@ -61,7 +64,16 @@ window.addEventListener('beforeunload', (event) => {
     }
 });
 
+// Structural initialization sequence
 initializeShell(appContainer);
+
+// Query handles exactly once now that the DOM contents exist
+saveBtn = document.querySelector<HTMLButtonElement>('#cmd-save');
+deleteBtn = document.querySelector<HTMLButtonElement>('#cmd-delete-selected');
+
+// Wire up event routing engines
 setupGlobalListeners(store, refreshAll);
 setupKeyboardShortcuts(store, refreshAll);
+
+// Fire initial frame render layout sweep
 refreshAll();

@@ -6,12 +6,6 @@ import { exportKeyToHTML } from './exporters/htmlExporter.ts';
 import { exportKeyToLaTeX } from './exporters/latexExporter.ts';
 import { exportKeyToPlainText } from './exporters/plainTextExporter.ts';
 
-function parseLinkInput(val: string, maxItems: number): number {
-    const num = parseInt(val) || 0;
-    if (num <= 0 || num > maxItems) return 0;
-    return num;
-}
-
 /**
  * Centralized Delegated Events Router Engine.
  * Wires behavioral controls directly onto DOM structural layouts.
@@ -25,7 +19,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     let typingTimeoutId: number | null = null;        // Holds the debounce timer reference
 
     // Track state of the insertion location
-    let currentDropTargetCard: HTMLElement | null = null;
     let insertionPosition: 'above' | 'below' | null = null;
 
     container.addEventListener('click', (e) => {
@@ -101,8 +94,8 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
                 value = 0; // Fallback safely to prevent graph corruption
             } else {
                 target.classList.remove('input-error');
-                const stepNum = parseLinkInput(value, key.length);
-                value = stepNum > 0 ? key[stepNum - 1].id : 0;
+                const targetCard = key[num - 1];
+                value = targetCard ? targetCard.id : 0;
             }
         }
 
@@ -120,7 +113,11 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             if (card) card.draggable = false;
 
             if (target.classList.contains('input-goto') && target instanceof HTMLInputElement) {
-                target.select();
+                queueMicrotask(() => {
+                    if (document.activeElement === target) {
+                        target.select();
+                    }
+                });
             }
         }
     });
@@ -151,7 +148,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             store.clearActiveCard();
 
             const destination = e.relatedTarget as HTMLElement | null;
-            // Prevent destructive DOM re-renders if jumping directly to a sister card
+            // Correctly skips re-rendering if the user shifts focus to another input within the card deck
             if (!destination || !destination.closest('.key-card')) {
                 refreshAll();
             }
@@ -189,33 +186,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
     container.addEventListener('dragover', (e: DragEvent) => {
         e.preventDefault();
-
-        const target = e.target as HTMLElement;
-        const cardEl = target.closest('.key-card') as HTMLElement;
-
-        if (!cardEl) {
-            clearDropMarkers();
-            currentDropTargetCard = null;
-            insertionPosition = null;
-            return;
-        }
-
-        currentDropTargetCard = cardEl;
-
-        const rect = cardEl.getBoundingClientRect();
-        const relativeMouseY = e.clientY - rect.top;
-
-        clearDropMarkers();
-
-        if (relativeMouseY < rect.height / 2) {
-            cardEl.classList.add('drag-drop-above');
-            insertionPosition = 'above';
-        } else {
-            cardEl.classList.add('drag-drop-below');
-            insertionPosition = 'below';
-        }
-
-        // for copy/paste editor cards functionality
+        // Simply delegate directly to avoid double-calculating layouts on every frame
         updateTargetTrackers(e.clientX, e.clientY, e.target as HTMLElement);
     });
 
@@ -236,7 +207,9 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         const coupletId = Number(card.getAttribute('data-id'));
         if (store.draggedId === null || store.draggedId === coupletId) return;
 
-        store.reorderCouplets(store.draggedId, coupletId);
+        // Pass the calculated insertion position ('above' or 'below') to the store
+        store.reorderCouplets(store.draggedId, coupletId, insertionPosition || 'below');
+
         refreshAll();
     });
 
@@ -247,12 +220,10 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         const cardEl = targetElement.closest('.key-card') as HTMLElement;
         if (!cardEl) {
             clearDropMarkers();
-            currentDropTargetCard = null;
             insertionPosition = null;
             return;
         }
 
-        currentDropTargetCard = cardEl;
         const rect = cardEl.getBoundingClientRect();
         const relativeMouseY = clientY - rect.top;
 
@@ -404,8 +375,8 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
  * Manages macro routing systems without breaking native form field manipulation.
  */
 export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) {
-    window.addEventListener('keydown', (evt: KeyboardEvent) => {
-        const e = evt;
+    window.addEventListener('keydown', (e: KeyboardEvent) => {
+
         // Cross-platform modifier detection (Command key on macOS, Control on Windows/Linux)
         const isMac = isMacUser();
         const hasModifier = isMac ? e.metaKey : e.ctrlKey;
@@ -490,12 +461,22 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
             if (hasModifier && e.key.toLowerCase() === 'v') {
                 e.preventDefault();
 
-                // Determine insertion context: paste below the last selected card, 
-                // or safely default to the end of the list if nothing is selected.
-                const selectedArray = Array.from(store.getSelectedIds());
-                const targetId = selectedArray.length > 0 ? selectedArray[selectedArray.length - 1] : undefined;
+                let targetId: number | undefined = undefined;
+                let position: 'above' | 'below' = 'below';
 
-                if (store.pasteCards(targetId, 'below')) {
+                const hoverMarker = document.querySelector('.drag-drop-above, .drag-drop-below') as HTMLElement;
+                const hoverCard = hoverMarker?.closest('.key-card') as HTMLElement;
+
+                if (hoverCard) {
+                    targetId = Number(hoverCard.getAttribute('data-id'));
+                    position = hoverMarker.classList.contains('drag-drop-above') ? 'above' : 'below';
+                } else {
+                    // Fall back cleanly to the selection state or end of the array sequence
+                    const selectedArray = Array.from(store.getSelectedIds());
+                    targetId = selectedArray.length > 0 ? selectedArray[selectedArray.length - 1] : undefined;
+                }
+
+                if (store.pasteCards(targetId, position)) {
                     showToast("Pasted steps from clipboard.", "success");
                     refreshAll();
                 }

@@ -27,7 +27,7 @@ export interface ImportResult {
 
 export class KeyStore {
     private state: AppState;
-    private isDirty: boolean = false;
+    private hasUncommittedChanges: boolean = false;
 
     private undoStack: AppState[] = [];
     private redoStack: AppState[] = [];
@@ -45,7 +45,7 @@ export class KeyStore {
     constructor(initialKey: Couplet[], maxHistoryLimit = 100) {
         this.state = { dichotomousKey: initialKey };
         this.maxHistoryLimit = maxHistoryLimit;
-        this.isDirty = false;
+        this.hasUncommittedChanges = false;
     }
 
     // ==========================================
@@ -86,12 +86,11 @@ export class KeyStore {
 
     public markSaved() {
         this.savedHistoryIndex = this.currentHistoryIndex;
-        this.isDirty = false;
+        this.hasUncommittedChanges = false;
     }
 
     public hasUnsavedChanges(): boolean {
-        if (this.currentHistoryIndex !== this.savedHistoryIndex) return true;
-        return this.isDirty;
+        return this.currentHistoryIndex !== this.savedHistoryIndex || this.hasUncommittedChanges;
     }
 
     // ==========================================
@@ -107,6 +106,7 @@ export class KeyStore {
         }
 
         this.currentHistoryIndex++;
+        this.hasUncommittedChanges = false
     }
 
     public undo(): boolean {
@@ -122,7 +122,7 @@ export class KeyStore {
 
         // Decrement down the absolute timeline
         this.currentHistoryIndex--;
-        this.isDirty = false;
+        this.hasUncommittedChanges = false;
         return true;
     }
 
@@ -139,7 +139,7 @@ export class KeyStore {
 
         this.state = this.redoStack.pop()!;
 
-        this.isDirty = false;
+        this.hasUncommittedChanges = false;
         return true;
     }
 
@@ -164,7 +164,7 @@ export class KeyStore {
     public pasteCards(targetId?: number, position: 'above' | 'below' = 'below'): boolean {
         if (this.clipboardBuffer.length === 0) return false;
 
-        // Hook into the history engine!
+        // Hook into the history engine! Capture state BEFORE any mutation.
         this.saveCheckpoint();
 
         let insertIndex = this.state.dichotomousKey.length; // Default to appending
@@ -189,19 +189,17 @@ export class KeyStore {
             link2: 0
         }));
 
-        // Splice items into the key array
-        this.saveCheckpoint();
+        // Splice items into a new shallow copy of the key array
         const newKey = [...this.state.dichotomousKey];
         newKey.splice(insertIndex, 0, ...newCards);
         this.state.dichotomousKey = newKey;
 
         // Shift the selection context to the newly pasted items for UX clarity
         this.setSelectionBatch(newCards.map(c => c.id));
-        this.isDirty = true;
+        this.hasUncommittedChanges = true;
 
         return true;
     }
-
     // ==========================================
     // GRAPH ANALYSIS HELPERS
     // ==========================================
@@ -231,7 +229,7 @@ export class KeyStore {
     }
 
     /**
-     * Executes a Breadth-First Search (BFS) starting from the root node (Index 0).
+     * Executes a DFS starting from the root node (Index 0).
      * Returns a Set containing all unique, reachable internal IDs.
      */
     public getReachableNodes(idMap?: Map<number, Couplet>): Set<number> {
@@ -239,22 +237,23 @@ export class KeyStore {
         const key = this.state.dichotomousKey;
         if (key.length === 0) return reachable;
 
-        // Use the passed Map, or build an isolated one instantly to guarantee O(1) lookups
         const lookupMap = idMap || new Map<number, Couplet>(key.map(c => [c.id, c]));
 
-        // Start traversal queue at the absolute root step
-        const queue: number[] = [key[0].id];
+        // PIvOT TO STACK: Functions identically for building a set of reachable nodes
+        const stack: number[] = [key[0].id];
 
-        while (queue.length > 0) {
-            const activeId = queue.shift()!;
+        while (stack.length > 0) {
+            // O(1) constant time extraction!
+            const activeId = stack.pop()!;
+
             if (!reachable.has(activeId)) {
                 reachable.add(activeId);
 
-                // OPTIMIZED: Changed from an O(N) array search (.find) to an O(1) hash lookup
                 const match = lookupMap.get(activeId);
                 if (match) {
-                    if (match.link1) queue.push(match.link1);
-                    if (match.link2) queue.push(match.link2);
+                    // Order of links doesn't matter for gathering reachability sets
+                    if (match.link2) stack.push(match.link2);
+                    if (match.link1) stack.push(match.link1);
                 }
             }
         }
@@ -272,11 +271,12 @@ export class KeyStore {
             }
             return c;
         });
-        this.isDirty = true;
+        this.hasUncommittedChanges = true;
     }
 
     /** Explicitly commits a history point. Useful after text editing finishes (blur). */
     public commitHistoryCheckpoint() {
+        if (!this.hasUncommittedChanges) return;
         this.saveCheckpoint();
     }
 
@@ -325,7 +325,7 @@ export class KeyStore {
                 taxa1: "", taxa2: ""
             }
         ];
-        this.isDirty = true;
+        this.hasUncommittedChanges = true;
     }
 
     public deleteSelected() {
@@ -342,10 +342,10 @@ export class KeyStore {
             }));
 
         this.selectedIds = new Set();
-        this.isDirty = true;
+        this.hasUncommittedChanges = true;
     }
 
-    public reorderCouplets(srcId: number, targetId: number): boolean {
+    public reorderCouplets(srcId: number, targetId: number, position: 'above' | 'below' = 'above'): boolean {
         // Locate the item indices safely
         const arr = [...this.state.dichotomousKey];
         const srcIdx = arr.findIndex(c => c.id === srcId);
@@ -360,12 +360,23 @@ export class KeyStore {
         // Commit history state before mutating data
         this.commitHistoryCheckpoint();
 
-        // Safely perform the swap
+        // Remove the dragged item from its current sequence location
         const [movedItem] = arr.splice(srcIdx, 1);
-        arr.splice(targetIdx, 0, movedItem);
+
+        // Locate the target item's *new* index location after the array collapse
+        // This removes index-shifting math errors entirely
+        let insertIdx = arr.findIndex(c => c.id === targetId);
+
+        // Adjust the insertion pointer if appending below the card target
+        if (position === 'below') {
+            insertIdx++;
+        }
+
+        // Splice the item cleanly into its precise user-intended position
+        arr.splice(insertIdx, 0, movedItem);
 
         this.state.dichotomousKey = arr;
-        this.isDirty = true;
+        this.hasUncommittedChanges = true;
         return true;
     }
 
@@ -468,14 +479,14 @@ export class KeyStore {
 
         // Commit the cleanly structured hierarchical array back to application state
         this.state.dichotomousKey = orderedCouplets;
-        this.isDirty = true;
+        this.hasUncommittedChanges = true;
     }
 
     public replaceKeyData(newData: Couplet[]) {
         this.saveCheckpoint();
         this.state.dichotomousKey = newData;
         this.selectedIds = new Set();
-        this.isDirty = true;
+        this.hasUncommittedChanges = true;
     }
 
     /**
@@ -498,7 +509,7 @@ export class KeyStore {
 
             this.state.dichotomousKey = rawData;
             this.clearSelection();
-            this.isDirty = true;
+            this.hasUncommittedChanges = true;
 
             return {
                 success: true,
@@ -532,7 +543,6 @@ export class KeyStore {
     public clearSelection(): void {
         if (this.selectedIds.size === 0) return; // Optimize: don't trigger updates if already empty
         this.selectedIds.clear();
-        this.isDirty = true;
     }
 
     /**
@@ -542,7 +552,6 @@ export class KeyStore {
     public setSelectionToSingle(cardId: number): void {
         this.selectedIds.clear();
         this.selectedIds.add(cardId);
-        this.isDirty = true;
     }
 
     /**
@@ -550,7 +559,6 @@ export class KeyStore {
     */
     public setSelectionBatch(cardIds: number[] | Set<number>): void {
         this.selectedIds = new Set(cardIds);
-        this.isDirty = true;
     }
 
     public selectAll() {

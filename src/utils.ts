@@ -1,23 +1,48 @@
 // utils.ts
 import type { Couplet } from './store.ts';
 
+const HTML_ESCAPE_MAP: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;'
+};
+
+/**
+ * Escapes volatile HTML control characters to block XSS vector injections.
+ * Uses a single-pass regex matching sequence for optimal processing speed.
+ */
 export function escapeHTML(str: string): string {
     if (!str) return '';
-    return str
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
+    return str.replace(/[&<>"']/g, (match) => HTML_ESCAPE_MAP[match]);
 }
 
+/**
+ * Streams a raw payload string out of runtime memory and drops it straight 
+ * into the client system filesystem as an explicit file download. Includes
+ * automated fallbacks to bypass restrictive Content Security Policies (CSP).
+ */
 export function triggerFileDownload(content: string, filename: string, mimeType: string): void {
     let url: string | null = null;
     let downloadAnchor: HTMLAnchorElement | null = null;
 
     try {
-        const blob = new Blob([content], { type: mimeType });
-        url = URL.createObjectURL(blob);
+        try {
+            const blob = new Blob([content], { type: mimeType });
+            url = URL.createObjectURL(blob);
+        } catch (cspError) {
+            console.warn("Blob URL creation blocked by environment security constraints. Attempting standard Base64 encoding fallback.", cspError);
+            
+            // Modern, safe alternative to btoa(unescape(encodeURIComponent(content)))
+            const binaryBytes = new TextEncoder().encode(content);
+            let binaryString = '';
+            for (let i = 0; i < binaryBytes.byteLength; i++) {
+                binaryString += String.fromCharCode(binaryBytes[i]);
+            }
+            const encodedContent = btoa(binaryString);
+            url = `data:${mimeType};base64,${encodedContent}`;
+        }
 
         downloadAnchor = document.createElement('a');
         downloadAnchor.href = url;
@@ -30,10 +55,10 @@ export function triggerFileDownload(content: string, filename: string, mimeType:
         if (downloadAnchor && document.body.contains(downloadAnchor)) {
             document.body.removeChild(downloadAnchor);
         }
-        
-        // download pipeline successfully streams the data blob before its URL is destroyed.
-        if (url) {
-            const urlToRevoke = url; // Secure closure reference
+
+        // Only revoke memory allocations if the active URL was successfully generated as a live blob stream
+        if (url && url.startsWith('blob:')) {
+            const urlToRevoke = url;
             setTimeout(() => {
                 URL.revokeObjectURL(urlToRevoke);
             }, 250);
@@ -41,6 +66,10 @@ export function triggerFileDownload(content: string, filename: string, mimeType:
     }
 }
 
+/**
+ * Sniffs client-side agent configurations to check if the target ecosystem
+ * utilizes Apple standard human interface shortcuts (Meta/Command configurations).
+ */
 export function isMacUser(): boolean {
     // Modern User-Agent Client Hints API (Chrome, Edge, Opera)
     const userAgentData = (navigator as any).userAgentData;
@@ -54,21 +83,19 @@ export function isMacUser(): boolean {
         return true;
     }
 
-    // The "iPad masquerading as a Desktop Mac" exception
-    // Modern iPads running Safari report their platform as "MacIntel", but they use touch interfaces
-    if (platform.includes('mac') && navigator.maxTouchPoints > 1) {
-        return true; 
-    }
-
     // Raw userAgent string regex fallback (absolute safety net)
     const userAgent = navigator.userAgent.toLowerCase();
     return userAgent.includes('macintosh') || userAgent.includes('mac os x');
 }
 
+/**
+ * Explicit Type Guard asserting whether incoming structural payloads conform 
+ * cleanly to the strict data contract properties required by a Couplet array.
+ */
 export function isValidCoupletArray(data: any): data is Couplet[] {
     if (!Array.isArray(data)) return false;
-    
-    return data.every(item => 
+
+    return data.every(item =>
         item &&
         typeof item === 'object' &&
         typeof item.id === 'number' &&
@@ -81,12 +108,19 @@ export function isValidCoupletArray(data: any): data is Couplet[] {
     );
 }
 
+/**
+ * Generates an O(1) hash map connecting unique Couplet database record IDs 
+ * directly to their current dynamic arrays positional sorting coordinates.
+ */
 export function buildIdToIndexMap(key: readonly Couplet[]): Map<number, number> {
     const map = new Map<number, number>();
     key.forEach((c, index) => map.set(c.id, index));
     return map;
 }
 
+/**
+ * Resolves a permanent record identifier into a user-facing step layout label integer.
+ */
 export function getStepNumberById(idToIndexMap: Map<number, number>, targetId: number): string {
     if (targetId === 0) return '0';
     const index = idToIndexMap.get(targetId);
