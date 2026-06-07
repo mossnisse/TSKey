@@ -1,5 +1,5 @@
 // eventController.ts
-import type { KeyStore } from './store.ts';
+import type { KeyStore, Couplet } from './store.ts';
 import { renderPrintView, showToast } from './uiRenderer.ts';
 import { triggerFileDownload, isMacUser } from './utils.ts';
 import { exportKeyToHTML } from './exporters/htmlExporter.ts';
@@ -27,7 +27,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
         // If the user clicked the editor background layout area itself, drop focus
         if (target.id === 'editor-container' || target.classList.contains('editor-workspace')) {
-            store.clearSelection(); // ← Uniform API Call
+            store.clearSelection();
             refreshAll();
             return;
         }
@@ -47,7 +47,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         refreshAll();
     });
 
-    // Centralized Multi-Selection Router Click
     // CONSOLIDATED INPUT ROUTER (Handles Undo Debouncing + Link Validation)
     container.addEventListener('input', (e) => {
         const target = e.target as HTMLInputElement | HTMLTextAreaElement;
@@ -64,44 +63,56 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         store.setActiveCard(id);
 
         // Undo History Checkpoint Manager
-        // Trigger a checkpoint ONLY if this is a fresh typing session or we jumped to a new input field
         if (!typingSessionActive || currentEditingFieldKey !== fieldKey) {
             store.commitHistoryCheckpoint(); // Save state BEFORE these new edits apply
             typingSessionActive = true;
             currentEditingFieldKey = fieldKey;
         }
 
-        // Clear the previous timer to extend the active typing chunk
+        // Clear previous timer to extend the active typing chunk
         if (typingTimeoutId !== null) {
             clearTimeout(typingTimeoutId);
         }
 
-        // If the user stops typing for 800ms, clear the session flag.
-        // The next character typed will trigger a brand new Undo checkpoint.
+        // If user stops typing for 800ms, trigger full re-evaluation of structural warnings safely
         typingTimeoutId = window.setTimeout(() => {
             typingSessionActive = false;
             typingTimeoutId = null;
+            refreshAll(); // Safely reconciles dynamic card errors/badges while retaining cursor focus
         }, 800);
 
-        // Input Validation & Value Extraction
-        let value: string | number = target.value;
-        if (field === 'link1' || field === 'link2') {
-            const num = parseInt(value) || 0;
+        let updatePayload: Partial<Omit<Couplet, 'id'>> = {};
 
-            // Check for explicit out-of-bounds numbers
-            if (value !== '' && (num <= 0 || num > key.length)) {
-                target.classList.add('input-error');
-                value = 0; // Fallback safely to prevent graph corruption
+        if (field === 'dest1' || field === 'dest2') {
+            const linkField = field === 'dest1' ? 'link1' : 'link2';
+            const taxaField = field === 'dest1' ? 'taxa1' : 'taxa2';
+            const valStr = target.value.trim();
+
+            if (/^\d+$/.test(valStr)) {
+                // Input is purely numerical: Treat as a Goto Step
+                const num = parseInt(valStr, 10);
+                if (num > 0 && num <= key.length) {
+                    const targetCard = key[num - 1];
+                    updatePayload[linkField] = targetCard.id;
+                    updatePayload[taxaField] = '';
+                    target.classList.remove('input-error');
+                } else {
+                    // Unresolved link: Zero out ID link, store invalid value placeholder
+                    updatePayload[linkField] = 0;
+                    updatePayload[taxaField] = valStr;
+                    target.classList.add('input-error');
+                }
             } else {
+                // Input contains text: Treat as a Taxon
+                updatePayload[linkField] = 0;
+                updatePayload[taxaField] = valStr;
                 target.classList.remove('input-error');
-                const targetCard = key[num - 1];
-                value = targetCard ? targetCard.id : 0;
             }
+        } else {
+            updatePayload[field as keyof Omit<Couplet, 'id'>] = target.value as never;
         }
 
-        // State Mutation & Render
-        // Update in-memory state silently, bypassing automatic history tracking
-        store.updateCouplet(id, { [field]: value });
+        store.updateCouplet(id, updatePayload);
         renderPrintView(store);
     });
 
@@ -112,7 +123,8 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             const card = target.closest('.key-card') as HTMLElement;
             if (card) card.draggable = false;
 
-            if (target.classList.contains('input-goto') && target instanceof HTMLInputElement) {
+            // FIX: Corrected target class lookup to match structural rendering parameters
+            if (target.classList.contains('input-destination') && target instanceof HTMLInputElement) {
                 queueMicrotask(() => {
                     if (document.activeElement === target) {
                         target.select();
@@ -131,7 +143,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             const card = target.closest('.key-card') as HTMLElement;
             if (card) card.draggable = true;
 
-            // HARD RESET: The user exited the current text input context.
             typingSessionActive = false;
             currentEditingFieldKey = null;
             if (typingTimeoutId !== null) {
@@ -139,16 +150,31 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
                 typingTimeoutId = null;
             }
 
-            if (target.classList.contains('input-error') && target instanceof HTMLInputElement) {
+            const id = Number(card?.getAttribute('data-id'));
+
+            // Mutate state model instead of manipulating temporary visual classes directly
+            if (target.classList.contains('input-error') && target instanceof HTMLInputElement && card) {
                 const invalidVal = target.value;
-                showToast(`⚠️ Step "${invalidVal}" does not exist yet. Link reset to unassigned.`, "error");
-                target.classList.remove('input-error');
+                const field = target.getAttribute('data-field')!;
+                const linkField = field === 'dest1' ? 'link1' : 'link2';
+                const taxaField = field === 'dest1' ? 'taxa1' : 'taxa2';
+
+                // Save the invalid value into the taxa field instead of erasing it --
+                store.updateCouplet(id, {
+                    [linkField]: 0,
+                    [taxaField]: invalidVal
+                });
+
+                showToast(`⚠️ Destination "${invalidVal}" is unresolved. Saved as text context.`, "error");
+
+                // Force a layout refresh immediately on error resolution so diagnostics update
+                refreshAll();
+                return;
             }
 
             store.clearActiveCard();
 
             const destination = e.relatedTarget as HTMLElement | null;
-            // Correctly skips re-rendering if the user shifts focus to another input within the card deck
             if (!destination || !destination.closest('.key-card')) {
                 refreshAll();
             }
@@ -177,7 +203,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         clearDropMarkers();
     });
 
-    // Clear marker lines across the entire container
     const clearDropMarkers = () => {
         container.querySelectorAll('.key-card').forEach(el => {
             el.classList.remove('drag-drop-above', 'drag-drop-below');
@@ -186,12 +211,10 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
     container.addEventListener('dragover', (e: DragEvent) => {
         e.preventDefault();
-        // Simply delegate directly to avoid double-calculating layouts on every frame
         updateTargetTrackers(e.clientX, e.clientY, e.target as HTMLElement);
     });
 
     container.addEventListener('dragleave', (e: DragEvent) => {
-        // Only clear if exiting the editor window entirely
         const target = e.relatedTarget as HTMLElement;
         if (!target || !container.contains(target)) {
             clearDropMarkers();
@@ -207,15 +230,10 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         const coupletId = Number(card.getAttribute('data-id'));
         if (store.draggedId === null || store.draggedId === coupletId) return;
 
-        // Pass the calculated insertion position ('above' or 'below') to the store
         store.reorderCouplets(store.draggedId, coupletId, insertionPosition || 'below');
-
         refreshAll();
     });
 
-    // copy paste editor cards functionality
-
-    // --- REUSED MATHEMATICS CONTROLLER FUNCTION ---
     const updateTargetTrackers = (clientX: number, clientY: number, targetElement: HTMLElement) => {
         const cardEl = targetElement.closest('.key-card') as HTMLElement;
         if (!cardEl) {
@@ -239,12 +257,9 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     };
 
     // MOUSE TRACKER FOR PASTE ROUTING
-    // This watches where the cursor is, so if the user hits Ctrl+V, it uses the exact same visual target!
     container.addEventListener('mousemove', (e: MouseEvent) => {
-        // Only show visual line highlights during copy-paste tracking if NOT dragging an item
         if (e.buttons === 0) {
             const target = e.target as HTMLElement;
-            // Only draw line indicators if hovering near the edges of a key card and clipboard has data
             if (target.closest('.key-card') && store.hasClipboardData()) {
                 updateTargetTrackers(e.clientX, e.clientY, target);
             } else {
@@ -261,7 +276,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     // STANDALONE TOOLBAR ACTIONS
     // ==========================================
     document.querySelector('#cmd-undo')?.addEventListener('click', () => { if (store.undo()) refreshAll(); });
-
     document.querySelector('#cmd-redo')?.addEventListener('click', () => { if (store.redo()) refreshAll(); });
 
     document.querySelector('#cmd-save')?.addEventListener('click', () => {
@@ -277,7 +291,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             store.markSaved();
             showToast("💾 Changes saved to local browser data!", "success");
             refreshAll();
-
         } catch (error: any) {
             console.error("Save Operation Failed: ", error);
             let userMessage = "Failed to save data. An unknown error occurred.";
@@ -307,8 +320,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         try {
             const fileText = await file.text();
             const rawData = JSON.parse(fileText);
-
-            // This now returns an ImportResult object { success: boolean, errors: string[] }
             const importResult = store.importJsonData(rawData);
 
             if (!importResult.success) {
@@ -346,11 +357,17 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     });
 
     document.querySelector('#add-couplet-btn')?.addEventListener('click', () => {
-        store.addCouplet();
-        refreshAll();
+        const newId = store.addCouplet();
+        refreshAll(); // Synchronously handles DOM reconciliation layout updates
+        
+        // FIX: Find the freshly rendered card in the DOM and focus its alt1 textarea
+        const newCard = document.querySelector(`.key-card[data-id="${newId}"]`);
+        const textarea = newCard?.querySelector('textarea[data-field="alt1"]') as HTMLTextAreaElement | null;
+        if (textarea) {
+            textarea.focus();
+        }
     });
 
-    // CONSOLIDATED FORMAT EXPORTER SWITCHBOARD
     document.querySelector('#export-format-selector')?.addEventListener('change', (e) => {
         const selectEl = e.target as HTMLSelectElement;
         const format = selectEl.value;
@@ -365,23 +382,18 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         } else {
             alert(`Export not implemented for: [${format.toUpperCase()}].`);
         }
-
         selectEl.value = "";
     });
 }
 
 /**
  * Desktop Command Shortcut Interceptor Engine.
- * Manages macro routing systems without breaking native form field manipulation.
  */
 export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) {
     window.addEventListener('keydown', (e: KeyboardEvent) => {
-
-        // Cross-platform modifier detection (Command key on macOS, Control on Windows/Linux)
         const isMac = isMacUser();
         const hasModifier = isMac ? e.metaKey : e.ctrlKey;
 
-        // Determine context state
         const activeElement = document.activeElement;
         const isTyping = activeElement && (
             activeElement.tagName === 'INPUT' ||
@@ -389,21 +401,15 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
             activeElement.hasAttribute('contenteditable')
         );
 
-        // ==========================================
-        // DUAL-CONTEXT CRITICAL COMMANDS (Always intercept)
-        // ==========================================
+        // DUAL-CONTEXT CRITICAL COMMANDS
         if (hasModifier && e.key.toLowerCase() === 's') {
             e.preventDefault();
             document.querySelector<HTMLButtonElement>('#cmd-save')?.click();
             return;
         }
 
-        // ==========================================
         // CANVAS CONTEXT COMMANDS (Only if NOT typing)
-        // ==========================================
         if (!isTyping) {
-
-            // Ctrl + A: Select All Cards
             if (hasModifier && e.key.toLowerCase() === 'a') {
                 e.preventDefault();
                 store.selectAll();
@@ -411,7 +417,6 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
                 return;
             }
 
-            // Ctrl + Z / Ctrl + Shift + Z: Undo & Redo Matrix
             if (hasModifier && e.key.toLowerCase() === 'z') {
                 e.preventDefault();
                 if (e.shiftKey) {
@@ -422,14 +427,12 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
                 return;
             }
 
-            // Ctrl + Y: Secondary Redo Routing (Windows Standard)
             if (hasModifier && e.key.toLowerCase() === 'y') {
                 e.preventDefault();
                 if (store.redo()) refreshAll();
                 return;
             }
 
-            // Delete / Backspace: Remove Selected Card Blocks
             if (e.key === 'Delete' || e.key === 'Backspace') {
                 if (store.getSelectedIds().size > 0) {
                     e.preventDefault();
@@ -438,7 +441,6 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
                 return;
             }
 
-            // Escape: Drop Active Selection Arrays
             if (e.key === 'Escape') {
                 e.preventDefault();
                 store.clearSelection();
@@ -446,18 +448,15 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
                 return;
             }
 
-            // Ctrl + C / Cmd + C: Copy Selected Cards
             if (hasModifier && e.key.toLowerCase() === 'c') {
                 e.preventDefault();
                 if (store.getSelectedIds().size > 0) {
                     store.copySelectedCards();
-                    // We can utilize your existing Toast notification system!
                     showToast(`Copied ${store.getSelectedIds().size} step(s) to clipboard.`, 'success');
                 }
                 return;
             }
 
-            // Ctrl + V / Cmd + V: Paste Cards
             if (hasModifier && e.key.toLowerCase() === 'v') {
                 e.preventDefault();
 
@@ -471,7 +470,6 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
                     targetId = Number(hoverCard.getAttribute('data-id'));
                     position = hoverMarker.classList.contains('drag-drop-above') ? 'above' : 'below';
                 } else {
-                    // Fall back cleanly to the selection state or end of the array sequence
                     const selectedArray = Array.from(store.getSelectedIds());
                     targetId = selectedArray.length > 0 ? selectedArray[selectedArray.length - 1] : undefined;
                 }

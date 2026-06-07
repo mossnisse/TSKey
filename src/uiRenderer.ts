@@ -7,17 +7,18 @@ import { escapeHTML, getStepNumberById, buildIdToIndexMap } from './utils.ts';
 // ==========================================
 
 /** Helper to target and patch changing attributes safely without dropping cursor focus */
-function syncField(parent: HTMLElement, selector: string, value: string, maxAttr?: string) {
+function syncField(parent: HTMLElement, selector: string, value: string, maxAttr?: string, forceUpdate = false): HTMLInputElement | HTMLTextAreaElement | null {
     const el = parent.querySelector(selector) as HTMLInputElement | HTMLTextAreaElement;
-    if (!el) return;
+    if (!el) return null;
 
     if (maxAttr && el.getAttribute('max') !== maxAttr) {
         el.setAttribute('max', maxAttr);
     }
-    // Only alter value directly if field is not actively chosen by user text insertion
-    if (document.activeElement !== el && el.value !== value) {
+
+    if ((forceUpdate || document.activeElement !== el) && el.value !== value) {
         el.value = value;
     }
+    return el; // <-- Return the element handle here
 }
 
 // ==========================================
@@ -99,17 +100,26 @@ export function renderEditorCards(store: KeyStore) {
     key.forEach((couplet, index) => {
         const displayNum = index + 1;
         const isSelected = selectedIds.has(couplet.id);
-        //const cardClass = isSelected ? 'editor-card is-selected' : 'editor-card';
 
         const inboundLinks = inboundLinksMap.get(couplet.id) || [];
+        // Account for broken links where an internal ID exists but the target step was deleted --
         const idx1 = couplet.link1 ? idToIndexMap.get(couplet.link1) : undefined;
         const idx2 = couplet.link2 ? idToIndexMap.get(couplet.link2) : undefined;
 
-        const viewLink1 = idx1 !== undefined ? (idx1 + 1).toString() : '';
-        const viewLink2 = idx2 !== undefined ? (idx2 + 1).toString() : '';
+        // If link exists but index doesn't, show the taxa string or fallback to '?' so it doesn't clear the DOM field
+        const dest1Val = couplet.link1
+            ? (idx1 !== undefined ? (idx1 + 1).toString() : (couplet.taxa1 || '?'))
+            : couplet.taxa1;
+
+        const dest2Val = couplet.link2
+            ? (idx2 !== undefined ? (idx2 + 1).toString() : (couplet.taxa2 || '?'))
+            : couplet.taxa2;
+
+        // Mark broken link pointers OR raw unresolved numeric strings as input errors
+        const isUnresolved1 = (couplet.link1 && idx1 === undefined) || (!couplet.link1 && /^\d+$/.test(couplet.taxa1));
+        const isUnresolved2 = (couplet.link2 && idx2 === undefined) || (!couplet.link2 && /^\d+$/.test(couplet.taxa2));
 
         const cardErrors = activeDiagnostics.get(couplet.id) || [];
-        const hasErrors = cardErrors.some(e => e.severity === 'error');
 
         // Centralized UI text bindings to prevent DOM reconciler mismatches
         const computedTitle = `${displayNum}.`;
@@ -119,7 +129,8 @@ export function renderEditorCards(store: KeyStore) {
         let warningInnerHtml = '';
         cardErrors.forEach(err => {
             const modifierClass = err.severity === 'error' ? 'error-text' : 'warning-text';
-            warningInnerHtml += `<span class="${modifierClass}">⚠️ ${err.message}</span>`;
+            // Use escapeHTML to immunize arbitrary message data strings
+            warningInnerHtml += `<span class="${modifierClass}">⚠️ ${escapeHTML(err.message)}</span>`;
         });
 
         const warningBlockHtml = cardErrors.length > 0 ? `<div class="warning-block">${warningInnerHtml}</div>` : '';
@@ -129,7 +140,6 @@ export function renderEditorCards(store: KeyStore) {
             existingMap.delete(couplet.id);
 
             card.classList.toggle('is-selected', isSelected);
-            card.classList.toggle('has-errors', hasErrors);
 
             // Flawless reconciliation matching via variables
             const titleEl = card.querySelector('.card-title');
@@ -143,13 +153,24 @@ export function renderEditorCards(store: KeyStore) {
                 if (badgeEl.textContent !== badgeLabel) badgeEl.textContent = badgeLabel;
             }
 
+            /*
             syncField(card, 'textarea[data-field="alt1"]', couplet.alt1);
-            syncField(card, 'input[data-field="taxa1"]', couplet.taxa1);
-            syncField(card, 'input[data-field="link1"]', viewLink1, key.length.toString());
+            syncField(card, 'input[data-field="dest1"]', dest1Val);
+            if (isUnresolved1) card.querySelector('input[data-field="dest1"]')?.classList.add('input-error');
+            else card.querySelector('input[data-field="dest1"]')?.classList.remove('input-error');
 
             syncField(card, 'textarea[data-field="alt2"]', couplet.alt2);
-            syncField(card, 'input[data-field="taxa2"]', couplet.taxa2);
-            syncField(card, 'input[data-field="link2"]', viewLink2, key.length.toString());
+            syncField(card, 'input[data-field="dest2"]', dest2Val);
+            if (isUnresolved2) card.querySelector('input[data-field="dest2"]')?.classList.add('input-error');
+            else card.querySelector('input[data-field="dest2"]')?.classList.remove('input-error');*/
+
+            syncField(card, 'textarea[data-field="alt1"]', couplet.alt1);
+            const dest1El = syncField(card, 'input[data-field="dest1"]', dest1Val);
+            dest1El?.classList.toggle('input-error', isUnresolved1);
+
+            syncField(card, 'textarea[data-field="alt2"]', couplet.alt2);
+            const dest2El = syncField(card, 'input[data-field="dest2"]', dest2Val);
+            dest2El?.classList.toggle('input-error', isUnresolved2);
 
             const currentWarningBlock = card.querySelector('.warning-block');
             if (cardErrors.length > 0) {
@@ -162,14 +183,15 @@ export function renderEditorCards(store: KeyStore) {
                 currentWarningBlock.remove();
             }
 
-            container.appendChild(card);
+            if (container.children[index] !== card) {
+                container.insertBefore(card, container.children[index] || null);
+            }
         } else {
             card = document.createElement('div');
             card.draggable = true;
             card.setAttribute('data-id', couplet.id.toString());
             card.className = 'key-card';
             if (isSelected) card.classList.add('is-selected');
-            if (hasErrors) card.classList.add('has-errors');
 
             card.innerHTML = `
                 <div class="card-header">
@@ -182,37 +204,31 @@ export function renderEditorCards(store: KeyStore) {
                 <div class="card-row">
                   <textarea class="input-sync card-textarea" data-field="alt1" placeholder="Enter diagnostic trait details...">${escapeHTML(couplet.alt1)}</textarea>
                   <div class="card-meta-pane">
-                    <label class="meta-label">Leads to: 
-                      <input type="text" class="input-sync input-taxa" data-field="taxa1" placeholder="Taxon name" value="${escapeHTML(couplet.taxa1)}" />
-                    </label>
-                    <label class="meta-label">Goto step: 
-                      <input type="number" class="input-sync input-goto" data-field="link1" min="1" max="${key.length}" placeholder="#" value="${viewLink1 || ''}" />
+                    <label class="meta-label">→
+                      <input type="text" class="input-sync input-destination ${isUnresolved1 ? 'input-error' : ''}" data-field="dest1" placeholder="Taxon or Step #" value="${escapeHTML(dest1Val)}" />
                     </label>
                   </div>
                 </div>
                 <div class="card-row">
                   <textarea class="input-sync card-textarea" data-field="alt2" placeholder="Enter contrast alternative description...">${escapeHTML(couplet.alt2)}</textarea>
                   <div class="card-meta-pane">
-                    <label class="meta-label">Leads to: 
-                      <input type="text" class="input-sync input-taxa" data-field="taxa2" placeholder="Taxon name" value="${escapeHTML(couplet.taxa2)}" />
-                    </label>
-                    <label class="meta-label">Goto Step: 
-                      <input type="number" class="input-sync input-goto" data-field="link2" min="1" max="${key.length}" placeholder="#" value="${viewLink2 || ''}" />
+                    <label class="meta-label">→
+                      <input type="text" class="input-sync input-destination ${isUnresolved2 ? 'input-error' : ''}" data-field="dest2" placeholder="Taxon or Step #" value="${escapeHTML(dest2Val)}" />
                     </label>
                   </div>
                 </div>
                 ${warningBlockHtml}
             `;
-            container.appendChild(card);
+            container.insertBefore(card, container.children[index] || null);
         }
     });
 
     existingMap.forEach(card => card.remove());
 }
+
 /**
  * Renders the passive publication presentation view structure.
  */
-
 export function renderPrintView(store: KeyStore) {
     const container = document.querySelector('#print-view-container');
     if (!container) return;
@@ -220,7 +236,6 @@ export function renderPrintView(store: KeyStore) {
     const key = store.getKey();
     const idToIndexMap = buildIdToIndexMap(key);
 
-    // Map existing DOM blocks currently residing on the preview canvas
     const existingBlocks = Array.from(container.querySelectorAll('.print-step-block')) as HTMLElement[];
     const existingMap = new Map<number, HTMLElement>();
     existingBlocks.forEach(block => {
@@ -228,20 +243,26 @@ export function renderPrintView(store: KeyStore) {
         existingMap.set(id, block);
     });
 
-    // Reconcile or build blocks based on current KeyStore sequence state
     key.forEach((c, index) => {
         const currentDisplayNum = index + 1;
-        const step1Dest = getStepNumberById(idToIndexMap, c.link1);
-        const step2Dest = getStepNumberById(idToIndexMap, c.link2);
+        // -- FIX: Ensure print layout matches editor view broken-link detection contracts --
+        const idx1 = c.link1 ? idToIndexMap.get(c.link1) : undefined;
+        const idx2 = c.link2 ? idToIndexMap.get(c.link2) : undefined;
 
-        // Compute styling metadata instead of storing HTML markup raw strings
-        const dest1Info = c.taxa1
-            ? { text: c.taxa1, className: 'print-dest-taxon' }
-            : (c.link1 ? { text: step1Dest, className: 'print-dest-strong' } : { text: '...', className: '' });
+        const isUnresolved1 = (c.link1 && idx1 === undefined) || (!c.link1 && /^\d+$/.test(c.taxa1));
+        const isUnresolved2 = (c.link2 && idx2 === undefined) || (!c.link2 && /^\d+$/.test(c.taxa2));
 
-        const dest2Info = c.taxa2
-            ? { text: c.taxa2, className: 'print-dest-taxon' }
-            : (c.link2 ? { text: step2Dest, className: 'print-dest-strong' } : { text: '...', className: '' });
+        const dest1Info = isUnresolved1
+            ? { text: c.taxa1 || '?', className: 'error-text' }
+            : (c.taxa1
+                ? { text: c.taxa1, className: 'print-dest-taxon' }
+                : (c.link1 && idx1 !== undefined ? { text: (idx1 + 1).toString(), className: 'print-dest-strong' } : { text: '...', className: '' }));
+
+        const dest2Info = isUnresolved2
+            ? { text: c.taxa2 || '?', className: 'error-text' }
+            : (c.taxa2
+                ? { text: c.taxa2, className: 'print-dest-taxon' }
+                : (c.link2 && idx2 !== undefined ? { text: (idx2 + 1).toString(), className: 'print-dest-strong' } : { text: '...', className: '' }));
 
         const val1 = c.alt1 || '___';
         const val2 = c.alt2 || '___';
@@ -249,20 +270,16 @@ export function renderPrintView(store: KeyStore) {
         let block = existingMap.get(c.id);
 
         if (block) {
-            // Element exists: pull from map to protect it from deletion sweep
             existingMap.delete(c.id);
 
-            // Sync Step Index Label
             const stepNumEl = block.querySelector('.print-step-num');
             if (stepNumEl && stepNumEl.textContent !== `${currentDisplayNum}.`) {
                 stepNumEl.textContent = `${currentDisplayNum}.`;
             }
 
-            // Sync Choice A Text
             const txt1 = block.querySelector('.print-row[data-choice="1"] .print-text');
             if (txt1 && txt1.textContent !== val1) txt1.textContent = val1;
 
-            // Safe, consistent updates for Destination A
             const dest1 = block.querySelector('.print-row[data-choice="1"] .print-dest');
             if (dest1) {
                 if (dest1.textContent !== dest1Info.text) dest1.textContent = dest1Info.text;
@@ -271,11 +288,9 @@ export function renderPrintView(store: KeyStore) {
                 }
             }
 
-            // Sync Choice B Text
             const txt2 = block.querySelector('.print-row[data-choice="2"] .print-text');
             if (txt2 && txt2.textContent !== val2) txt2.textContent = val2;
 
-            // Safe, consistent updates for Destination B
             const dest2 = block.querySelector('.print-row[data-choice="2"] .print-dest');
             if (dest2) {
                 if (dest2.textContent !== dest2Info.text) dest2.textContent = dest2Info.text;
@@ -284,18 +299,13 @@ export function renderPrintView(store: KeyStore) {
                 }
             }
 
-            // Re-append existing block to update position order instantly 
             container.appendChild(block);
-
         } else {
-            // Element does not exist: perform isolated node construction
             block = document.createElement('div');
             block.className = 'print-step-block';
             block.setAttribute('data-id', c.id.toString());
             block.style.display = 'contents';
 
-            // Initial building template. No user variables are injected via innerHTML template strings.
-            // This isolates structural configuration setup away from dynamic mutation strings.
             block.innerHTML = `
                 <div class="print-step-num"></div>
                 <div class="print-row" data-choice="1">
@@ -312,18 +322,26 @@ export function renderPrintView(store: KeyStore) {
                 <div class="print-spacer"></div>
             `;
 
-            // Natively assign text and classes using strict DOM mutations
-            block.querySelector('.print-step-num')!.textContent = `${currentDisplayNum}.`;
+            const stepNumEl = block.querySelector('.print-step-num');
+            if (stepNumEl) stepNumEl.textContent = `${currentDisplayNum}.`;
 
-            block.querySelector('.print-row[data-choice="1"] .print-text')!.textContent = val1;
-            const dest1 = block.querySelector('.print-row[data-choice="1"] .print-dest')!;
-            dest1.textContent = dest1Info.text;
-            if (dest1Info.className) dest1.classList.add(dest1Info.className);
+            const txt1 = block.querySelector('.print-row[data-choice="1"] .print-text');
+            if (txt1) txt1.textContent = val1;
 
-            block.querySelector('.print-row[data-choice="2"] .print-text')!.textContent = val2;
-            const dest2 = block.querySelector('.print-row[data-choice="2"] .print-dest')!;
-            dest2.textContent = dest2Info.text;
-            if (dest2Info.className) dest2.classList.add(dest2Info.className);
+            const dest1 = block.querySelector('.print-row[data-choice="1"] .print-dest');
+            if (dest1) {
+                dest1.textContent = dest1Info.text;
+                if (dest1Info.className) dest1.className = `print-dest ${dest1Info.className}`.trim();
+            }
+
+            const txt2 = block.querySelector('.print-row[data-choice="2"] .print-text');
+            if (txt2) txt2.textContent = val2;
+
+            const dest2 = block.querySelector('.print-row[data-choice="2"] .print-dest');
+            if (dest2) {
+                dest2.textContent = dest2Info.text;
+                if (dest2Info.className) dest2.className = `print-dest ${dest2Info.className}`.trim();
+            }
 
             container.appendChild(block);
         }

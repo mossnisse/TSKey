@@ -98,15 +98,22 @@ export class KeyStore {
     // ==========================================
 
     private saveCheckpoint() {
+        // If we were sitting on an undone branch and make a new change, 
+        // the old redo timeline branch is discarded. 
+        // If the saved point was on that discarded branch, invalidate it.
+        if (this.redoStack.length > 0 && this.savedHistoryIndex > this.currentHistoryIndex) {
+            this.savedHistoryIndex = -1;
+        }
+
         this.redoStack = [];
-        this.undoStack.push({ dichotomousKey: this.state.dichotomousKey });
+        this.undoStack.push({ dichotomousKey: [...this.state.dichotomousKey] });
 
         if (this.undoStack.length > this.maxHistoryLimit) {
             this.undoStack.shift();
         }
 
         this.currentHistoryIndex++;
-        this.hasUncommittedChanges = false
+        this.hasUncommittedChanges = false;
     }
 
     public undo(): boolean {
@@ -118,7 +125,8 @@ export class KeyStore {
             this.redoStack.shift();
         }
 
-        this.state = this.undoStack.pop()!;
+        const nextState = this.undoStack.pop();
+        if (nextState) this.state = nextState;
 
         // Decrement down the absolute timeline
         this.currentHistoryIndex--;
@@ -280,8 +288,11 @@ export class KeyStore {
         this.saveCheckpoint();
     }
 
-    public addCouplet() {
+    public addCouplet(): number {
         this.saveCheckpoint();
+        if (this.currentHistoryIndex <= this.savedHistoryIndex) {
+            this.savedHistoryIndex = -1;
+        }
 
         const maxId = this.state.dichotomousKey.reduce((currentMax, couplet) => {
             const validId = Number(couplet?.id);
@@ -289,6 +300,8 @@ export class KeyStore {
         }, 100);
 
         const nextInternalId = maxId + 1;
+        // Determine what the 1-based step number string will be for the new card
+        const newStepNumberStr = (this.state.dichotomousKey.length + 1).toString();
 
         // Find which slot we want to auto-link (searching backwards)
         let targetLinkIndex = -1;
@@ -307,12 +320,26 @@ export class KeyStore {
             }
         }
 
-        // Generate a new array with updated linkages immutably
+        // Generate a new array with updated linkages and text-to-ID resolutions
         const updatedKey = this.state.dichotomousKey.map((couplet, index) => {
+            let updated = { ...couplet };
+
+            // Apply standard backward auto-linking if this card matched an open slot
             if (index === targetLinkIndex && targetField) {
-                return { ...couplet, [targetField]: nextInternalId };
+                updated[targetField] = nextInternalId;
             }
-            return couplet;
+
+            // Scan for unresolved text entries pointing to the new step number and link them
+            if (!updated.link1 && updated.taxa1.trim() === newStepNumberStr) {
+                updated.link1 = nextInternalId;
+                updated.taxa1 = "";
+            }
+            if (!updated.link2 && updated.taxa2.trim() === newStepNumberStr) {
+                updated.link2 = nextInternalId;
+                updated.taxa2 = "";
+            }
+
+            return updated;
         });
 
         // Append the new step block to our new array reference
@@ -326,6 +353,8 @@ export class KeyStore {
             }
         ];
         this.hasUncommittedChanges = true;
+
+        return nextInternalId; // Return the new ID for UI targeting focus
     }
 
     public deleteSelected() {
@@ -600,6 +629,21 @@ export class KeyStore {
         key.forEach((c, index) => {
             const issues: KeyValidationError[] = [];
 
+            const isUnresolved1 = !c.link1 && /^\d+$/.test(c.taxa1);
+            const isUnresolved2 = !c.link2 && /^\d+$/.test(c.taxa2);
+
+            if (isUnresolved1) {
+                issues.push({ severity: 'error', message: `Choice A points to step '${c.taxa1}' which does not exist yet.` });
+            } else if (!c.taxa1 && !c.link1) {
+                issues.push({ severity: 'warning', message: 'Choice A is incomplete. Assign a Taxa or destination step.' });
+            }
+
+            if (isUnresolved2) {
+                issues.push({ severity: 'error', message: `Choice B points to step '${c.taxa2}' which does not exist yet.` });
+            } else if (!c.taxa2 && !c.link2) {
+                issues.push({ severity: 'warning', message: 'Choice B is incomplete. Assign a Taxa or destination step.' });
+            }
+
             // Warns users if a card isn't picked up by the BFS traversal queue
             if (index > 0 && !reachableNodes.has(c.id)) {
                 issues.push({ severity: 'warning', message: 'Orphaned: This step is unreachable from Step #1.' });
@@ -607,12 +651,9 @@ export class KeyStore {
             if (c.link1 === c.id) issues.push({ severity: 'error', message: 'Choice A loops directly into its own card.' });
             if (c.link2 === c.id) issues.push({ severity: 'error', message: 'Choice B loops directly into its own card.' });
 
-            // OPTIMIZED: These lookups use our Map perfectly and efficiently
             if (c.link1 && !idMap.has(c.link1)) issues.push({ severity: 'error', message: 'Choice A points to an invalid or deleted step.' });
             if (c.link2 && !idMap.has(c.link2)) issues.push({ severity: 'error', message: 'Choice B points to an invalid or deleted step.' });
 
-            if (!c.taxa1 && !c.link1) issues.push({ severity: 'warning', message: 'Choice A is incomplete. Assign a Taxa or destination step.' });
-            if (!c.taxa2 && !c.link2) issues.push({ severity: 'warning', message: 'Choice B is incomplete. Assign a Taxa or destination step.' });
             if (c.taxa1 && c.link1) issues.push({ severity: 'warning', message: 'Choice A contains both Taxa and a Goto jump (Hint Mode activated).' });
             if (c.taxa2 && c.link2) issues.push({ severity: 'warning', message: 'Choice B contains both Taxa and a Goto jump (Hint Mode activated).' });
 
