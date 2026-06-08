@@ -88,7 +88,6 @@ export class KeyStore {
 
     public markSaved() {
         this.savedHistoryIndex = this.currentHistoryIndex;
-        this.hasUncommittedChanges = false;
     }
 
     public hasUnsavedChanges(): boolean {
@@ -172,10 +171,10 @@ export class KeyStore {
         const selectedIds = this.getSelectedIds();
         if (selectedIds.size === 0) return;
 
-        // Clone internal objects omitting their structural identity keys
+        // Clone the FULL internal objects, including their structural identity keys
         this.clipboardBuffer = this.state.dichotomousKey
             .filter(c => selectedIds.has(c.id))
-            .map(({ id, ...rest }) => ({ ...rest }));
+            .map(c => ({ ...c }));
     }
 
     public hasClipboardData(): boolean {
@@ -202,21 +201,35 @@ export class KeyStore {
             }
         }
 
-        // Generate safe unique IDs and untangle the graph links
-        // Calculate the current maximum ID safely and efficiently ONCE outside the loop
+        // Calculate the current maximum ID safely and efficiently ONCE
         const maxId = this.state.dichotomousKey.reduce((currentMax, couplet) => {
             return Math.max(currentMax, couplet.id);
         }, 0);
 
-        // Map through the clipboard buffer using a clean O(1) incrementor
-        const newCards: Couplet[] = this.clipboardBuffer.map((item, index) => ({
-            ...item,
-            id: maxId + index + 1,
+        // First Pass: Generate new IDs and build a translation dictionary
+        const idTranslationMap = new Map<number, number>();
+        
+        this.clipboardBuffer.forEach((item, index) => {
+            const newId = maxId + index + 1;
+            idTranslationMap.set(item.id, newId);
+        });
 
-            // Reset structural Goto links
-            link1: 0,
-            link2: 0
-        }));
+        // Second Pass: Clone items and remap their internal topological links
+        const newCards: Couplet[] = this.clipboardBuffer.map((item) => {
+            const mappedId = idTranslationMap.get(item.id)!;
+            
+            // Check if the original links pointed to another card INSIDE the copied batch.
+            // If yes, wire it to the newly generated ID. If not (it pointed outside), sever it (0).
+            const mappedLink1 = idTranslationMap.has(item.link1) ? idTranslationMap.get(item.link1)! : 0;
+            const mappedLink2 = idTranslationMap.has(item.link2) ? idTranslationMap.get(item.link2)! : 0;
+
+            return {
+                ...item,
+                id: mappedId,
+                link1: mappedLink1,
+                link2: mappedLink2
+            };
+        });
 
         // Splice items into a new shallow copy of the key array
         const newKey = [...this.state.dichotomousKey];
@@ -229,6 +242,7 @@ export class KeyStore {
 
         return true;
     }
+
     // ==========================================
     // GRAPH ANALYSIS HELPERS
     // ==========================================

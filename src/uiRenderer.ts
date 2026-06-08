@@ -97,12 +97,12 @@ export function initializeShell(appDiv: HTMLDivElement) {
                 <tr><td>Cut Selected Step Cards</td><td><code>${IS_MAC ? '⌘ + X' : 'Ctrl + X'}</code></td></tr>
                 <tr><td>Copy Selected Step Cards</td><td><code>${IS_MAC ? '⌘ + C' : 'Ctrl + C'}</code></td></tr>
                 <tr><td>Paste Step Cards Below</td><td><code>${IS_MAC ? '⌘ + V' : 'Ctrl + V'}</code></td></tr>
-                <tr><td>Append New Step Block</td><td><code>Alt + N</code> (Option + N)</td></tr>
+                <tr><td>Append New Step Card</td><td><code>Alt + N</code> (Option + N)</td></tr>
                 <tr><td>Swap Alternative Rows</td><td><code>Alt + S</code> (Option + S)</td></tr>
                 <tr><td>Undo Last Action</td><td><code>${IS_MAC ? '⌘ + Z' : 'Ctrl + Z'}</code></td></tr>
                 <tr><td>Redo Action</td><td><code>${IS_MAC ? '⌘ + Y' : 'Ctrl + Y'}</code></td></tr>
-                <tr><td>Delete Selection Pool</td><td><code>Delete</code> / <code>Backspace</code></td></tr>
-                <tr><td>Deselect Active Focus</td><td><code>Escape</code></td></tr>
+                <tr><td>Delete Selected step cards</td><td><code>Delete</code> / <code>Backspace</code></td></tr>
+                <tr><td>Deselect all step cards</td><td><code>Escape</code></td></tr>
               </tbody>
             </table>
           </div>
