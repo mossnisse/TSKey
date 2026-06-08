@@ -1,6 +1,8 @@
 // store.ts
 import { isValidCoupletArray } from './utils.ts';
 
+export const STORAGE_KEY = 'dichotomous_key';
+
 export interface Couplet {
     id: number;    // Permanent internal unique ID
     alt1: string;
@@ -91,6 +93,21 @@ export class KeyStore {
 
     public hasUnsavedChanges(): boolean {
         return this.currentHistoryIndex !== this.savedHistoryIndex || this.hasUncommittedChanges;
+    }
+
+    /**
+    * Wipes undo/redo timelines, selections, and drag-and-drop focus profiles 
+    * cleanly to avoid cross-contamination across different data files.
+    */
+    private resetTrackingContext(): void {
+        this.undoStack = [];
+        this.redoStack = [];
+        this.currentHistoryIndex = 0;
+        this.savedHistoryIndex = 0;
+        this.hasUncommittedChanges = false;
+        this.selectedIds.clear();
+        this.activeEditingCardId = null;
+        this._draggedId = null;
     }
 
     // ==========================================
@@ -186,13 +203,17 @@ export class KeyStore {
         }
 
         // Generate safe unique IDs and untangle the graph links
+        // Calculate the current maximum ID safely and efficiently ONCE outside the loop
+        const maxId = this.state.dichotomousKey.reduce((currentMax, couplet) => {
+            return Math.max(currentMax, couplet.id);
+        }, 0);
+
+        // Map through the clipboard buffer using a clean O(1) incrementor
         const newCards: Couplet[] = this.clipboardBuffer.map((item, index) => ({
             ...item,
-            // Add 'index' to ensure IDs don't collide during synchronous loop execution
-            id: Math.max(0, ...this.state.dichotomousKey.map(c => c.id)) + index + 1,
+            id: maxId + index + 1,
 
-            // Reset structural Goto links. 
-            // If we keep the old links, the pasted cards will converge on the original targets.
+            // Reset structural Goto links
             link1: 0,
             link2: 0
         }));
@@ -519,7 +540,6 @@ export class KeyStore {
      * Validates external JSON data shapes safely before committing to the state tree.
      * Blocks corruption entirely if basic structural parameters are breached.
      */
-
     public importJsonData(rawData: unknown): ImportResult {
         try {
             // Run our shared strict schema validation check
@@ -547,6 +567,57 @@ export class KeyStore {
                 success: false,
                 errors: [e instanceof Error ? e.message : "Unknown engine exception during state hydration parsing."]
             };
+        }
+    }
+
+    public saveToStorage(): void {
+        const currentData = this.state.dichotomousKey;
+
+        if (!Array.isArray(currentData) || currentData.length === 0) {
+            throw new Error("Cannot save an empty or corrupted data structure.");
+        }
+
+        // Use the centralized constant directly inside the store
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(currentData));
+
+        // Mark the history index state as clean
+        this.markSaved();
+    }
+
+    // store.ts
+
+    /**
+     * Reads, validates, and hydrates the application state tree directly from LocalStorage.
+     * Flushes old undo/redo timelines and selection tracking configurations back to baseline.
+     */
+    public loadFromStorage(fallbackData: Couplet[] = []): boolean {
+        try {
+            const rawStorage = localStorage.getItem(STORAGE_KEY);
+
+            if (!rawStorage) {
+                this.state = { dichotomousKey: fallbackData };
+                this.resetTrackingContext();
+                return false;
+            }
+
+            const parsed = JSON.parse(rawStorage);
+
+            // Reuses your strict duplicate-safe type-guard checking rules cleanly
+            if (isValidCoupletArray(parsed)) {
+                this.state = { dichotomousKey: parsed };
+                this.resetTrackingContext();
+                return true;
+            } else {
+                console.warn('Invalid data schema detected in localStorage. Loading fallbacks.');
+                this.state = { dichotomousKey: fallbackData };
+                this.resetTrackingContext();
+                return false;
+            }
+        } catch (error) {
+            console.warn('Corrupted localStorage JSON format. Loading fallbacks.', error);
+            this.state = { dichotomousKey: fallbackData };
+            this.resetTrackingContext();
+            return false;
         }
     }
 
@@ -599,35 +670,37 @@ export class KeyStore {
         const diagnostics = new Map<number, KeyValidationError[]>();
         const key = this.state.dichotomousKey;
 
-        // Pre-build lookups
+        // Early exit for empty states
+        if (key.length === 0) return diagnostics;
+
         const idMap = new Map<number, Couplet>();
         const idToIndexMap = new Map<number, number>();
+        const inboundParentMap = new Map<number, Set<number>>();
+
         key.forEach((c, index) => {
             idMap.set(c.id, c);
             idToIndexMap.set(c.id, index);
-        });
 
-        // OPTIMIZED: Pass the pre-built lookup map to completely bypass inner nested loops
-        const reachableNodes = this.getReachableNodes(idMap);
-
-        // Parent Map grouping
-        const inboundParentMap = new Map<number, Set<number>>();
-        key.forEach(c => {
             if (c.link1) {
-                if (!inboundParentMap.has(c.link1)) inboundParentMap.set(c.link1, new Set());
-                inboundParentMap.get(c.link1)!.add(c.id);
+                let parentSet = inboundParentMap.get(c.link1);
+                if (!parentSet) inboundParentMap.set(c.link1, (parentSet = new Set()));
+                parentSet.add(c.id);
             }
             if (c.link2) {
-                if (!inboundParentMap.has(c.link2)) inboundParentMap.set(c.link2, new Set());
-                inboundParentMap.get(c.link2)!.add(c.id);
+                let parentSet = inboundParentMap.get(c.link2);
+                if (!parentSet) inboundParentMap.set(c.link2, (parentSet = new Set()));
+                parentSet.add(c.id);
             }
         });
+
+        const reachableNodes = this.getReachableNodes(idMap);
+        const NUMERIC_REGEX = /^\d+$/;
 
         key.forEach((c, index) => {
             const issues: KeyValidationError[] = [];
 
-            const isUnresolved1 = !c.link1 && /^\d+$/.test(c.taxa1);
-            const isUnresolved2 = !c.link2 && /^\d+$/.test(c.taxa2);
+            const isUnresolved1 = !c.link1 && NUMERIC_REGEX.test(c.taxa1);
+            const isUnresolved2 = !c.link2 && NUMERIC_REGEX.test(c.taxa2);
 
             if (isUnresolved1) {
                 issues.push({ severity: 'error', message: `Choice A points to step '${c.taxa1}' which does not exist yet.` });
@@ -641,7 +714,6 @@ export class KeyStore {
                 issues.push({ severity: 'warning', message: 'Choice B is incomplete. Assign a Taxa or destination step.' });
             }
 
-            // Warns users if a card isn't picked up by the BFS traversal queue
             if (index > 0 && !reachableNodes.has(c.id)) {
                 issues.push({ severity: 'warning', message: 'Orphaned: This step is unreachable from Step #1.' });
             }

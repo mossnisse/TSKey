@@ -1,24 +1,21 @@
 // uiRenderer.ts
 import type { KeyStore } from './store.ts';
-import { escapeHTML, getStepNumberById, buildIdToIndexMap } from './utils.ts';
+import { escapeHTML, buildIdToIndexMap, isUnresolvedLink } from './utils.ts';
 
 // ==========================================
 // CORE LAYOUT HELPERS
 // ==========================================
 
 /** Helper to target and patch changing attributes safely without dropping cursor focus */
-function syncField(parent: HTMLElement, selector: string, value: string, maxAttr?: string, forceUpdate = false): HTMLInputElement | HTMLTextAreaElement | null {
+function syncField(parent: HTMLElement, selector: string, value: string, forceUpdate = false): HTMLInputElement | HTMLTextAreaElement | null {
     const el = parent.querySelector(selector) as HTMLInputElement | HTMLTextAreaElement;
     if (!el) return null;
 
-    if (maxAttr && el.getAttribute('max') !== maxAttr) {
-        el.setAttribute('max', maxAttr);
-    }
-
+    // Guard focus state so typing isn't interrupted during incremental DOM loops
     if ((forceUpdate || document.activeElement !== el) && el.value !== value) {
         el.value = value;
     }
-    return el; // <-- Return the element handle here
+    return el;
 }
 
 // ==========================================
@@ -76,6 +73,34 @@ export function initializeShell(appDiv: HTMLDivElement) {
 }
 
 /**
+ * Synchronizes dynamic interactive state adjustments directly onto toolbar button layouts.
+ */
+export function renderToolbar(store: KeyStore) {
+    const deleteBtn = document.querySelector('#cmd-delete-selected') as HTMLButtonElement;
+    const clearBtn = document.querySelector('#cmd-clear-selection') as HTMLButtonElement;
+    const saveBtn = document.querySelector('#cmd-save') as HTMLButtonElement;
+
+    if (!deleteBtn) return;
+
+    // Fetch selection tracking indicators from the state model
+    const selectedCount = store.getSelectedIds().size;
+
+    // Dynamic Selection Management Adjustments
+    deleteBtn.textContent = `🗑️ Delete Selected (${selectedCount})`;
+    deleteBtn.disabled = selectedCount === 0;
+
+    if (clearBtn) {
+        clearBtn.disabled = selectedCount === 0;
+    }
+
+    // Memory Save Visual Indicator Optimization
+    if (saveBtn) {
+        // Toggle a special CSS class if there are active, uncommitted changes sitting in memory
+        saveBtn.classList.toggle('has-unsaved-changes', store.hasUnsavedChanges());
+    }
+}
+
+/**
  * High-Performance Incremental DOM Reconciliation.
  * Updates parameters, positions, and errors safely on existing elements without full teardown sweeps.
  */
@@ -116,8 +141,8 @@ export function renderEditorCards(store: KeyStore) {
             : couplet.taxa2;
 
         // Mark broken link pointers OR raw unresolved numeric strings as input errors
-        const isUnresolved1 = (couplet.link1 && idx1 === undefined) || (!couplet.link1 && /^\d+$/.test(couplet.taxa1));
-        const isUnresolved2 = (couplet.link2 && idx2 === undefined) || (!couplet.link2 && /^\d+$/.test(couplet.taxa2));
+        const isUnresolved1 = isUnresolvedLink(couplet.link1, couplet.taxa1, idToIndexMap);
+        const isUnresolved2 = isUnresolvedLink(couplet.link2, couplet.taxa2, idToIndexMap);
 
         const cardErrors = activeDiagnostics.get(couplet.id) || [];
 
@@ -238,8 +263,8 @@ export function renderPrintView(store: KeyStore) {
         const idx1 = c.link1 ? idToIndexMap.get(c.link1) : undefined;
         const idx2 = c.link2 ? idToIndexMap.get(c.link2) : undefined;
 
-        const isUnresolved1 = (c.link1 && idx1 === undefined) || (!c.link1 && /^\d+$/.test(c.taxa1));
-        const isUnresolved2 = (c.link2 && idx2 === undefined) || (!c.link2 && /^\d+$/.test(c.taxa2));
+        const isUnresolved1 = isUnresolvedLink(c.link1, c.taxa1, idToIndexMap);
+        const isUnresolved2 = isUnresolvedLink(c.link2, c.taxa2, idToIndexMap);
 
         const dest1Info = isUnresolved1
             ? { text: c.taxa1 || '?', className: 'error-text' }

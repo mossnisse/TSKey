@@ -33,7 +33,7 @@ export function triggerFileDownload(content: string, filename: string, mimeType:
             url = URL.createObjectURL(blob);
         } catch (cspError) {
             console.warn("Blob URL creation blocked by environment security constraints. Attempting standard Base64 encoding fallback.", cspError);
-            
+
             // Modern, safe alternative to btoa(unescape(encodeURIComponent(content)))
             const binaryBytes = new TextEncoder().encode(content);
             let binaryString = '';
@@ -70,7 +70,7 @@ export function triggerFileDownload(content: string, filename: string, mimeType:
  * Sniffs client-side agent configurations to check if the target ecosystem
  * utilizes Apple standard human interface shortcuts (Meta/Command configurations).
  */
-export function isMacUser(): boolean {
+export const IS_MAC: boolean = (() => {
     // Modern User-Agent Client Hints API (Chrome, Edge, Opera)
     const userAgentData = (navigator as any).userAgentData;
     if (userAgentData?.platform) {
@@ -83,10 +83,10 @@ export function isMacUser(): boolean {
         return true;
     }
 
-    // Raw userAgent string regex fallback (absolute safety net)
+    // Raw userAgent string regex fallback
     const userAgent = navigator.userAgent.toLowerCase();
     return userAgent.includes('macintosh') || userAgent.includes('mac os x');
-}
+})();
 
 /**
  * Explicit Type Guard asserting whether incoming structural payloads conform 
@@ -95,17 +95,28 @@ export function isMacUser(): boolean {
 export function isValidCoupletArray(data: any): data is Couplet[] {
     if (!Array.isArray(data)) return false;
 
-    return data.every(item =>
-        item &&
-        typeof item === 'object' &&
-        typeof item.id === 'number' &&
-        typeof item.alt1 === 'string' &&
-        typeof item.alt2 === 'string' &&
-        typeof item.link1 === 'number' &&
-        typeof item.link2 === 'number' &&
-        typeof item.taxa1 === 'string' &&
-        typeof item.taxa2 === 'string'
-    );
+    const seenIds = new Set<number>();
+
+    return data.every(item => {
+        const hasValidShape =
+            item &&
+            typeof item === 'object' &&
+            typeof item.id === 'number' &&
+            typeof item.alt1 === 'string' &&
+            typeof item.alt2 === 'string' &&
+            typeof item.link1 === 'number' &&
+            typeof item.link2 === 'number' &&
+            typeof item.taxa1 === 'string' &&
+            typeof item.taxa2 === 'string';
+
+        if (!hasValidShape) return false;
+
+        // If we've already encountered this ID, the array is invalid
+        if (seenIds.has(item.id)) return false;
+
+        seenIds.add(item.id);
+        return true;
+    });
 }
 
 /**
@@ -125,4 +136,17 @@ export function getStepNumberById(idToIndexMap: Map<number, number>, targetId: n
     if (targetId === 0) return '0';
     const index = idToIndexMap.get(targetId);
     return index !== undefined ? (index + 1).toString() : 'INVALID ID';
+}
+
+/**
+ * Validates whether a choice destination is unresolved (a broken link pointer 
+ * or an accidental raw numeric string placed in a text taxon field).
+ */
+export function isUnresolvedLink(linkId: number, taxaStr: string, idToIndexMap: Map<number, number>): boolean {
+    // If a link exists (not 0), check if its target ID is missing from the index map
+    if (linkId !== 0) {
+        return idToIndexMap.get(linkId) === undefined;
+    }
+    // If no link exists, check if the text field contains a raw number (e.g., user typed "3" instead of selecting a link)
+    return /^\d+$/.test(taxaStr);
 }

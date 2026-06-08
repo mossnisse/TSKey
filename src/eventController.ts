@@ -1,7 +1,7 @@
 // eventController.ts
 import type { KeyStore, Couplet } from './store.ts';
 import { renderPrintView, showToast } from './uiRenderer.ts';
-import { triggerFileDownload, isMacUser } from './utils.ts';
+import { triggerFileDownload, IS_MAC } from './utils.ts';
 import { exportKeyToHTML } from './exporters/htmlExporter.ts';
 import { exportKeyToLaTeX } from './exporters/latexExporter.ts';
 import { exportKeyToPlainText } from './exporters/plainTextExporter.ts';
@@ -17,9 +17,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     let typingSessionActive = false;
     let currentEditingFieldKey: string | null = null; // Tracks exactly which card + field is active
     let typingTimeoutId: number | null = null;        // Holds the debounce timer reference
-
-    // Track state of the insertion location
-    let insertionPosition: 'above' | 'below' | null = null;
 
     container.addEventListener('click', (e) => {
         const mouseEvent = e as MouseEvent;
@@ -135,8 +132,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     });
 
     // Centralized Serialization Execution Focusout
-    container.addEventListener('focusout', (evt: Event) => {
-        const e = evt as FocusEvent;
+    container.addEventListener('focusout', (e: FocusEvent) => { // Explicitly typed parameter
         const target = e.target as HTMLElement;
 
         if (target.matches('input, textarea')) {
@@ -174,13 +170,13 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
             store.clearActiveCard();
 
+            // Accessible directly because 'e' is explicitly recognized as a FocusEvent
             const destination = e.relatedTarget as HTMLElement | null;
             if (!destination || !destination.closest('.key-card')) {
                 refreshAll();
             }
         }
     });
-
     // Centralized HTML5 Drag-and-Drop Operations
     container.addEventListener('dragstart', (e) => {
         const target = e.target as HTMLElement;
@@ -193,6 +189,12 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         card.style.opacity = '0.4';
     });
 
+    const clearDropMarkers = () => {
+        container.querySelectorAll('.key-card').forEach(el => {
+            el.classList.remove('drag-drop-above', 'drag-drop-below');
+        });
+    };
+
     container.addEventListener('dragend', (e) => {
         const target = e.target as HTMLElement;
         const card = target.closest('.key-card') as HTMLElement;
@@ -202,12 +204,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         store.stopDragging();
         clearDropMarkers();
     });
-
-    const clearDropMarkers = () => {
-        container.querySelectorAll('.key-card').forEach(el => {
-            el.classList.remove('drag-drop-above', 'drag-drop-below');
-        });
-    };
 
     container.addEventListener('dragover', (e: DragEvent) => {
         e.preventDefault();
@@ -230,7 +226,10 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         const coupletId = Number(card.getAttribute('data-id'));
         if (store.draggedId === null || store.draggedId === coupletId) return;
 
-        store.reorderCouplets(store.draggedId, coupletId, insertionPosition || 'below');
+        // Unified source of truth: Read directly from the target card's layout classes
+        const position: 'above' | 'below' = card.classList.contains('drag-drop-above') ? 'above' : 'below';
+
+        store.reorderCouplets(store.draggedId, coupletId, position);
         refreshAll();
     });
 
@@ -238,8 +237,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         const cardEl = targetElement.closest('.key-card') as HTMLElement;
         if (!cardEl) {
             clearDropMarkers();
-            insertionPosition = null;
-            return;
+            return; // Variable assignment removed
         }
 
         const rect = cardEl.getBoundingClientRect();
@@ -249,10 +247,8 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
         if (relativeMouseY < rect.height / 2) {
             cardEl.classList.add('drag-drop-above');
-            insertionPosition = 'above';
         } else {
             cardEl.classList.add('drag-drop-below');
-            insertionPosition = 'below';
         }
     };
 
@@ -280,25 +276,21 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
     document.querySelector('#cmd-save')?.addEventListener('click', () => {
         try {
-            const currentData = store.getKey();
-            if (!Array.isArray(currentData) || currentData.length === 0) {
-                throw new Error("Cannot save an empty or corrupted data structure.");
-            }
+            // Simple, clean state instruction
+            store.saveToStorage();
 
-            const serializedData = JSON.stringify(currentData);
-            localStorage.setItem('dichotomous_key', serializedData);
-
-            store.markSaved();
-            showToast("💾 Changes saved to local browser data!", "success");
+            showToast("💾 Changes saved to Browser Local Storage!", "success");
             refreshAll();
         } catch (error: any) {
             console.error("Save Operation Failed: ", error);
+
             let userMessage = "Failed to save data. An unknown error occurred.";
             if (error.name === 'QuotaExceededError' || error.code === 22) {
-                userMessage = "⚠️ Save Failed: Browser LocalStorage is completely full! Please free up space or export your key as a JSON file.";
+                userMessage = "⚠️ Save Failed: Browser Local Storage is completely full! Please free up space or export your key as a JSON file.";
             } else if (error.message) {
                 userMessage = `⚠️ Save Failed: ${error.message}`;
             }
+
             alert(userMessage);
         }
     });
@@ -359,7 +351,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     document.querySelector('#add-couplet-btn')?.addEventListener('click', () => {
         const newId = store.addCouplet();
         refreshAll(); // Synchronously handles DOM reconciliation layout updates
-        
+
         // FIX: Find the freshly rendered card in the DOM and focus its alt1 textarea
         const newCard = document.querySelector(`.key-card[data-id="${newId}"]`);
         const textarea = newCard?.querySelector('textarea[data-field="alt1"]') as HTMLTextAreaElement | null;
@@ -391,8 +383,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
  */
 export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) {
     window.addEventListener('keydown', (e: KeyboardEvent) => {
-        const isMac = isMacUser();
-        const hasModifier = isMac ? e.metaKey : e.ctrlKey;
+        const hasModifier = IS_MAC ? e.metaKey : e.ctrlKey;
 
         const activeElement = document.activeElement;
         const isTyping = activeElement && (
