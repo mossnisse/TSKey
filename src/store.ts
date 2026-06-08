@@ -49,7 +49,7 @@ export class KeyStore {
     }
 
     // ==========================================
-    // GETTERS (Read-Only access to state)
+    // GETTERS and Setters
     // ==========================================
 
     public getKey(): readonly Couplet[] {
@@ -189,9 +189,9 @@ export class KeyStore {
         const newCards: Couplet[] = this.clipboardBuffer.map((item, index) => ({
             ...item,
             // Add 'index' to ensure IDs don't collide during synchronous loop execution
-            id: Date.now() + Math.floor(Math.random() * 10000) + index,
+            id: Math.max(0, ...this.state.dichotomousKey.map(c => c.id)) + index + 1,
 
-            // UNTANGLE: Reset structural Goto links. 
+            // Reset structural Goto links. 
             // If we keep the old links, the pasted cards will converge on the original targets.
             link1: 0,
             link2: 0
@@ -290,9 +290,6 @@ export class KeyStore {
 
     public addCouplet(): number {
         this.saveCheckpoint();
-        if (this.currentHistoryIndex <= this.savedHistoryIndex) {
-            this.savedHistoryIndex = -1;
-        }
 
         const maxId = this.state.dichotomousKey.reduce((currentMax, couplet) => {
             const validId = Number(couplet?.id);
@@ -387,7 +384,7 @@ export class KeyStore {
         }
 
         // Commit history state before mutating data
-        this.commitHistoryCheckpoint();
+        this.saveCheckpoint();
 
         // Remove the dragged item from its current sequence location
         const [movedItem] = arr.splice(srcIdx, 1);

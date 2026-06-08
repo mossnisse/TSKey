@@ -153,17 +153,6 @@ export function renderEditorCards(store: KeyStore) {
                 if (badgeEl.textContent !== badgeLabel) badgeEl.textContent = badgeLabel;
             }
 
-            /*
-            syncField(card, 'textarea[data-field="alt1"]', couplet.alt1);
-            syncField(card, 'input[data-field="dest1"]', dest1Val);
-            if (isUnresolved1) card.querySelector('input[data-field="dest1"]')?.classList.add('input-error');
-            else card.querySelector('input[data-field="dest1"]')?.classList.remove('input-error');
-
-            syncField(card, 'textarea[data-field="alt2"]', couplet.alt2);
-            syncField(card, 'input[data-field="dest2"]', dest2Val);
-            if (isUnresolved2) card.querySelector('input[data-field="dest2"]')?.classList.add('input-error');
-            else card.querySelector('input[data-field="dest2"]')?.classList.remove('input-error');*/
-
             syncField(card, 'textarea[data-field="alt1"]', couplet.alt1);
             const dest1El = syncField(card, 'input[data-field="dest1"]', dest1Val);
             dest1El?.classList.toggle('input-error', isUnresolved1);
