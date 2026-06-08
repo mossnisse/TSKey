@@ -4,33 +4,34 @@
    CSS CUSTOM PROPERTIES (CONSOLIDATED DESIGN TOKENS)
    ========================================== */
 :root {
-  /* Neutrals (Slate Scale) */
-  --color-bg: #ffffff;
-  --color-bg-muted: #f8fafc;
-  --color-text: #0f172a;
-  --color-text-muted: #475569;
-  --color-border: #cbd5e1;
-  --color-border-light: #e2e8f0;
-  
-  /* Unified Brand / Action System (Indigo Accent) */
-  --color-primary: #4f46e5;
-  --color-primary-hover: #4338ca;
-  --color-primary-light: #eef2ff;
+    /* Neutrals (Slate Scale) */
+    --color-bg: #ffffff;
+    --color-bg-muted: #f8fafc;
+    --color-text: #0f172a;
+    --color-text-muted: #475569;
+    --color-border: #cbd5e1;
+    --color-border-light: #e2e8f0;
 
-  /* Semantic States (Strictly 1 Base per State) */
-  --color-success: #22c55e;
-  
-  --color-warning: #d97706; /* Darkened amber for readable contrast text/borders */
-  
-  --color-danger: #ef4444;
-  --color-danger-hover: #dc2626;
-  --color-danger-light: #fee2e2;
+    /* Unified Brand / Action System (Indigo Accent) */
+    --color-primary: #4f46e5;
+    --color-primary-hover: #4338ca;
+    --color-primary-light: #eef2ff;
 
-  /* Layout & Animation Core */
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --transition-base: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    /* Semantic States (Strictly 1 Base per State) */
+    --color-success: #22c55e;
+
+    --color-warning: #d97706;
+    /* Darkened amber for readable contrast text/borders */
+
+    --color-danger: #ef4444;
+    --color-danger-hover: #dc2626;
+    --color-danger-light: #fee2e2;
+
+    /* Layout & Animation Core */
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 8px;
+    --transition-base: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 /* ==========================================
@@ -39,493 +40,684 @@
 *,
 *::before,
 *::after {
-  box-sizing: border-box;
+    box-sizing: border-box;
 }
 
 /* ==========================================
    EDITING CONTROL
    ========================================== */
 .main-layout {
-  display: flex;
-  gap: 20px;
-  align-items: start;
-  user-select: none;
+    display: flex;
+    gap: 20px;
+    align-items: start;
+    user-select: none;
 }
 
 .card-textarea,
 .input-destination,
 .print-grid {
-  user-select: text;
+    user-select: text;
 }
 
 /* ==========================================
    GLOBAL & CORE LAYOUT WRAPPERS
    ========================================== */
 .app-shell {
-  font-family: sans-serif;
-  padding: 20px;
-  max-width: 1400px;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
+    font-family: sans-serif;
+    padding: 20px;
+    max-width: 1400px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
 }
 
 .editor-column {
-  flex: 1.2;
+    flex: 1.2;
 }
 
 .heading-editor {
-  margin-top: 0;
-  color: var(--color-text);
+    margin-top: 0;
+    color: var(--color-text);
 }
 
 /* ==========================================
    STICKY APPLICATION TOOLBAR
    ========================================== */
 .sticky-toolbar {
-  position: sticky;
-  top: 0;
-  z-index: 100;
-  background: var(--color-bg);
-  padding: 14px 0;
-  margin-bottom: 24px;
-  border-bottom: 1px solid var(--color-border-light);
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--color-bg);
+    padding: 14px 0;
+    margin-bottom: 24px;
+    border-bottom: 1px solid var(--color-border-light);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
 }
 
 .toolbar-divider {
-  border-left: 1px solid var(--color-border-light);
-  height: 20px;
-  margin: 0 5px;
+    border-left: 1px solid var(--color-border-light);
+    height: 20px;
+    margin: 0 5px;
 }
 
 .toolbar-spacer {
-  flex-grow: 1;
+    flex-grow: 1;
 }
 
 /* ==========================================
    UI CONTROLS & BUTTON MATRICES
    ========================================== */
 .btn {
-  padding: 6px 12px;
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  font-size: 14px;
-  transition: var(--transition-base);
+    padding: 6px 12px;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    transition: var(--transition-base);
 }
 
 .btn-secondary {
-  background: var(--color-bg-muted);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-muted);
+    background: var(--color-bg-muted);
+    border: 1px solid var(--color-border);
+    color: var(--color-text-muted);
 }
-.btn-secondary:hover { background: var(--color-border-light); }
+
+.btn-secondary:hover {
+    background: var(--color-border-light);
+}
 
 .btn-primary {
-  background: var(--color-primary);
-  color: var(--color-bg);
-  border: none;
+    background: var(--color-primary);
+    color: var(--color-bg);
+    border: none;
 }
-.btn-primary:hover { background: var(--color-primary-hover); }
+
+.btn-primary:hover {
+    background: var(--color-primary-hover);
+}
 
 .btn-danger {
-  background: var(--color-danger);
-  color: var(--color-bg);
-  border: none;
+    background: var(--color-danger);
+    color: var(--color-bg);
+    border: none;
 }
-.btn-danger:hover { background: var(--color-danger-hover); }
+
+.btn-danger:hover {
+    background: var(--color-danger-hover);
+}
 
 .btn-outline {
-  background: transparent;
-  border: 1px solid var(--color-border);
-  color: var(--color-text-muted);
+    background: transparent;
+    border: 1px solid var(--color-border);
+    color: var(--color-text-muted);
 }
-.btn-outline:hover { background: var(--color-bg-muted); }
+
+.btn-outline:hover {
+    background: var(--color-bg-muted);
+}
 
 .btn-add-block {
-  margin-top: 15px;
-  padding: 12px 20px;
-  cursor: pointer;
-  background: var(--color-primary); /* Unified with brand color */
-  color: var(--color-bg);
-  border: none;
-  border-radius: var(--radius-md);
-  font-weight: bold;
-  width: 100%;
-  transition: var(--transition-base);
+    margin-top: 15px;
+    padding: 12px 20px;
+    cursor: pointer;
+    background: var(--color-primary);
+    /* Unified with brand color */
+    color: var(--color-bg);
+    border: none;
+    border-radius: var(--radius-md);
+    font-weight: bold;
+    width: 100%;
+    transition: var(--transition-base);
 }
-.btn-add-block:hover { background: var(--color-primary-hover); }
+
+.btn-add-block:hover {
+    background: var(--color-primary-hover);
+}
 
 .btn-save {
-  padding: 6px 12px;
-  cursor: pointer;
-  font-weight: bold;
-  color: var(--color-bg);
-  border: none;
-  border-radius: var(--radius-sm);
-  background: var(--color-success); 
+    padding: 6px 12px;
+    cursor: pointer;
+    font-weight: bold;
+    color: var(--color-bg);
+    border: none;
+    border-radius: var(--radius-sm);
+    background: var(--color-success);
 }
+
 .btn-save.is-unsaved {
-  background: var(--color-warning); 
+    background: var(--color-warning);
 }
 
 .select-input {
-  padding: 6px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border);
-  background: var(--color-bg);
+    padding: 6px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border);
+    background: var(--color-bg);
 }
 
 /* ==========================================
    NODE CANVAS & CARD STRUCTURAL STATES (SIMPLIFIED)
    ========================================== */
 .key-card {
-  border: none;
-  border-bottom: 1px solid var(--color-border-light);
-  padding: 24px 12px;
-  margin-bottom: 0;
-  border-radius: 0;
-  background: transparent;
-  cursor: grab;
-  position: relative;
-  box-shadow: none;
-  
-  /* UNIFIED MATRIX: Comma-separate your token with the unique transform rule */
-  transition: var(--transition-base), transform 0.15s ease;
+    border: none;
+    border-bottom: 1px solid var(--color-border-light);
+    padding: 24px 12px;
+    margin-bottom: 0;
+    border-radius: 0;
+    background: transparent;
+    cursor: grab;
+    position: relative;
+    box-shadow: none;
+
+    /* UNIFIED MATRIX: Comma-separate your token with the unique transform rule */
+    transition: var(--transition-base), transform 0.15s ease;
 }
 
 /* Subtle background line highlighting for active states */
 .key-card:hover {
-  background-color: var(--color-bg-muted); /* This will now fade beautifully! */
+    background-color: var(--color-bg-muted);
+    /* This will now fade beautifully! */
 }
 
 .key-card.is-selected {
-  border-left: 4px solid var(--color-primary); 
-  background: var(--color-primary-light);
+    border-left: 4px solid var(--color-primary);
+    background: var(--color-primary-light);
 }
 
 .card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-  user-select: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    user-select: none;
 }
 
 .card-header-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
 }
 
 .card-title {
-  margin: 0;
-  color: var(--color-primary);
-  font-weight: 700;
-  font-size: 14px;
-  font-family: monospace;
+    margin: 0;
+    color: var(--color-primary);
+    font-weight: 700;
+    font-size: 14px;
+    font-family: monospace;
 }
 
 .drag-handle {
-  font-size: 16px;
-  color: var(--color-border);
-  opacity: 0;
-  transition: opacity 0.15s ease;
-  cursor: grab;
+    font-size: 16px;
+    color: var(--color-border);
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    cursor: grab;
 }
 
 .key-card:hover .drag-handle {
-  opacity: 1;
+    opacity: 1;
 }
 
 /* Badges styling alignment */
 .badge {
-  font-size: 11px;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
-  font-weight: 500;
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    font-weight: 500;
 }
+
 .badge-linked {
-  background: transparent;
-  color: var(--color-text-muted);
+    background: transparent;
+    color: var(--color-text-muted);
 }
+
 .badge-isolated {
-  background: var(--color-danger-light);
-  color: var(--color-danger);
+    background: var(--color-danger-light);
+    color: var(--color-danger);
 }
 
 /* Card Fields layout - Guide rails connect items vertically */
 .card-row {
-  margin-bottom: 12px;
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-  position: relative;
-  padding-left: 16px;
+    margin-bottom: 12px;
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    position: relative;
+    padding-left: 16px;
 }
 
 /* Left side visual connector pathing indicator */
 .card-row::before {
-  content: "├";
-  position: absolute;
-  left: 0;
-  top: 2px;
-  color: var(--color-border);
-  font-family: monospace;
-  font-size: 14px;
+    content: "├";
+    position: absolute;
+    left: 0;
+    top: 2px;
+    color: var(--color-border);
+    font-family: monospace;
+    font-size: 14px;
 }
+
 .card-row:last-of-type {
-  margin-bottom: 0;
+    margin-bottom: 0;
 }
+
 .card-row:last-of-type::before {
-  content: "└";
+    content: "└";
 }
 
 /* Native Auto-Expanding Textarea Engine */
 .card-textarea {
-  flex: 1;
-  min-height: 24px;
-  font-family: sans-serif;
-  padding: 4px 0;
-  border: none;
-  border-bottom: 1px dashed transparent;
-  background: transparent;
-  resize: none;
-  overflow: hidden;
-  
-  /* Modern CSS Engine Core Feature */
-  field-sizing: content;
-  
-  font-size: 14px;
-  line-height: 1.5;
-  color: var(--color-text);
-  transition: border-color 0.15s ease;
+    flex: 1;
+    min-height: 24px;
+    font-family: sans-serif;
+    padding: 4px 0;
+    border: none;
+    border-bottom: 1px dashed transparent;
+    background: transparent;
+    resize: none;
+    overflow: hidden;
+
+    /* Modern CSS Engine Core Feature */
+    field-sizing: content;
+
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--color-text);
+    transition: border-color 0.15s ease;
 }
 
 .card-textarea:focus {
-  outline: none;
-  border-bottom-color: var(--color-primary);
+    outline: none;
+    border-bottom-color: var(--color-primary);
 }
 
 /* Minimal Horizontal Token Pane */
 .card-meta-pane {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;                  /* Snug, professional spacing */
-  align-items: flex-start;    /* FIX: Locks labels to a perfect left-side alignment matrix */
-  font-size: 13px;
-  min-width: 160px;           /* Ensures predictable boundaries next to textareas */
-  border-left: none;
-  padding-left: 0;
-  background: transparent;
-  border-radius: 0;
-  color: var(--color-text-muted);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    /* Snug, professional spacing */
+    align-items: flex-start;
+    /* FIX: Locks labels to a perfect left-side alignment matrix */
+    font-size: 13px;
+    min-width: 160px;
+    /* Ensures predictable boundaries next to textareas */
+    border-left: none;
+    padding-left: 0;
+    background: transparent;
+    border-radius: 0;
+    color: var(--color-text-muted);
 }
 
 .meta-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-  width: 100%;                /* Allows fields to inherit boundaries naturally */
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    width: 100%;
+    /* Allows fields to inherit boundaries naturally */
 }
 
 /* ==========================================
    FLAT INTEGRATED BASELINE INPUTS (UNIFIED)
    ========================================== */
 .input-destination {
-  border: none;
-  border-bottom: 1px solid var(--color-border-light);
-  background: transparent;
-  border-radius: 0;
-  padding: 2px 0;
-  font-size: 13px;
-  color: var(--color-text);
-  font-weight: 600;
-  width: 140px;
-  transition: var(--transition-base);
+    border: none;
+    border-bottom: 1px solid var(--color-border-light);
+    background: transparent;
+    border-radius: 0;
+    padding: 2px 0;
+    font-size: 13px;
+    color: var(--color-text);
+    font-weight: 600;
+    width: 140px;
+    transition: var(--transition-base);
 }
 
 .input-destination:focus {
-  outline: none;
-  border-bottom-color: var(--color-primary);
+    outline: none;
+    border-bottom-color: var(--color-primary);
 }
 
 /* Unresolved/Broken links turn red without overriding structural background layers */
 .input-destination.input-error {
-  color: var(--color-danger);
-  border-bottom-color: var(--color-danger);
+    color: var(--color-danger);
+    border-bottom-color: var(--color-danger);
 }
 
 .input-destination.input-error:focus {
-  border-bottom-color: var(--color-danger-hover);
+    border-bottom-color: var(--color-danger-hover);
 }
 
 /* ==========================================
    DIAGNOSTIC ERROR UI BLOCKS
    ========================================== */
 .warning-block {
-  margin-top: 12px;
-  margin-left: 16px;
-  padding: 6px 10px;
-  background: transparent;
-  border-left: 2px solid var(--color-warning);
-  border-radius: 0;
-  font-size: 12px;
-  color: var(--color-warning);
+    margin-top: 12px;
+    margin-left: 16px;
+    padding: 6px 10px;
+    background: transparent;
+    border-left: 2px solid var(--color-warning);
+    border-radius: 0;
+    font-size: 12px;
+    color: var(--color-warning);
 }
-.error-text { color: var(--color-danger); }
-.warning-text { color: var(--color-warning); }
+
+.error-text {
+    color: var(--color-danger);
+}
+
+.warning-text {
+    color: var(--color-warning);
+}
 
 /* The visual line that marks where the paste or drop will happen */
 .key-card.drag-drop-above::before,
 .key-card.drag-drop-below::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 4px;
-  background-color: var(--color-primary);
-  border-radius: 2px;
-  z-index: 10;
-  pointer-events: none; /* Crucial: stops the line from interfering with mouse coords */
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background-color: var(--color-primary);
+    border-radius: 2px;
+    z-index: 10;
+    pointer-events: none;
+    /* Crucial: stops the line from interfering with mouse coords */
 }
 
 .key-card.drag-drop-above::before {
-  top: -6px; /* Positioned precisely between cards */
+    top: -6px;
+    /* Positioned precisely between cards */
 }
 
 .key-card.drag-drop-below::after {
-  bottom: -6px;
+    bottom: -6px;
 }
 
 /* ==========================================
    PASSIVE PUBLICATION PRINT VIEW PANELS
    ========================================== */
 .print-column {
-  flex: 0.8;
-  padding: 25px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-text);
-  position: sticky;
-  top: 20px;
-  max-height: 85vh;
-  overflow-y: auto;
-  background: var(--color-bg);
-  color: var(--color-text);
+    flex: 0.8;
+    padding: 25px;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-text);
+    position: sticky;
+    top: 20px;
+    max-height: 85vh;
+    overflow-y: auto;
+    background: var(--color-bg);
+    color: var(--color-text);
 }
 
 .hr-print {
-  border: 0;
-  border-top: 1px solid var(--color-text);
-  margin-bottom: 20px;
+    border: 0;
+    border-top: 1px solid var(--color-text);
+    margin-bottom: 20px;
 }
 
 .print-grid {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 6px 10px;
-  align-items: end;
-  color: var(--color-text);
-  line-height: 1.6;
-  font-family: serif;
-  font-size: 15px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 6px 10px;
+    align-items: end;
+    color: var(--color-text);
+    line-height: 1.6;
+    font-family: serif;
+    font-size: 15px;
 }
 
 .print-step-num {
-  font-weight: bold;
-  align-self: start;
-  color: var(--color-text);
+    font-weight: bold;
+    align-self: start;
+    color: var(--color-text);
 }
 
 .print-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: end;
-  width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: end;
+    width: 100%;
 }
 
 .print-text {
-  flex-shrink: 1;
-  text-align: left;
-  white-space: pre-wrap;
+    flex-shrink: 1;
+    text-align: left;
+    white-space: pre-wrap;
 }
 
 .print-dots {
-  flex-grow: 1;
-  border-bottom: 1px dotted var(--color-text);
-  margin: 0 8px 4px 8px;
+    flex-grow: 1;
+    border-bottom: 1px dotted var(--color-text);
+    margin: 0 8px 4px 8px;
 }
 
 .print-dest {
-  flex-shrink: 0;
-  white-space: nowrap;
+    flex-shrink: 0;
+    white-space: nowrap;
 }
 
 .print-dest-strong {
-  font-weight: bold;
+    font-weight: bold;
 }
+
 .print-dest-taxon {
-  font-weight: bold;
-  font-style: italic;
+    font-weight: bold;
+    font-style: italic;
 }
 
 .print-dash {
-  font-weight: bold;
-  text-align: center;
-  align-self: start;
-  color: var(--color-text);
+    font-weight: bold;
+    text-align: center;
+    align-self: start;
+    color: var(--color-text);
 }
 
 .print-spacer {
-  grid-column: span 2;
-  height: 8px;
+    grid-column: span 2;
+    height: 8px;
 }
 
 /* ==========================================
    TOAST NOTIFICATION ENGINE
    ========================================== */
 .toast-container {
-  position: fixed;
-  bottom: 24px;
-  right: 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  z-index: 1000;
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 1000;
 }
 
 .toast {
-  background: var(--color-text); /* Reuses dark main text token for a sharp dark theme popout */
-  color: var(--color-bg);
-  padding: 12px 16px;
-  border-radius: var(--radius-md);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  font-size: 14px;
-  font-family: sans-serif;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 280px;
-  pointer-events: none;
-  animation: 
-    toastSlideIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards, 
-    toastFadeOut 0.3s ease 2.7s forwards;
+    background: var(--color-text);
+    /* Reuses dark main text token for a sharp dark theme popout */
+    color: var(--color-bg);
+    padding: 12px 16px;
+    border-radius: var(--radius-md);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    font-size: 14px;
+    font-family: sans-serif;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 280px;
+    pointer-events: none;
+    animation:
+        toastSlideIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards,
+        toastFadeOut 0.3s ease 2.7s forwards;
 }
 
-.toast-success { border-left: 4px solid var(--color-success); }
-.toast-error { border-left: 4px solid var(--color-danger); }
+.toast-success {
+    border-left: 4px solid var(--color-success);
+}
+
+.toast-error {
+    border-left: 4px solid var(--color-danger);
+}
 
 @keyframes toastSlideIn {
-  from { transform: translateX(120%); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
+    from {
+        transform: translateX(120%);
+        opacity: 0;
+    }
+
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
 }
 
 @keyframes toastFadeOut {
-  to { opacity: 0; transform: translateY(-10px); }
+    to {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+}
+
+/* ==========================================
+   UNIFIED CONTROL OVERLAY PANEL MODAL
+   ========================================== */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(15, 23, 42, 0.6);
+    /* Translucent Slate */
+    backdrop-filter: blur(4px);
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-window {
+    background: var(--color-bg);
+    width: 100%;
+    max-width: 650px;
+    border-radius: var(--radius-lg);
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--color-border-light);
+}
+
+.modal-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--color-border-light);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h3 {
+    margin: 0;
+    color: var(--color-text);
+}
+
+.modal-close-x {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: var(--color-text-muted);
+}
+
+.modal-close-x:hover {
+    color: var(--color-danger);
+}
+
+/* Tab Row Grid Layout Matrix */
+.modal-tabs {
+    display: flex;
+    background: var(--color-bg-muted);
+    border-bottom: 1px solid var(--color-border-light);
+}
+
+.tab-btn {
+    flex: 1;
+    padding: 12px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--color-text-muted);
+    text-align: center;
+    transition: var(--transition-base);
+}
+
+.tab-btn:hover {
+    background: var(--color-border-light);
+}
+
+.tab-btn.active {
+    background: var(--color-bg);
+    color: var(--color-primary);
+    border-bottom: 2px solid var(--color-primary);
+    font-weight: 600;
+}
+
+.modal-body {
+    padding: 24px;
+    max-height: 450px;
+    overflow-y: auto;
+}
+
+/* Shortcuts Presentation Layout Data Matrix */
+.shortcuts-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+
+.shortcuts-table th,
+.shortcuts-table td {
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--color-border-light);
+}
+
+.shortcuts-table th {
+    background: var(--color-bg-muted);
+    font-weight: 600;
+}
+
+.shortcuts-table code {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    font-family: monospace;
+    font-size: 13px;
+}
+
+/* Options Configuration Items */
+.settings-group h4 {
+    margin-top: 0;
+    margin-bottom: 12px;
+}
+
+.setting-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    font-weight: 500;
+}
+
+.setting-item input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--color-primary);
 }

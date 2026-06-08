@@ -1,6 +1,6 @@
 // uiRenderer.ts
 import type { KeyStore } from './store.ts';
-import { escapeHTML, buildIdToIndexMap, isUnresolvedLink } from './utils.ts';
+import { escapeHTML, buildIdToIndexMap, isUnresolvedLink, IS_MAC } from './utils.ts';
 
 // ==========================================
 // CORE LAYOUT HELPERS
@@ -30,11 +30,11 @@ export function initializeShell(appDiv: HTMLDivElement) {
     appDiv.innerHTML = `
     <div class="app-shell">
       <div class="sticky-toolbar">
-        <button id="cmd-undo" class="btn btn-secondary">↩️ Undo</button>
-        <button id="cmd-redo" class="btn btn-secondary">↪️ Redo</button>
+        <button id="cmd-undo" class="btn btn-secondary">↩️ Undo (${IS_MAC ? '⌘Z' : 'Ctrl+Z'})</button>
+        <button id="cmd-redo" class="btn btn-secondary">↪️ Redo (${IS_MAC ? '⌘Y' : 'Ctrl+Y'})</button>
         <span class="toolbar-divider"></span>
         
-        <button id="cmd-save" class="btn-save">💾 Save Memory</button>
+        <button id="cmd-save" class="btn-save">💾 Save Memory (${IS_MAC ? '⌘S' : 'Ctrl+S'})</button>
         <button id="cmd-export-json" class="btn btn-secondary">📥 Export JSON</button>
         <button id="cmd-trigger-import" class="btn btn-secondary">📤 Import JSON</button>
         <input type="file" id="file-import-hidden" accept=".json" style="display: none;" />
@@ -42,10 +42,13 @@ export function initializeShell(appDiv: HTMLDivElement) {
         <span class="toolbar-divider"></span>
         
         <button id="cmd-reorder" class="btn btn-primary">🔄 Auto-Order Couplets</button>
-        <button id="cmd-delete-selected" class="btn btn-danger">🗑️ Delete Selected (0)</button>
-        <button id="cmd-clear-selection" class="btn btn-outline">Clear Selection</button>
+        <button id="cmd-delete-selected" class="btn btn-danger">🗑️ Delete (Del)</button>
+        <button id="cmd-clear-selection" class="btn btn-outline">Clear Selection (Esc)</button>
         
         <span class="toolbar-spacer"></span>
+        
+        <!-- NEW: Unified Entry Point Button -->
+        <button id="cmd-open-panel" class="btn btn-primary" style="background: var(--color-text);">⚙️ App Panel</button>
         
         <select id="export-format-selector" class="select-input">
           <option value="">-- Export Target Format --</option>
@@ -59,13 +62,72 @@ export function initializeShell(appDiv: HTMLDivElement) {
         <div class="editor-column">
           <h2 class="heading-editor">Key Node Canvas</h2>
           <div id="editor-container"></div>
-          <button id="add-couplet-btn" class="btn-add-block">+ Add New Step Block</button>
+          <button id="add-couplet-btn" class="btn-add-block">+ Add New Step Block (Alt+N)</button>
         </div>
 
         <div class="print-column">
           <h2>Live Publication Render</h2>
           <hr class="hr-print" />
           <div id="print-view-container" class="print-grid"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- NEW: Unified Control Panel Modal Container -->
+    <div id="control-panel-modal" class="modal-overlay" style="display: none;">
+      <div class="modal-window">
+        <div class="modal-header">
+          <h3>⚙️ Application Control Center</h3>
+          <button id="modal-close-btn" class="modal-close-x">&times;</button>
+        </div>
+        <div class="modal-tabs">
+          <button class="tab-btn active" data-tab="tab-shortcuts">⌨️ Keyboard Shortcuts</button>
+          <button class="tab-btn" data-tab="tab-options">🔧 Options & Settings</button>
+          <button class="tab-btn" data-tab="tab-about">ℹ️ About</button>
+        </div>
+        <div class="modal-body">
+          <!-- Shortcuts Tab -->
+          <div id="tab-shortcuts" class="tab-content active-content">
+            <table class="shortcuts-table">
+              <thead>
+                <tr><th>Action</th><th>Shortcut Command</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Select All Step Cards</td><td><code>${IS_MAC ? '⌘ + A' : 'Ctrl + A'}</code></td></tr>
+                <tr><td>Cut Selected Step Cards</td><td><code>${IS_MAC ? '⌘ + X' : 'Ctrl + X'}</code></td></tr>
+                <tr><td>Copy Selected Step Cards</td><td><code>${IS_MAC ? '⌘ + C' : 'Ctrl + C'}</code></td></tr>
+                <tr><td>Paste Step Cards Below</td><td><code>${IS_MAC ? '⌘ + V' : 'Ctrl + V'}</code></td></tr>
+                <tr><td>Append New Step Block</td><td><code>Alt + N</code> (Option + N)</td></tr>
+                <tr><td>Swap Alternative Rows</td><td><code>Alt + S</code> (Option + S)</td></tr>
+                <tr><td>Undo Last Action</td><td><code>${IS_MAC ? '⌘ + Z' : 'Ctrl + Z'}</code></td></tr>
+                <tr><td>Redo Action</td><td><code>${IS_MAC ? '⌘ + Y' : 'Ctrl + Y'}</code></td></tr>
+                <tr><td>Delete Selection Pool</td><td><code>Delete</code> / <code>Backspace</code></td></tr>
+                <tr><td>Deselect Active Focus</td><td><code>Escape</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+          
+          <!-- Options Tab -->
+          <div id="tab-options" class="tab-content" style="display: none;">
+            <div class="settings-group">
+              <h4>System Memory Rules</h4>
+              <label class="setting-item">
+                <input type="checkbox" id="setting-autosave" checked />
+                <span>Enable Browser LocalStorage Sync Engine</span>
+              </label>
+              <p style="font-size: 12px; color: var(--color-text-muted); margin-left: 24px;">
+                Forces state configurations to continuously synchronize natively.
+              </p>
+            </div>
+          </div>
+          
+          <!-- About Tab -->
+          <div id="tab-about" class="tab-content" style="display: none;">
+            <h4>TSKey an Dichotomous Key Editor</h4>
+            <p><strong>Version:</strong> 0.0.1-Alpha (2026 Engine Core)</p>
+            <p>An editor for writing classical Dichotomous keys to identify biologicals taxa on morphological traits.</p>
+            <p>Writen by Nils Ericson 2026 under the zlib license</p>
+          </div>
         </div>
       </div>
     </div>

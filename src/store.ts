@@ -392,6 +392,45 @@ export class KeyStore {
         this.hasUncommittedChanges = true;
     }
 
+    /**
+         * Swaps alternative choices, target links, and taxa fields for all selected cards.
+         * Automatically saves a history checkpoint for undo support.
+         */
+    public swapSelectedCouplets(): boolean {
+        if (this.selectedIds.size === 0) return false;
+
+        // Capture current state in history stack before mutating
+        this.saveCheckpoint();
+
+        let modified = false;
+        this.state.dichotomousKey = this.state.dichotomousKey.map(couplet => {
+            if (this.selectedIds.has(couplet.id)) {
+                modified = true;
+                return {
+                    ...couplet,
+                    alt1: couplet.alt2,
+                    alt2: couplet.alt1,
+                    link1: couplet.link2,
+                    link2: couplet.link1,
+                    taxa1: couplet.taxa2,
+                    taxa2: couplet.taxa1
+                };
+            }
+            return couplet;
+        });
+
+        if (modified) {
+            this.hasUncommittedChanges = true;
+            // Trigger internal graph diagnostics validation if available
+            if (typeof (this as any).validateKey === 'function') {
+                (this as any).validateKey();
+            }
+            return true;
+        }
+
+        return false;
+    }
+
     public reorderCouplets(srcId: number, targetId: number, position: 'above' | 'below' = 'above'): boolean {
         // Locate the item indices safely
         const arr = [...this.state.dichotomousKey];
