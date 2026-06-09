@@ -1,5 +1,5 @@
 // exporters/jsonExporter.ts
-import type { KeyStore } from '../store.ts';
+import { KeyStore, APP_NAME, APP_VERSION } from '../store.ts';
 import { triggerFileDownload } from '../utils.ts';
 
 /**
@@ -9,8 +9,8 @@ import { triggerFileDownload } from '../utils.ts';
 export function exportKeyToJSON(store: KeyStore): void {
     const exportPayload = {
         metadata: {
-            application: "TSKey",
-            version: "0.0.1",
+            application: APP_NAME,
+            version: APP_VERSION,
             exportedAt: new Date().toISOString()
         },
         data: store.getKey()

@@ -1,7 +1,7 @@
 // main.ts
 import './style.css'; 
 import { KeyStore } from './store.ts';
-import { initializeShell, renderEditorCards, renderPrintView, renderToolbar } from './uiRenderer.ts';
+import { initializeShell, renderEditorCards, renderPrintView, renderMenu } from './uiRenderer.ts';
 import { setupGlobalListeners, setupKeyboardShortcuts } from './eventController.ts';
 
 // Baseline fallback blueprint structure
@@ -26,7 +26,7 @@ store.loadFromStorage([...fallbackData]);
 
 // Centralized View State Re-evaluation Coordinator Loop
 const refreshAll = () => {
-    renderToolbar(store);
+    renderMenu(store);
     renderEditorCards(store);
     renderPrintView(store);
 };

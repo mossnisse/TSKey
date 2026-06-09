@@ -8,6 +8,10 @@ import { exportKeyToLaTeX } from './exporters/latexExporter.ts';
 import { exportKeyToPlainText } from './exporters/plainTextExporter.ts';
 import { exportKeyToJSON } from './exporters/jsonExporter.ts';
 
+const DEBOUNCE_TYPING_MS = 800;
+const AUTO_SCROLL_THRESHOLD_PX = 80;
+const AUTO_SCROLL_SPEED_PX = 15;
+
 /**
  * Centralized Delegated Events Router Engine.
  * Wires behavioral controls directly onto DOM structural layouts.
@@ -61,7 +65,10 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
                 behavior: 'auto' // 'auto' ensures immediate response without smoothing lag during drag
             });
         }
-    }, { passive: true });
+    }, {
+        passive: true,
+        signal: signal
+    });
 
     // CONSOLIDATED INPUT ROUTER (Handles Undo Debouncing + Link Validation)
     container.addEventListener('input', (e) => {
@@ -93,7 +100,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             typingSessionActive = false;
             typingTimeoutId = null;
             refreshAll(); // Safely reconciles dynamic card errors/badges while retaining cursor focus
-        }, 800);
+        }, DEBOUNCE_TYPING_MS);
 
         let updatePayload: Partial<Omit<Couplet, 'id'>> = {};
 
@@ -157,7 +164,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
         if (target.matches('input, textarea')) {
             const card = target.closest('.key-card') as HTMLElement;
-
             if (card) card.draggable = true;
 
             // Construct the unique identifier for this specific field
@@ -165,7 +171,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             const field = target.getAttribute('data-field');
             const fieldKey = id && field ? `${id}-${field}` : null;
 
-            // CRITICAL GUARD: Verify if focus is genuinely leaving the active field session.
+            // Verify if focus is genuinely leaving the active field session.
             // This completely immunizes the handler against programmatic DOM re-render loops.
             const isActualSessionEnd = currentEditingFieldKey !== null && currentEditingFieldKey === fieldKey;
 
@@ -194,7 +200,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
                 const destination = e.relatedTarget as HTMLElement | null;
                 const isClickingControl = destination instanceof Element && (
                     destination.closest('.key-card') ||
-                    destination.closest('.sticky-toolbar') ||
+                    destination.closest('.app-menu-bar') ||
                     destination.closest('#add-couplet-btn') || // Safe lookup for children/spans inside the button
                     destination.closest('#control-panel-modal')
                 );
@@ -207,35 +213,32 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         }
     }, { signal });
 
-    // UNIFIED CONTROL PANEL INTERACTION HANDLERS
-    const modal = document.querySelector('#control-panel-modal') as HTMLElement;
+    // Dialog elements queries
+    const modalShortcuts = document.getElementById('modal-shortcuts') as HTMLElement;
+    const modalOptions = document.getElementById('modal-options') as HTMLElement;
+    const modalAbout = document.getElementById('modal-about') as HTMLElement;
 
-    document.querySelector('#cmd-open-panel')?.addEventListener('click', () => {
-        if (modal) modal.style.display = 'flex';
+    // --- DIALOG MODAL OPEN TRIGGERS ---
+    document.getElementById('cmd-open-shortcuts')?.addEventListener('click', () => {
+        modalShortcuts.style.display = 'flex';
+    }, { signal });
+    document.getElementById('cmd-open-options')?.addEventListener('click', () => {
+        modalOptions.style.display = 'flex';
+    }, { signal });
+    document.getElementById('cmd-open-about')?.addEventListener('click', () => {
+        modalAbout.style.display = 'flex';
     }, { signal });
 
-    const closeModal = () => { if (modal) modal.style.display = 'none'; };
-    document.querySelector('#modal-close-btn')?.addEventListener('click', closeModal, { signal });
-
-    // Close modal if user clicks outside the modal content container
-    modal?.addEventListener('click', (e) => {
-        if (e.target === modal) closeModal();
+    // --- DIALOG MODAL CLOSE TRIGGERS ---
+    document.getElementById('modal-shortcuts-close')?.addEventListener('click', () => {
+        modalShortcuts.style.display = 'none';
     }, { signal });
-
-    // Tab Switching Sub-Router Engine
-    const tabButtons = document.querySelectorAll('.modal-tabs .tab-btn');
-    const tabContents = document.querySelectorAll('.modal-body .tab-content');
-
-    tabButtons.forEach(btn => {
-        btn.addEventListener('click', () => {
-            const targetTab = btn.getAttribute('data-tab');
-            tabButtons.forEach(b => b.classList.remove('active'));
-            tabContents.forEach(c => (c as HTMLElement).style.display = 'none');
-            btn.classList.add('active');
-            const targetContent = document.getElementById(targetTab!) as HTMLElement;
-            if (targetContent) targetContent.style.display = 'block';
-        }, { signal });
-    });
+    document.getElementById('modal-options-close')?.addEventListener('click', () => {
+        modalOptions.style.display = 'none';
+    }, { signal });
+    document.getElementById('modal-about-close')?.addEventListener('click', () => {
+        modalAbout.style.display = 'none';
+    }, { signal });
 
     // Centralized HTML5 Drag-and-Drop Operations
     container.addEventListener('dragstart', (e) => {
@@ -273,17 +276,15 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         e.preventDefault();
 
         // --- EDGE AUTO-SCROLL LOGIC ---
-        const scrollThreshold = 60; // Distance from edge in pixels to trigger scroll
-        const scrollSpeed = 15;     // How fast to scroll
 
-        if (e.clientY < scrollThreshold) {
+        if (e.clientY < AUTO_SCROLL_THRESHOLD_PX) {
             // Cursor is near the top of the viewport
-            window.scrollBy(0, -scrollSpeed);
-        } else if (window.innerHeight - e.clientY < scrollThreshold) {
+            window.scrollBy(0, -AUTO_SCROLL_SPEED_PX);
+        } else if (window.innerHeight - e.clientY < AUTO_SCROLL_THRESHOLD_PX) {
             // Cursor is near the bottom of the viewport
-            window.scrollBy(0, scrollSpeed);
+            window.scrollBy(0, AUTO_SCROLL_SPEED_PX);
         }
-        updateTargetTrackers(e.clientX, e.clientY, e.target as HTMLElement);
+        updateTargetTrackers(e.clientY, e.target as HTMLElement);
     }, { signal });
 
     container.addEventListener('dragleave', (e: DragEvent) => {
@@ -309,7 +310,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         refreshAll();
     }, { signal });
 
-    const updateTargetTrackers = (clientX: number, clientY: number, targetElement: HTMLElement) => {
+    const updateTargetTrackers = (clientY: number, targetElement: HTMLElement) => {
         const cardEl = targetElement.closest('.key-card') as HTMLElement;
 
         if (!cardEl) {
@@ -330,10 +331,11 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         }
     };
 
-    // MOUSE TRACKER FOR PASTE ROUTING
-    container.addEventListener('mousemove', (e: MouseEvent) => {
+    /*
+    // Mouse tracker for paste routing
+   container.addEventListener('mousemove', (e: MouseEvent) => {
+        // Only calculate paste routing drop-zones when NO mouse buttons are being pressed
         if (e.buttons === 0) {
-            // Short-circuit immediately if there's nothing to paste
             if (!store.hasClipboardData()) {
                 clearDropMarkers();
                 return;
@@ -341,11 +343,26 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
             const target = e.target as HTMLElement;
             if (target.closest('.key-card')) {
-                updateTargetTrackers(e.clientX, e.clientY, target);
+                updateTargetTrackers(e.clientY, target);
             } else {
                 clearDropMarkers();
             }
         }
+    }, { signal }); */
+    
+    
+    container.addEventListener('mouseover', (e: MouseEvent) => {
+        if (!store.hasClipboardData() || e.buttons !== 0) return;
+
+        const target = e.target as HTMLElement;
+        const cardEl = target.closest('.key-card') as HTMLElement;
+        if (!cardEl) {
+            clearDropMarkers();
+            return;
+        }
+
+        // Instead of querying bounding boxes on mousemove, calculate it once when entering the card area,
+        // or use a simple debounced check if relative tracking is vital.
     }, { signal });
 
     container.addEventListener('mouseleave', () => {
@@ -353,9 +370,10 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     }, { signal });
 
     // ==========================================
-    // STANDALONE TOOLBAR ACTIONS
+    // MENU BAR ACTION DISPATCHERS
     // ==========================================
 
+    // --- FILE MENU ACTION BINDINGS ---
     document.querySelector('#cmd-save')?.addEventListener('click', () => {
         try {
             // Simple, clean state instruction
@@ -408,31 +426,95 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         }
     }, { signal });
 
+    document.querySelector('#cmd-export-text')?.addEventListener('click', () => exportKeyToPlainText(store), { signal });
+    document.querySelector('#cmd-export-html')?.addEventListener('click', () => exportKeyToHTML(store), { signal });
+    document.querySelector('#cmd-export-latex')?.addEventListener('click', () => exportKeyToLaTeX(store), { signal });
+
+    // --- EDIT MENU ACTION BINDINGS ---
+    document.querySelector('#cmd-undo')?.addEventListener('click', () => {
+        if (store.undo()) refreshAll();
+    }, { signal });
+
+    document.querySelector('#cmd-redo')?.addEventListener('click', () => {
+        if (store.redo()) refreshAll();
+    }, { signal });
+
+    document.querySelector('#cmd-cut')?.addEventListener('click', () => {
+        const selectedCount = store.getSelectedIds().size;
+        if (selectedCount > 0) {
+            if (confirm(`Confirm cutting ${selectedCount} highlighted step(s) to clipboard?`)) {
+                store.cutSelectedCards();
+                showToast(`Cut ${selectedCount} step(s) to clipboard.`, 'success');
+                refreshAll();
+            }
+        }
+    }, { signal });
+
+    document.querySelector('#cmd-copy')?.addEventListener('click', () => {
+        const selectedCount = store.getSelectedIds().size;
+        if (selectedCount > 0) {
+            store.copySelectedCards();
+            showToast(`Copied ${selectedCount} step(s) to clipboard.`, 'success');
+            refreshAll();
+        }
+    }, { signal });
+
+    document.querySelector('#cmd-paste')?.addEventListener('click', () => {
+        let targetId: number | undefined = undefined;
+        let position: 'above' | 'below' = 'below';
+
+        const hoverMarker = document.querySelector('.drag-drop-above, .drag-drop-below') as HTMLElement;
+        const hoverCard = hoverMarker?.closest('.key-card') as HTMLElement;
+
+        if (hoverCard) {
+            targetId = Number(hoverCard.getAttribute('data-id'));
+            position = hoverMarker.classList.contains('drag-drop-above') ? 'above' : 'below';
+        } else {
+            const selectedArray = Array.from(store.getSelectedIds());
+            targetId = selectedArray.length > 0 ? selectedArray[selectedArray.length - 1] : undefined;
+        }
+
+        if (store.pasteCards(targetId, position)) {
+            showToast("Pasted steps from clipboard.", "success");
+            refreshAll();
+        }
+    }, { signal });
+
+    document.querySelector('#cmd-delete')?.addEventListener('click', () => {
+        const selectedCount = store.getSelectedIds().size;
+        if (selectedCount > 0) {
+            if (confirm("Confirm removing highlighted key steps?")) {
+                store.deleteSelected();
+                showToast(`Deleted ${selectedCount} step(s).`, 'success');
+                refreshAll();
+            }
+        }
+    }, { signal });
+
+    document.querySelector('#cmd-swap')?.addEventListener('click', () => {
+        if (store.getSelectedIds().size > 0) {
+            if (store.swapSelectedCouplets()) {
+                showToast("Swapped choice configurations.", "success");
+                refreshAll();
+            }
+        }
+    }, { signal });
+
+    // Handles both the application layout button and Edit Menu item mappings safely
+    const triggerAppendAction = () => createNewCoupletWithFocus(store, refreshAll);
+    document.querySelector('#cmd-add')?.addEventListener('click', triggerAppendAction, { signal });
+    document.querySelector('#add-couplet-btn')?.addEventListener('click', triggerAppendAction, { signal });
+
+    document.querySelector('#cmd-clear')?.addEventListener('click', () => {
+        store.clearSelection();
+        refreshAll();
+    }, { signal });
+
+    // --- TOOLS MENU ACTION BINDINGS ---
     document.querySelector('#cmd-reorder')?.addEventListener('click', () => {
         store.autoOrder();
         showToast("Key steps reordered with shorter branches first!", "success");
         refreshAll();
-    }, { signal });
-
-    document.querySelector('#add-couplet-btn')?.addEventListener('click', () => {
-        createNewCoupletWithFocus(store, refreshAll);
-    }, { signal });
-
-    document.querySelector('#export-format-selector')?.addEventListener('change', (e) => {
-        const selectEl = e.target as HTMLSelectElement;
-        const format = selectEl.value;
-        if (!format) return;
-
-        if (format === 'text') {
-            exportKeyToPlainText(store);
-        } else if (format === 'html') {
-            exportKeyToHTML(store);
-        } else if (format === 'latex') {
-            exportKeyToLaTeX(store);
-        } else {
-            alert(`Export not implemented for: [${format.toUpperCase()}].`);
-        }
-        selectEl.value = "";
     }, { signal });
 
     return () => {
@@ -465,7 +547,7 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
             // insert a new couplet when canvas is active
             if (e.altKey && e.key.toLowerCase() === 'n') {
                 e.preventDefault();
-                createNewCoupletWithFocus(store, refreshAll);
+                document.querySelector<HTMLButtonElement>('#cmd-add')?.click();
                 return;
             }
 
@@ -479,109 +561,61 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
             // swap alternatives on selected card(s)
             if (e.altKey && e.key.toLowerCase() === 's') {
                 e.preventDefault();
-                if (store.getSelectedIds().size > 0) {
-                    const success = store.swapSelectedCouplets();
-
-                    if (success) {
-                        showToast("Swapped choice configurations.", "success");
-                        refreshAll();
-                    }
-                }
+                document.querySelector<HTMLButtonElement>('#cmd-swap')?.click();
                 return;
             }
 
             if (hasModifier && e.key.toLowerCase() === 'z') {
                 e.preventDefault();
                 if (e.shiftKey) {
-                    if (store.redo()) refreshAll();
+                    document.querySelector<HTMLButtonElement>('#cmd-redo')?.click();
                 } else {
-                    if (store.undo()) refreshAll();
+                    document.querySelector<HTMLButtonElement>('#cmd-undo')?.click();
                 }
                 return;
             }
 
             if (hasModifier && e.key.toLowerCase() === 'y') {
                 e.preventDefault();
-                if (store.redo()) refreshAll();
+                document.querySelector<HTMLButtonElement>('#cmd-redo')?.click();
                 return;
             }
 
             if (e.key === 'Delete' || e.key === 'Backspace') {
-                if (store.getSelectedIds().size > 0) {
-                    e.preventDefault();
-                    if (store.getSelectedIds().size === 0) return;
-
-                    if (confirm("Confirm removing highlighted key steps?")) {
-                        store.deleteSelected();
-                        refreshAll();
-                    }
-                }
+                e.preventDefault();
+                document.querySelector<HTMLButtonElement>('#cmd-delete')?.click();
                 return;
             }
 
             if (e.key === 'Escape') {
                 e.preventDefault();
+                const openModal = document.querySelector('.modal-overlay[style*="display: flex"]') as HTMLElement | null;
 
-                // Natively look up the modal element safely to eliminate scope constraints
-
-                const modalElement = document.querySelector('#control-panel-modal') as HTMLElement | null;
-
-                if (modalElement && modalElement.style.display !== 'none') {
-                    modalElement.style.display = 'none';
+                // closes dialogs
+                if (openModal) {
+                    openModal.style.display = 'none';
                     return;
                 }
 
-                store.clearSelection();
-                refreshAll();
+                document.querySelector<HTMLButtonElement>('#cmd-clear')?.click();
                 return;
             }
 
             if (hasModifier && e.key.toLowerCase() === 'c') {
                 e.preventDefault();
-                if (store.getSelectedIds().size > 0) {
-                    store.copySelectedCards();
-                    showToast(`Copied ${store.getSelectedIds().size} step(s) to clipboard.`, 'success');
-                }
+                document.querySelector<HTMLButtonElement>('#cmd-copy')?.click();
                 return;
             }
 
             if (hasModifier && e.key.toLowerCase() === 'x') {
                 e.preventDefault();
-                const selectedCount = store.getSelectedIds().size;
-
-                if (selectedCount > 0) {
-                    if (confirm(`Confirm cutting ${selectedCount} highlighted step(s) to clipboard?`)) {
-                        // Change these two lines:
-                        store.cutSelectedCards();
-
-                        showToast(`Cut ${selectedCount} step(s) to clipboard.`, 'success');
-                        refreshAll();
-                    }
-                }
+                document.querySelector<HTMLButtonElement>('#cmd-cut')?.click();
                 return;
             }
 
             if (hasModifier && e.key.toLowerCase() === 'v') {
                 e.preventDefault();
-
-                let targetId: number | undefined = undefined;
-                let position: 'above' | 'below' = 'below';
-
-                const hoverMarker = document.querySelector('.drag-drop-above, .drag-drop-below') as HTMLElement;
-                const hoverCard = hoverMarker?.closest('.key-card') as HTMLElement;
-
-                if (hoverCard) {
-                    targetId = Number(hoverCard.getAttribute('data-id'));
-                    position = hoverMarker.classList.contains('drag-drop-above') ? 'above' : 'below';
-                } else {
-                    const selectedArray = Array.from(store.getSelectedIds());
-                    targetId = selectedArray.length > 0 ? selectedArray[selectedArray.length - 1] : undefined;
-                }
-
-                if (store.pasteCards(targetId, position)) {
-                    showToast("Pasted steps from clipboard.", "success");
-                    refreshAll();
-                }
+                document.querySelector<HTMLButtonElement>('#cmd-paste')?.click();
                 return;
             }
         }

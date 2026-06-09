@@ -1,6 +1,8 @@
 // store.ts
 import { isValidCoupletArray } from './utils.ts';
 
+export const APP_NAME = 'TSKey';
+export const APP_VERSION = '0.0.1';
 export const STORAGE_KEY = 'dichotomous_key';
 
 export interface Couplet {
@@ -167,6 +169,14 @@ export class KeyStore {
 
         this.hasUncommittedChanges = false;
         return true;
+    }
+
+    public get canUndo(): boolean {
+        return this.undoStack.length > 0;
+    }
+
+    public get canRedo(): boolean {
+        return this.redoStack.length > 0;
     }
 
     public copySelectedCards(): void {
