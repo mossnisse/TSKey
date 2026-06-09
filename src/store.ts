@@ -378,25 +378,25 @@ export class KeyStore {
         // Splice items into a new shallow copy of the key array
         let newKey = [...this.state.dichotomousKey];
         newKey.splice(insertIndex, 0, ...newCards);
-        
+
         // Restore incoming links if this was a Cut operation
         if (this.clipboardMode === 'cut' && this.cutIncomingLinksBuffer.length > 0) {
             newKey = newKey.map(couplet => {
                 let updated = { ...couplet };
-                
+
                 // Find any broken links in the buffer that belong to this specific card
                 const linksToRestore = this.cutIncomingLinksBuffer.filter(b => b.sourceId === couplet.id);
-                
+
                 linksToRestore.forEach(b => {
                     const newTargetId = idTranslationMap.get(b.targetOldId);
                     if (newTargetId !== undefined) {
                         updated[b.field] = newTargetId;
                     }
                 });
-                
+
                 return updated;
             });
-            
+
             // Revert clipboard to 'copy' mode.
             this.clipboardMode = 'copy';
             this.cutIncomingLinksBuffer = [];
@@ -725,8 +725,19 @@ export class KeyStore {
 
     public importJsonData(rawData: unknown): ImportResult {
         try {
-            // Run our shared strict schema validation check
-            if (!isValidCoupletArray(rawData)) {
+            let targetKeyData: unknown = null;
+
+            // Sniff payload topology to extract data payload safely
+            if (rawData && typeof rawData === 'object' && 'data' in rawData && 'metadata' in rawData) {
+                // New Wrapped Schema Layout format detected
+                targetKeyData = (rawData as { data: unknown }).data;
+            } else {
+                // Fallback for Legacy Raw Array Format compatibility
+                targetKeyData = rawData;
+            }
+
+            // Run our shared strict schema validation check against targeted data records
+            if (!isValidCoupletArray(targetKeyData)) {
                 return {
                     success: false,
                     errors: ["The uploaded file does not match the required schema structure (missing properties or incorrect types)."]
@@ -736,7 +747,8 @@ export class KeyStore {
             // Save state snapshot for structural Undo/Redo tracking before updating
             this.saveCheckpoint();
 
-            this.state.dichotomousKey = rawData;
+            // Hydrate state safe in the knowledge schema runtime structure matches expectations
+            this.state.dichotomousKey = targetKeyData;
             this.clearSelection();
             this.hasUncommittedChanges = true;
 

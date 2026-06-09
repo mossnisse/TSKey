@@ -138,7 +138,7 @@ export function renderToolbar(store: KeyStore) {
     //if (!deleteBtn) return;
 
     // Fetch selection tracking indicators from the state model
-    const selectedCount = store.getSelectedIds().size;
+    //const selectedCount = store.getSelectedIds().size;
 
     // Dynamic Selection Management Adjustments
     //deleteBtn.textContent = `🗑️ Delete Selected (${selectedCount})`;

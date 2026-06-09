@@ -1,7 +1,7 @@
 // plainTextExporter.ts
 import type { KeyStore } from '../store.ts';
 import { showToast } from '../uiRenderer.ts';
-import { getStepNumberById, triggerFileDownload } from '../utils.ts';
+import { getStepNumberById, triggerFileDownload, buildIdToIndexMap } from '../utils.ts';
 
 /**
  * Compiles the dichotomous key into a cleanly aligned plain-text document 
@@ -10,6 +10,7 @@ import { getStepNumberById, triggerFileDownload } from '../utils.ts';
 export function exportKeyToPlainText(store: KeyStore): void {
     try {
         const key = store.getKey();
+        const idToIndexMap = buildIdToIndexMap(key);
         let content = '';
 
         key.forEach((c, index) => {
@@ -18,11 +19,11 @@ export function exportKeyToPlainText(store: KeyStore): void {
             // Resolve destinations (either a text taxon or a numerical step number)
             const dest1 = c.taxa1 
                 ? c.taxa1 
-                : (c.link1 ? getStepNumberById(key, c.link1) : '...');
+                : (c.link1 ? getStepNumberById(idToIndexMap, c.link1) : '...');
                 
             const dest2 = c.taxa2 
                 ? c.taxa2 
-                : (c.link2 ? getStepNumberById(key, c.link2) : '...');
+                : (c.link2 ? getStepNumberById(idToIndexMap, c.link2) : '...');
 
             const alt1Text = c.alt1 || '___';
             const alt2Text = c.alt2 || '___';

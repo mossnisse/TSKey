@@ -2,10 +2,11 @@
 
 import type { KeyStore, Couplet } from './store.ts';
 import { renderPrintView, showToast } from './uiRenderer.ts';
-import { triggerFileDownload, IS_MAC } from './utils.ts';
+import { IS_MAC } from './utils.ts';
 import { exportKeyToHTML } from './exporters/htmlExporter.ts';
 import { exportKeyToLaTeX } from './exporters/latexExporter.ts';
 import { exportKeyToPlainText } from './exporters/plainTextExporter.ts';
+import { exportKeyToJSON } from './exporters/jsonExporter.ts';
 
 /**
  * Centralized Delegated Events Router Engine.
@@ -375,8 +376,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     }, { signal });
 
     document.querySelector('#cmd-export-json')?.addEventListener('click', () => {
-        const content = JSON.stringify(store.getKey(), null, 2);
-        triggerFileDownload(content, 'dichotomous_key_export.json', 'application/json');
+        exportKeyToJSON(store);
     }, { signal });
 
     const hiddenInput = document.querySelector('#file-import-hidden') as HTMLInputElement;

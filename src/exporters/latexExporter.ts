@@ -1,6 +1,6 @@
 // latexExporter.ts
 import type { KeyStore } from '../store.ts';
-import { getStepNumberById, triggerFileDownload } from '../utils.ts';
+import { getStepNumberById, triggerFileDownload, buildIdToIndexMap } from '../utils.ts';
 import { showToast } from '../uiRenderer.ts';
 
 /**
@@ -23,10 +23,10 @@ function escapeLaTeX(str: string): string {
  * handling file serialization with async macro-task resource allocation rules.
  */
 export function exportKeyToLaTeX(store: KeyStore): void {
-    let url: string | null = null;
 
     try {
         const key = store.getKey();
+        const idToIndexMap = buildIdToIndexMap(key);
         let mainContent = '';
 
         if (key.length === 0) {
@@ -39,8 +39,8 @@ export function exportKeyToLaTeX(store: KeyStore): void {
             let bodyContent = '';
             key.forEach((c, index) => {
                 const currentDisplayNum = index + 1;
-                const step1Dest = getStepNumberById(key, c.link1);
-                const step2Dest = getStepNumberById(key, c.link2);
+                const step1Dest = getStepNumberById(idToIndexMap, c.link1);
+                const step2Dest = getStepNumberById(idToIndexMap, c.link2);
 
                 // Guard against structural 'INVALID ID' fragments slipping into text fields
                 const end1 = c.taxa1
