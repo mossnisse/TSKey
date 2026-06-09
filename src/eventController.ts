@@ -15,6 +15,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     const container = document.querySelector('#editor-container') as HTMLElement;
     if (!container) return;
 
+    let isDragging = false;
     let typingSessionActive = false;
     let currentEditingFieldKey: string | null = null; // Tracks exactly which card + field is active
     let typingTimeoutId: number | null = null;        // Holds the debounce timer reference
@@ -47,6 +48,19 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         store.toggleSelection(id, multiSelect);
         refreshAll();
     }, { signal });
+
+    // don't work, the browser probably don't dispatch any even to intercept
+    window.addEventListener('wheel', (e: WheelEvent) => {
+        if (isDragging) {
+            // Depending on your CSS layout, you might need to target '#editor-container' or '.app-shell' 
+            // instead of window if your app has an internal scrollable div.
+            window.scrollBy({
+                top: e.deltaY,
+                left: e.deltaX,
+                behavior: 'auto' // 'auto' ensures immediate response without smoothing lag during drag
+            });
+        }
+    }, { passive: true });
 
     // CONSOLIDATED INPUT ROUTER (Handles Undo Debouncing + Link Validation)
     container.addEventListener('input', (e) => {
@@ -224,6 +238,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
     // Centralized HTML5 Drag-and-Drop Operations
     container.addEventListener('dragstart', (e) => {
+        isDragging = true;
         const target = e.target as HTMLElement;
         const card = target.closest('.key-card') as HTMLElement;
         if (!card) return;
@@ -243,6 +258,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     };
 
     container.addEventListener('dragend', (e) => {
+        isDragging = false;
         const target = e.target as HTMLElement;
         const card = target.closest('.key-card') as HTMLElement;
         if (!card) return;
@@ -254,6 +270,18 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
     container.addEventListener('dragover', (e: DragEvent) => {
         e.preventDefault();
+
+        // --- EDGE AUTO-SCROLL LOGIC ---
+        const scrollThreshold = 60; // Distance from edge in pixels to trigger scroll
+        const scrollSpeed = 15;     // How fast to scroll
+
+        if (e.clientY < scrollThreshold) {
+            // Cursor is near the top of the viewport
+            window.scrollBy(0, -scrollSpeed);
+        } else if (window.innerHeight - e.clientY < scrollThreshold) {
+            // Cursor is near the bottom of the viewport
+            window.scrollBy(0, scrollSpeed);
+        }
         updateTargetTrackers(e.clientX, e.clientY, e.target as HTMLElement);
     }, { signal });
 
@@ -265,6 +293,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     }, { signal });
 
     container.addEventListener('drop', (e) => {
+        isDragging = false;
         e.preventDefault();
         const target = e.target as HTMLElement;
         const card = target.closest('.key-card') as HTMLElement;

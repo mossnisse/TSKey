@@ -1,21 +1,23 @@
 // htmlExporter.ts
 import type { KeyStore } from '../store.ts';
-import { escapeHTML, getStepNumberById, triggerFileDownload } from '../utils.ts';
+import { escapeHTML, buildIdToIndexMap, getStepNumberById, triggerFileDownload } from '../utils.ts';
 import { showToast } from '../uiRenderer.ts';
 
 /**
  * Compiles the current KeyStore state into a single standalone static HTML document.
- * Includes semantic validation protection and bulletproof DOM safety checks.
+ * Guarantees that couplet sets never break across page boundaries during printing.
  */
 export function exportKeyToHTML(store: KeyStore): void {
     try {
         const key = store.getKey();
+        const idToIndexMap = buildIdToIndexMap(key);
+        
         let gridContent = '';
 
         key.forEach((c, index) => {
             const currentDisplayNum = index + 1;
-            const step1Dest = getStepNumberById(key, c.link1);
-            const step2Dest = getStepNumberById(key, c.link2);
+            const step1Dest = getStepNumberById(idToIndexMap, c.link1);
+            const step2Dest = getStepNumberById(idToIndexMap, c.link2);
 
             // Guard against "INVALID ID" leaking into the clean document text if data shifts slightly
             const end1 = c.taxa1
@@ -30,24 +32,25 @@ export function exportKeyToHTML(store: KeyStore): void {
                     ? `<strong class="print-dest-strong">${step2Dest}</strong>` 
                     : '<span>...</span>');
 
+            // Encapsulate each individual step inside its own unbreakable container
             gridContent += `
-            <div class="print-step-num">${currentDisplayNum}.</div>
-            <div class="print-row">
-              <span class="print-text">${escapeHTML(c.alt1) || '___'}</span>
-              <span class="print-dots"></span>
-              <span class="print-dest">${end1}</span>
+            <div class="print-couplet">
+                <div class="print-step-num">${currentDisplayNum}.</div>
+                <div class="print-row">
+                  <span class="print-text">${escapeHTML(c.alt1) || '___'}</span>
+                  <span class="print-dots"></span>
+                  <span class="print-dest">${end1}</span>
+                </div>
+                <div class="print-dash">—</div>
+                <div class="print-row">
+                  <span class="print-text">${escapeHTML(c.alt2) || '___'}</span>
+                  <span class="print-dots"></span>
+                  <span class="print-dest">${end2}</span>
+                </div>
             </div>
-            <div class="print-dash">—</div>
-            <div class="print-row">
-              <span class="print-text">${escapeHTML(c.alt2) || '___'}</span>
-              <span class="print-dots"></span>
-              <span class="print-dest">${end2}</span>
-            </div>
-            <div class="print-spacer"></div>
             `;
         });
 
-        // (Assuming matching structured layout styles here as per your original template)
         const htmlDocument = `<!DOCTYPE html>
 <html>
 <head>
@@ -55,7 +58,25 @@ export function exportKeyToHTML(store: KeyStore): void {
   <title>Exported Dichotomous Key</title>
   <style>
     body { font-family: sans-serif; padding: 20px; }
-    .print-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: end; }
+    
+    /* Global container holding all the key steps */
+    .print-key-container { 
+      display: flex; 
+      flex-direction: column; 
+      gap: 16px; /* Clean layout separation between individual steps */
+    }
+    
+    /* Structural parent for a single couplet block. 
+       This forces Choice A and Choice B to stick together across pages. */
+    .print-couplet { 
+      display: grid; 
+      grid-template-columns: 2.5rem 1fr; 
+      gap: 6px 10px; 
+      align-items: end; 
+      break-inside: avoid; 
+      page-break-inside: avoid; 
+    }
+    
     .print-step-num { font-weight: bold; align-self: start; }
     .print-row { display: flex; justify-content: space-between; align-items: end; width: 100%; }
     .print-text { flex-shrink: 1; text-align: left; white-space: pre-wrap; }
@@ -64,11 +85,15 @@ export function exportKeyToHTML(store: KeyStore): void {
     .print-dest-strong { font-weight: bold; }
     .print-dest-taxon { font-weight: bold; font-style: italic; }
     .print-dash { font-weight: bold; text-align: center; align-self: start; }
-    .print-spacer { grid-column: span 2; height: 8px; }
+    
+    @media print {
+      body { padding: 0; margin: 0; }
+      .print-couplet { break-inside: avoid; page-break-inside: avoid; }
+    }
   </style>
 </head>
 <body>
-  <div class="print-grid">
+  <div class="print-key-container">
     ${gridContent}
   </div>
 </body>
