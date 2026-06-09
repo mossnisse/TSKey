@@ -42,7 +42,7 @@ export class KeyStore {
     private activeEditingCardId: number | null = null;
 
     // Shared clipboard state structure
-    private clipboardBuffer: Omit<Couplet, 'id'>[] = [];
+    private clipboardBuffer: Couplet[] = [];
 
     constructor(initialKey: Couplet[], maxHistoryLimit = 100) {
         this.state = { dichotomousKey: initialKey };
@@ -171,7 +171,7 @@ export class KeyStore {
         const selectedIds = this.getSelectedIds();
         if (selectedIds.size === 0) return;
 
-        // Clone the FULL internal objects, including their structural identity keys
+        // Clone internal objects completely, retaining IDs for translation maps
         this.clipboardBuffer = this.state.dichotomousKey
             .filter(c => selectedIds.has(c.id))
             .map(c => ({ ...c }));
@@ -179,68 +179,6 @@ export class KeyStore {
 
     public hasClipboardData(): boolean {
         return this.clipboardBuffer.length > 0;
-    }
-
-    /**
-     * Pastes cards from the clipboard buffer.
-     * @param targetId Optional ID to paste relative to. If omitted, appends to the end of the key.
-     */
-    public pasteCards(targetId?: number, position: 'above' | 'below' = 'below'): boolean {
-        if (this.clipboardBuffer.length === 0) return false;
-
-        // Hook into the history engine! Capture state BEFORE any mutation.
-        this.saveCheckpoint();
-
-        let insertIndex = this.state.dichotomousKey.length; // Default to appending
-
-        // Find contextual insertion point if a target is provided
-        if (targetId !== undefined) {
-            const targetIndex = this.state.dichotomousKey.findIndex(c => c.id === targetId);
-            if (targetIndex !== -1) {
-                insertIndex = position === 'above' ? targetIndex : targetIndex + 1;
-            }
-        }
-
-        // Calculate the current maximum ID safely and efficiently ONCE
-        const maxId = this.state.dichotomousKey.reduce((currentMax, couplet) => {
-            return Math.max(currentMax, couplet.id);
-        }, 0);
-
-        // First Pass: Generate new IDs and build a translation dictionary
-        const idTranslationMap = new Map<number, number>();
-        
-        this.clipboardBuffer.forEach((item, index) => {
-            const newId = maxId + index + 1;
-            idTranslationMap.set(item.id, newId);
-        });
-
-        // Second Pass: Clone items and remap their internal topological links
-        const newCards: Couplet[] = this.clipboardBuffer.map((item) => {
-            const mappedId = idTranslationMap.get(item.id)!;
-            
-            // Check if the original links pointed to another card INSIDE the copied batch.
-            // If yes, wire it to the newly generated ID. If not (it pointed outside), sever it (0).
-            const mappedLink1 = idTranslationMap.has(item.link1) ? idTranslationMap.get(item.link1)! : 0;
-            const mappedLink2 = idTranslationMap.has(item.link2) ? idTranslationMap.get(item.link2)! : 0;
-
-            return {
-                ...item,
-                id: mappedId,
-                link1: mappedLink1,
-                link2: mappedLink2
-            };
-        });
-
-        // Splice items into a new shallow copy of the key array
-        const newKey = [...this.state.dichotomousKey];
-        newKey.splice(insertIndex, 0, ...newCards);
-        this.state.dichotomousKey = newKey;
-
-        // Shift the selection context to the newly pasted items for UX clarity
-        this.setSelectionBatch(newCards.map(c => c.id));
-        this.hasUncommittedChanges = true;
-
-        return true;
     }
 
     // ==========================================
@@ -307,6 +245,12 @@ export class KeyStore {
     // MUTATORS (State modifiers with history tracking)
     // ==========================================
 
+    /** Explicitly commits a history point. Useful after text editing finishes (blur). */
+    public commitHistoryCheckpoint() {
+        if (!this.hasUncommittedChanges) return;
+        this.saveCheckpoint();
+    }
+
     public updateCouplet(id: number, fields: Partial<Omit<Couplet, 'id'>>) {
         this.state.dichotomousKey = this.state.dichotomousKey.map(c => {
             if (c.id === id) {
@@ -315,12 +259,6 @@ export class KeyStore {
             return c;
         });
         this.hasUncommittedChanges = true;
-    }
-
-    /** Explicitly commits a history point. Useful after text editing finishes (blur). */
-    public commitHistoryCheckpoint() {
-        if (!this.hasUncommittedChanges) return;
-        this.saveCheckpoint();
     }
 
     public addCouplet(): number {
@@ -387,6 +325,68 @@ export class KeyStore {
         this.hasUncommittedChanges = true;
 
         return nextInternalId; // Return the new ID for UI targeting focus
+    }
+
+  
+    /**
+    * Pastes cards from the clipboard buffer.
+    */
+    public pasteCards(targetId?: number, position: 'above' | 'below' = 'below'): boolean {
+        if (this.clipboardBuffer.length === 0) return false;
+
+        // Hook into the history engine! Capture state BEFORE any mutation.
+        this.saveCheckpoint();
+
+        let insertIndex = this.state.dichotomousKey.length; // Default to appending
+
+        // Find contextual insertion point if a target is provided
+        if (targetId !== undefined) {
+            const targetIndex = this.state.dichotomousKey.findIndex(c => c.id === targetId);
+            if (targetIndex !== -1) {
+                insertIndex = position === 'above' ? targetIndex : targetIndex + 1;
+            }
+        }
+
+        // Calculate the current maximum ID safely and efficiently ONCE
+        const maxId = this.state.dichotomousKey.reduce((currentMax, couplet) => {
+            return Math.max(currentMax, couplet.id);
+        }, 0);
+
+        // First Pass: Generate new IDs and build a translation dictionary
+        const idTranslationMap = new Map<number, number>();
+
+        this.clipboardBuffer.forEach((item, index) => {
+            const newId = maxId + index + 1;
+            idTranslationMap.set(item.id, newId);
+        });
+
+        // Second Pass: Clone items and remap their internal topological links
+        const newCards: Couplet[] = this.clipboardBuffer.map((item) => {
+            const mappedId = idTranslationMap.get(item.id)!;
+
+            // If the target link is inside the copied batch, map it to the new internal ID.
+            // If it points outside the batch, preserve the original link
+            const mappedLink1 = idTranslationMap.has(item.link1) ? idTranslationMap.get(item.link1)! : item.link1;
+            const mappedLink2 = idTranslationMap.has(item.link2) ? idTranslationMap.get(item.link2)! : item.link2;
+
+            return {
+                ...item,
+                id: mappedId,
+                link1: mappedLink1,
+                link2: mappedLink2
+            };
+        });
+
+        // Splice items into a new shallow copy of the key array
+        const newKey = [...this.state.dichotomousKey];
+        newKey.splice(insertIndex, 0, ...newCards);
+        this.state.dichotomousKey = newKey;
+
+        // Shift the selection context to the newly pasted items for UX clarity
+        this.setSelectionBatch(newCards.map(c => c.id));
+        this.hasUncommittedChanges = true;
+
+        return true;
     }
 
     public deleteSelected() {
@@ -480,21 +480,121 @@ export class KeyStore {
         return true;
     }
 
-    // should also flip alt1/alt2 when needed. alt1 should be the shorter branch.
     public autoOrder() {
         if (this.state.dichotomousKey.length === 0) return;
 
         // Commit history state SAFELY before transforming data
         this.saveCheckpoint();
 
-        // IMMUTABLE BRANCH OPTIMIZATION PASS (Taxon Mirroring Swap)
-        // Map elements into clean objects rather than mutating in place.
-        const optimizedKey = this.state.dichotomousKey.map(c => {
-            const hasTaxa1 = !!c.taxa1 && c.taxa1.trim() !== '';
-            const hasTaxa2 = !!c.taxa2 && c.taxa2.trim() !== '';
+        // Build an efficient lookup map of the current state
+        const idToCoupletMap = new Map<number, Couplet>(
+            this.state.dichotomousKey.map(c => [c.id, c])
+        );
 
-            // Swap condition: Choice B has an endpoint taxon, Choice A does not
-            if (hasTaxa2 && !hasTaxa1) {
+        // Helper closures to cleanly detect string and link states
+        const hasTaxa = (taxaStr: string) => !!taxaStr && taxaStr.trim() !== '';
+        const isNumericReference = (taxaStr: string) => /^\d+$/.test(taxaStr.trim());
+        const isValidLink = (linkId: number) => linkId !== 0 && idToCoupletMap.has(linkId);
+
+        type BranchType =
+            | 'terminal'
+            | 'unresolved'
+            | 'linked'
+            | 'broken';
+
+        const classifyBranch = (taxaStr: string, linkId: number): BranchType => {
+            if (hasTaxa(taxaStr) && !isNumericReference(taxaStr)) {
+                return 'terminal';
+            }
+            if (isValidLink(linkId)) {
+                return 'linked';
+            }
+            if (isNumericReference(taxaStr)) {
+                return 'unresolved';
+            }
+            return 'broken';
+        };
+
+        // Compute branch depths recursively (Memoized to prevent infinite loops on cycles)
+        const depthCache = new Map<number, number>();
+        const dynamicVisited = new Set<number>();
+
+        const calculateBranchDepth = (id: number): number => {
+            if (id === 0 || !idToCoupletMap.has(id)) return 0;
+            if (depthCache.has(id)) return depthCache.get(id)!;
+            if (dynamicVisited.has(id)) return 0; // Handle cyclic loops gracefully
+
+            dynamicVisited.add(id);
+            const couplet = idToCoupletMap.get(id)!;
+
+            const d1 = hasTaxa(couplet.taxa1) || !isValidLink(couplet.link1) ? 0 : calculateBranchDepth(couplet.link1);
+            const d2 = hasTaxa(couplet.taxa2) || !isValidLink(couplet.link2) ? 0 : calculateBranchDepth(couplet.link2);
+
+            dynamicVisited.delete(id);
+
+            const totalDepth = 1 + Math.max(d1, d2);
+            depthCache.set(id, totalDepth);
+            return totalDepth;
+        };
+
+        // Populate depth cache for all items
+        this.state.dichotomousKey.forEach(c => calculateBranchDepth(c.id));
+
+        // Mirror Pass: Re-map and swap alt1/alt2 fields using the Rank Engine
+        const optimizedKey = this.state.dichotomousKey.map(c => {
+            const getChoiceRank = (taxaStr: string, linkId: number): number => {
+                switch (classifyBranch(taxaStr, linkId)) {
+                    case 'terminal':
+                        return 1;
+                    case 'linked':
+                        return 2;
+                    case 'unresolved':
+                        return 3;
+                    case 'broken':
+                        return 4;
+                }
+            };
+
+            const rank1 = getChoiceRank(c.taxa1, c.link1);
+            const rank2 = getChoiceRank(c.taxa2, c.link2);
+
+            let shouldSwap = false;
+
+            if (rank1 > rank2) {
+                shouldSwap = true;
+            } else if (rank1 === rank2) {
+                // Tie-breakers when both alternatives share the same structural rank
+                if (rank1 === 1) {
+                    // Both are Taxa terminal options.
+                    if (c.link2 !== 0 && c.link1 !== 0) {
+                        // Both are in Hint Mode: sort by destination structural layout ID
+                        if (c.link2 < c.link1) shouldSwap = true;
+                    } else if (c.link1 !== 0 && c.link2 === 0) {
+                        // Choice A is Hint-mode, Choice B is Pure Leaf. Prioritize Pure Leaf to Alt1.
+                        shouldSwap = true;
+                    }
+                } else if (rank1 === 2) {
+                    // Both are Resolved Links. Compare branch depths (Shorter branch first)
+                    const depth1 = depthCache.get(c.link1) || 0;
+                    const depth2 = depthCache.get(c.link2) || 0;
+
+                    if (depth2 < depth1) {
+                        shouldSwap = true;
+                    } else if (depth2 === depth1) {
+                        if (c.link2 < c.link1) shouldSwap = true;
+                    }
+                } else if (rank1 === 3) {
+                    // Both are Unresolved choices. Sort by explicit structural numeric values.
+                    const num1 = parseInt(c.taxa1.trim(), 10) || 0;
+                    const num2 = parseInt(c.taxa2.trim(), 10) || 0;
+                    if (num2 < num1) shouldSwap = true;
+                } else if (rank1 === 4) {
+                    // Both are completely broken paths
+                    if (c.link2 < c.link1) shouldSwap = true;
+                }
+            }
+
+            if (shouldSwap) {
                 return {
                     ...c,
                     alt1: c.alt2,
@@ -505,75 +605,59 @@ export class KeyStore {
                     taxa2: c.taxa1
                 };
             }
-            // Return unchanged copy to maintain pure array sequence isolation
             return { ...c };
         });
 
-        // GRAPH REBUILDING (Using the freshly optimized copies)
-        const idToCoupletMap = new Map<number, Couplet>(optimizedKey.map(c => [c.id, c]));
+        // Rebuild updated maps using optimized instances
+        const optimizedIdMap = new Map<number, Couplet>(optimizedKey.map(c => [c.id, c]));
 
-        // Recompute structural in-degrees
+        // Trace incoming references to identify top-level structural root items
         const incomingCounts = new Map<number, number>();
         optimizedKey.forEach(c => {
-            if (c.link1) incomingCounts.set(c.link1, (incomingCounts.get(c.link1) || 0) + 1);
-            if (c.link2) incomingCounts.set(c.link2, (incomingCounts.get(c.link2) || 0) + 1);
+            if (isValidLink(c.link1)) incomingCounts.set(c.link1, (incomingCounts.get(c.link1) || 0) + 1);
+            if (isValidLink(c.link2)) incomingCounts.set(c.link2, (incomingCounts.get(c.link2) || 0) + 1);
         });
 
-        // Identify structural roots
         const roots = optimizedKey.filter(c => !incomingCounts.has(c.id));
-        if (roots.length === 0) {
+        if (roots.length === 0 && optimizedKey.length > 0) {
             roots.push(optimizedKey[0]);
         }
 
         const visited = new Set<number>();
         const orderedCouplets: Couplet[] = [];
 
-        // PRE-ORDER DFS STRUCTURAL LAYOUT
-        roots.forEach(root => {
-            if (visited.has(root.id)) return;
-
-            const stack: number[] = [root.id];
+        // Topology Flattening Pass: O(1) Stack Engine Traversal (Pre-order Depth First)
+        const traverseTreeBranch = (startId: number) => {
+            const stack: number[] = [startId];
 
             while (stack.length > 0) {
                 const currentId = stack.pop()!;
                 if (currentId === 0 || visited.has(currentId)) continue;
 
-                const couplet = idToCoupletMap.get(currentId);
+                const couplet = optimizedIdMap.get(currentId);
                 if (!couplet) continue;
 
                 visited.add(currentId);
                 orderedCouplets.push(couplet);
 
-                if (couplet.link2 && !visited.has(couplet.link2)) {
+                // Push link2 first, then link1 onto the stack.
+                // This ensures link1 resides on top of the stack and gets evaluated next.
+                if (isValidLink(couplet.link2) && !visited.has(couplet.link2)) {
                     stack.push(couplet.link2);
                 }
-                if (couplet.link1 && !visited.has(couplet.link1)) {
+                if (isValidLink(couplet.link1) && !visited.has(couplet.link1)) {
                     stack.push(couplet.link1);
                 }
             }
-        });
+        };
 
-        // CLEANUP SWEEP (Orphaned / Cyclical islands)
+        // Run traversal on main root nodes
+        roots.forEach(root => traverseTreeBranch(root.id));
+
+        // Cleanup Sweep (Capture detached orphaned/cyclical sub-graphs)
         optimizedKey.forEach(c => {
             if (!visited.has(c.id)) {
-                const orphanStack = [c.id];
-                while (orphanStack.length > 0) {
-                    const orphanId = orphanStack.pop()!;
-                    if (orphanId === 0 || visited.has(orphanId)) continue;
-
-                    const orphanCouplet = idToCoupletMap.get(orphanId);
-                    if (!orphanCouplet) continue;
-
-                    visited.add(orphanId);
-                    orderedCouplets.push(orphanCouplet);
-
-                    if (orphanCouplet.link2 && !visited.has(orphanCouplet.link2)) {
-                        orphanStack.push(orphanCouplet.link2);
-                    }
-                    if (orphanCouplet.link1 && !visited.has(orphanCouplet.link1)) {
-                        orphanStack.push(orphanCouplet.link1);
-                    }
-                }
+                traverseTreeBranch(c.id);
             }
         });
 
@@ -582,17 +666,6 @@ export class KeyStore {
         this.hasUncommittedChanges = true;
     }
 
-    public replaceKeyData(newData: Couplet[]) {
-        this.saveCheckpoint();
-        this.state.dichotomousKey = newData;
-        this.selectedIds = new Set();
-        this.hasUncommittedChanges = true;
-    }
-
-    /**
-     * Validates external JSON data shapes safely before committing to the state tree.
-     * Blocks corruption entirely if basic structural parameters are breached.
-     */
     public importJsonData(rawData: unknown): ImportResult {
         try {
             // Run our shared strict schema validation check
@@ -630,19 +703,10 @@ export class KeyStore {
             throw new Error("Cannot save an empty or corrupted data structure.");
         }
 
-        // Use the centralized constant directly inside the store
         localStorage.setItem(STORAGE_KEY, JSON.stringify(currentData));
-
-        // Mark the history index state as clean
         this.markSaved();
     }
 
-    // store.ts
-
-    /**
-     * Reads, validates, and hydrates the application state tree directly from LocalStorage.
-     * Flushes old undo/redo timelines and selection tracking configurations back to baseline.
-     */
     public loadFromStorage(fallbackData: Couplet[] = []): boolean {
         try {
             const rawStorage = localStorage.getItem(STORAGE_KEY);
@@ -695,18 +759,11 @@ export class KeyStore {
         this.selectedIds.clear();
     }
 
-    /**
-     * Clears current selections and instantly sets focus to a single target card.
-     * Ideal for post-paste behavior or structural card additions.
-     */
     public setSelectionToSingle(cardId: number): void {
         this.selectedIds.clear();
         this.selectedIds.add(cardId);
     }
 
-    /**
-    * Bulk updates the selection pool cleanly using an array or iterable set.
-    */
     public setSelectionBatch(cardIds: number[] | Set<number>): void {
         this.selectedIds = new Set(cardIds);
     }

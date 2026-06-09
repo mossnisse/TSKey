@@ -30,32 +30,25 @@ export function initializeShell(appDiv: HTMLDivElement) {
     appDiv.innerHTML = `
     <div class="app-shell">
       <div class="sticky-toolbar">
-        <button id="cmd-undo" class="btn btn-secondary">↩️ Undo (${IS_MAC ? '⌘Z' : 'Ctrl+Z'})</button>
-        <button id="cmd-redo" class="btn btn-secondary">↪️ Redo (${IS_MAC ? '⌘Y' : 'Ctrl+Y'})</button>
-        <span class="toolbar-divider"></span>
         
         <button id="cmd-save" class="btn-save">💾 Save Memory (${IS_MAC ? '⌘S' : 'Ctrl+S'})</button>
         <button id="cmd-export-json" class="btn btn-secondary">📥 Export JSON</button>
         <button id="cmd-trigger-import" class="btn btn-secondary">📤 Import JSON</button>
         <input type="file" id="file-import-hidden" accept=".json" style="display: none;" />
-        
-        <span class="toolbar-divider"></span>
-        
-        <button id="cmd-reorder" class="btn btn-primary">🔄 Auto-Order Couplets</button>
-        <button id="cmd-delete-selected" class="btn btn-danger">🗑️ Delete (Del)</button>
-        <button id="cmd-clear-selection" class="btn btn-outline">Clear Selection (Esc)</button>
-        
-        <span class="toolbar-spacer"></span>
-        
-        <!-- NEW: Unified Entry Point Button -->
-        <button id="cmd-open-panel" class="btn btn-primary" style="background: var(--color-text);">⚙️ App Panel</button>
-        
         <select id="export-format-selector" class="select-input">
           <option value="">-- Export Target Format --</option>
           <option value="text">Plain Text (.txt)</option>
           <option value="html">Structured HTML/CSS</option>
           <option value="latex">Academic LaTeX Document</option>
         </select>
+        
+        <span class="toolbar-divider"></span>
+        
+        <button id="cmd-reorder" class="btn btn-primary">🔄 Auto-Order Couplets</button>
+        
+        <span class="toolbar-spacer"></span>
+        
+        <button id="cmd-open-panel" class="btn btn-primary" style="background: var(--color-text);">⚙️ App Panel</button>
       </div>
     
       <div class="main-layout">
@@ -138,22 +131,23 @@ export function initializeShell(appDiv: HTMLDivElement) {
  * Synchronizes dynamic interactive state adjustments directly onto toolbar button layouts.
  */
 export function renderToolbar(store: KeyStore) {
-    const deleteBtn = document.querySelector('#cmd-delete-selected') as HTMLButtonElement;
-    const clearBtn = document.querySelector('#cmd-clear-selection') as HTMLButtonElement;
+    //const deleteBtn = document.querySelector('#cmd-delete-selected') as HTMLButtonElement;
+    //const clearBtn = document.querySelector('#cmd-clear-selection') as HTMLButtonElement;
     const saveBtn = document.querySelector('#cmd-save') as HTMLButtonElement;
 
-    if (!deleteBtn) return;
+    //if (!deleteBtn) return;
 
     // Fetch selection tracking indicators from the state model
     const selectedCount = store.getSelectedIds().size;
 
     // Dynamic Selection Management Adjustments
-    deleteBtn.textContent = `🗑️ Delete Selected (${selectedCount})`;
-    deleteBtn.disabled = selectedCount === 0;
+    //deleteBtn.textContent = `🗑️ Delete Selected (${selectedCount})`;
+    //deleteBtn.disabled = selectedCount === 0;
 
+    /*
     if (clearBtn) {
         clearBtn.disabled = selectedCount === 0;
-    }
+    }*/
 
     // Memory Save Visual Indicator Optimization
     if (saveBtn) {

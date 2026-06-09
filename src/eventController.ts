@@ -325,13 +325,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     // ==========================================
     // STANDALONE TOOLBAR ACTIONS
     // ==========================================
-    document.querySelector('#cmd-undo')?.addEventListener('click', () => {
-        if (store.undo()) refreshAll();
-    }, { signal });
-
-    document.querySelector('#cmd-redo')?.addEventListener('click', () => {
-        if (store.redo()) refreshAll();
-    }, { signal });
 
     document.querySelector('#cmd-save')?.addEventListener('click', () => {
         try {
@@ -383,20 +376,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             alert("Malformed JSON structure: Unable to parse file stream.");
         } finally {
             if (hiddenInput) hiddenInput.value = '';
-        }
-    }, { signal });
-
-    document.querySelector('#cmd-clear-selection')?.addEventListener('click', () => {
-        store.clearSelection();
-        refreshAll();
-    }, { signal });
-
-    document.querySelector('#cmd-delete-selected')?.addEventListener('click', () => {
-        if (store.getSelectedIds().size === 0) return;
-
-        if (confirm("Confirm removing highlighted key steps?")) {
-            store.deleteSelected();
-            refreshAll();
         }
     }, { signal });
 
@@ -501,7 +480,12 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
             if (e.key === 'Delete' || e.key === 'Backspace') {
                 if (store.getSelectedIds().size > 0) {
                     e.preventDefault();
-                    document.querySelector<HTMLButtonElement>('#cmd-delete-selected')?.click();
+                    if (store.getSelectedIds().size === 0) return;
+
+                    if (confirm("Confirm removing highlighted key steps?")) {
+                        store.deleteSelected();
+                        refreshAll();
+                    }
                 }
                 return;
             }
@@ -531,7 +515,6 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
                 }
                 return;
             }
-
 
             if (hasModifier && e.key.toLowerCase() === 'x') {
                 e.preventDefault();
@@ -583,7 +566,6 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
 /**
  * Shared helper utility to cleanly insert a couplet and transfer user focus.
  */
-
 function createNewCoupletWithFocus(store: KeyStore, refreshAll: () => void) {
     const newId = store.addCouplet();
     refreshAll();
