@@ -43,6 +43,8 @@ export class KeyStore {
 
     // Shared clipboard state structure
     private clipboardBuffer: Couplet[] = [];
+    private clipboardMode: 'copy' | 'cut' = 'copy';
+    private cutIncomingLinksBuffer: Array<{ sourceId: number, field: 'link1' | 'link2', targetOldId: number }> = [];
 
     constructor(initialKey: Couplet[], maxHistoryLimit = 100) {
         this.state = { dichotomousKey: initialKey };
@@ -175,6 +177,10 @@ export class KeyStore {
         this.clipboardBuffer = this.state.dichotomousKey
             .filter(c => selectedIds.has(c.id))
             .map(c => ({ ...c }));
+
+        // Reset clipboard mode
+        this.clipboardMode = 'copy';
+        this.cutIncomingLinksBuffer = [];
     }
 
     public hasClipboardData(): boolean {
@@ -327,19 +333,17 @@ export class KeyStore {
         return nextInternalId; // Return the new ID for UI targeting focus
     }
 
-  
+
     /**
     * Pastes cards from the clipboard buffer.
     */
     public pasteCards(targetId?: number, position: 'above' | 'below' = 'below'): boolean {
         if (this.clipboardBuffer.length === 0) return false;
 
-        // Hook into the history engine! Capture state BEFORE any mutation.
         this.saveCheckpoint();
 
-        let insertIndex = this.state.dichotomousKey.length; // Default to appending
+        let insertIndex = this.state.dichotomousKey.length;
 
-        // Find contextual insertion point if a target is provided
         if (targetId !== undefined) {
             const targetIndex = this.state.dichotomousKey.findIndex(c => c.id === targetId);
             if (targetIndex !== -1) {
@@ -347,12 +351,10 @@ export class KeyStore {
             }
         }
 
-        // Calculate the current maximum ID safely and efficiently ONCE
         const maxId = this.state.dichotomousKey.reduce((currentMax, couplet) => {
             return Math.max(currentMax, couplet.id);
         }, 0);
 
-        // First Pass: Generate new IDs and build a translation dictionary
         const idTranslationMap = new Map<number, number>();
 
         this.clipboardBuffer.forEach((item, index) => {
@@ -360,12 +362,8 @@ export class KeyStore {
             idTranslationMap.set(item.id, newId);
         });
 
-        // Second Pass: Clone items and remap their internal topological links
         const newCards: Couplet[] = this.clipboardBuffer.map((item) => {
             const mappedId = idTranslationMap.get(item.id)!;
-
-            // If the target link is inside the copied batch, map it to the new internal ID.
-            // If it points outside the batch, preserve the original link
             const mappedLink1 = idTranslationMap.has(item.link1) ? idTranslationMap.get(item.link1)! : item.link1;
             const mappedLink2 = idTranslationMap.has(item.link2) ? idTranslationMap.get(item.link2)! : item.link2;
 
@@ -378,15 +376,72 @@ export class KeyStore {
         });
 
         // Splice items into a new shallow copy of the key array
-        const newKey = [...this.state.dichotomousKey];
+        let newKey = [...this.state.dichotomousKey];
         newKey.splice(insertIndex, 0, ...newCards);
-        this.state.dichotomousKey = newKey;
+        
+        // Restore incoming links if this was a Cut operation
+        if (this.clipboardMode === 'cut' && this.cutIncomingLinksBuffer.length > 0) {
+            newKey = newKey.map(couplet => {
+                let updated = { ...couplet };
+                
+                // Find any broken links in the buffer that belong to this specific card
+                const linksToRestore = this.cutIncomingLinksBuffer.filter(b => b.sourceId === couplet.id);
+                
+                linksToRestore.forEach(b => {
+                    const newTargetId = idTranslationMap.get(b.targetOldId);
+                    if (newTargetId !== undefined) {
+                        updated[b.field] = newTargetId;
+                    }
+                });
+                
+                return updated;
+            });
+            
+            // Revert clipboard to 'copy' mode.
+            this.clipboardMode = 'copy';
+            this.cutIncomingLinksBuffer = [];
+        }
 
-        // Shift the selection context to the newly pasted items for UX clarity
+        this.state.dichotomousKey = newKey;
         this.setSelectionBatch(newCards.map(c => c.id));
         this.hasUncommittedChanges = true;
 
         return true;
+    }
+
+    public cutSelectedCards(): void {
+        const selectedIds = this.getSelectedIds();
+        if (selectedIds.size === 0) return;
+
+        this.saveCheckpoint();
+
+        // Copy selected items to the buffer
+        this.clipboardBuffer = this.state.dichotomousKey
+            .filter(c => selectedIds.has(c.id))
+            .map(c => ({ ...c }));
+
+        this.clipboardMode = 'cut';
+        this.cutIncomingLinksBuffer = [];
+
+        //  Identify incoming links, buffer them in memory, and safely sever them
+        //    while removing the selected cards from the key array.
+        this.state.dichotomousKey = this.state.dichotomousKey
+            .filter(c => !selectedIds.has(c.id))
+            .map(c => {
+                let updated = { ...c };
+                if (selectedIds.has(c.link1)) {
+                    this.cutIncomingLinksBuffer.push({ sourceId: c.id, field: 'link1', targetOldId: c.link1 });
+                    updated.link1 = 0;
+                }
+                if (selectedIds.has(c.link2)) {
+                    this.cutIncomingLinksBuffer.push({ sourceId: c.id, field: 'link2', targetOldId: c.link2 });
+                    updated.link2 = 0;
+                }
+                return updated;
+            });
+
+        this.selectedIds = new Set();
+        this.hasUncommittedChanges = true;
     }
 
     public deleteSelected() {
@@ -503,21 +558,25 @@ export class KeyStore {
             | 'broken';
 
         const classifyBranch = (taxaStr: string, linkId: number): BranchType => {
-            if (hasTaxa(taxaStr) && !isNumericReference(taxaStr)) {
-                return 'terminal';
-            }
-            if (isValidLink(linkId)) {
-                return 'linked';
-            }
-            if (isNumericReference(taxaStr)) {
-                return 'unresolved';
-            }
+            if (hasTaxa(taxaStr) && !isNumericReference(taxaStr)) return 'terminal';
+            if (isValidLink(linkId)) return 'linked';
+            if (isNumericReference(taxaStr)) return 'unresolved';
             return 'broken';
         };
 
         // Compute branch depths recursively (Memoized to prevent infinite loops on cycles)
         const depthCache = new Map<number, number>();
         const dynamicVisited = new Set<number>();
+
+        // NEW: Function to infer depth natively from strings if unresolved
+        const getEdgeDepth = (taxaStr: string, linkId: number): number => {
+            const type = classifyBranch(taxaStr, linkId);
+            if (type === 'terminal') return 0;
+            if (type === 'linked') return calculateBranchDepth(linkId);
+            // Treat the unresolved numeric string as its simulated depth (higher number = deeper branch)
+            if (type === 'unresolved') return parseInt(taxaStr.trim(), 10) || 0;
+            return 0; // broken
+        };
 
         const calculateBranchDepth = (id: number): number => {
             if (id === 0 || !idToCoupletMap.has(id)) return 0;
@@ -527,8 +586,9 @@ export class KeyStore {
             dynamicVisited.add(id);
             const couplet = idToCoupletMap.get(id)!;
 
-            const d1 = hasTaxa(couplet.taxa1) || !isValidLink(couplet.link1) ? 0 : calculateBranchDepth(couplet.link1);
-            const d2 = hasTaxa(couplet.taxa2) || !isValidLink(couplet.link2) ? 0 : calculateBranchDepth(couplet.link2);
+            // Compute utilizing our new edge depth evaluator
+            const d1 = getEdgeDepth(couplet.taxa1, couplet.link1);
+            const d2 = getEdgeDepth(couplet.taxa2, couplet.link2);
 
             dynamicVisited.delete(id);
 
@@ -537,26 +597,25 @@ export class KeyStore {
             return totalDepth;
         };
 
-        // Populate depth cache for all items
+        // Populate depth cache for all items so parents inherit the weight of unresolved numbers
         this.state.dichotomousKey.forEach(c => calculateBranchDepth(c.id));
 
         // Mirror Pass: Re-map and swap alt1/alt2 fields using the Rank Engine
         const optimizedKey = this.state.dichotomousKey.map(c => {
-            const getChoiceRank = (taxaStr: string, linkId: number): number => {
-                switch (classifyBranch(taxaStr, linkId)) {
-                    case 'terminal':
-                        return 1;
+            const type1 = classifyBranch(c.taxa1, c.link1);
+            const type2 = classifyBranch(c.taxa2, c.link2);
+
+            const getChoiceRank = (type: BranchType): number => {
+                switch (type) {
+                    case 'terminal': return 1;
                     case 'linked':
-                        return 2;
-                    case 'unresolved':
-                        return 3;
-                    case 'broken':
-                        return 4;
+                    case 'unresolved': return 2; // Grouped: both imply continuing paths
+                    case 'broken': return 3;
                 }
             };
 
-            const rank1 = getChoiceRank(c.taxa1, c.link1);
-            const rank2 = getChoiceRank(c.taxa2, c.link2);
+            const rank1 = getChoiceRank(type1);
+            const rank2 = getChoiceRank(type2);
 
             let shouldSwap = false;
 
@@ -567,28 +626,27 @@ export class KeyStore {
                 if (rank1 === 1) {
                     // Both are Taxa terminal options.
                     if (c.link2 !== 0 && c.link1 !== 0) {
-                        // Both are in Hint Mode: sort by destination structural layout ID
                         if (c.link2 < c.link1) shouldSwap = true;
                     } else if (c.link1 !== 0 && c.link2 === 0) {
-                        // Choice A is Hint-mode, Choice B is Pure Leaf. Prioritize Pure Leaf to Alt1.
                         shouldSwap = true;
                     }
                 } else if (rank1 === 2) {
-                    // Both are Resolved Links. Compare branch depths (Shorter branch first)
-                    const depth1 = depthCache.get(c.link1) || 0;
-                    const depth2 = depthCache.get(c.link2) || 0;
+                    // Both are continuing paths (Linked vs Unresolved vs Both)
+                    const depth1 = getEdgeDepth(c.taxa1, c.link1);
+                    const depth2 = getEdgeDepth(c.taxa2, c.link2);
 
+                    // Shorter branches (actual or inferred) go to Alt1
                     if (depth2 < depth1) {
                         shouldSwap = true;
                     } else if (depth2 === depth1) {
-                        if (c.link2 < c.link1) shouldSwap = true;
+                        // Depth ties. Prefer resolving actual linked paths first as convention.
+                        if (type1 !== type2) {
+                            if (type2 === 'linked') shouldSwap = true;
+                        } else if (type1 === 'linked') {
+                            if (c.link2 < c.link1) shouldSwap = true;
+                        }
                     }
                 } else if (rank1 === 3) {
-                    // Both are Unresolved choices. Sort by explicit structural numeric values.
-                    const num1 = parseInt(c.taxa1.trim(), 10) || 0;
-                    const num2 = parseInt(c.taxa2.trim(), 10) || 0;
-                    if (num2 < num1) shouldSwap = true;
-                } else if (rank1 === 4) {
                     // Both are completely broken paths
                     if (c.link2 < c.link1) shouldSwap = true;
                 }
@@ -641,7 +699,6 @@ export class KeyStore {
                 orderedCouplets.push(couplet);
 
                 // Push link2 first, then link1 onto the stack.
-                // This ensures link1 resides on top of the stack and gets evaluated next.
                 if (isValidLink(couplet.link2) && !visited.has(couplet.link2)) {
                     stack.push(couplet.link2);
                 }

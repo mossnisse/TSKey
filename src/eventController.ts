@@ -522,8 +522,9 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
 
                 if (selectedCount > 0) {
                     if (confirm(`Confirm cutting ${selectedCount} highlighted step(s) to clipboard?`)) {
-                        store.copySelectedCards();
-                        store.deleteSelected();
+                        // Change these two lines:
+                        store.cutSelectedCards();
+
                         showToast(`Cut ${selectedCount} step(s) to clipboard.`, 'success');
                         refreshAll();
                     }
