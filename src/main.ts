@@ -20,7 +20,6 @@ if (!appContainer) {
 // Initialize Core State Tree Engine
 const store = new KeyStore([]); 
 
-// Encapsulated Self-Hydration Pipeline Execution Pass
 // Spreads fallback data to keep the original immutable list un-mutated.
 store.loadFromStorage([...fallbackData]); 
 

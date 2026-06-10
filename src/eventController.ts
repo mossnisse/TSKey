@@ -26,6 +26,8 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     let typingTimeoutId: number | null = null;        // Holds the debounce timer reference
     let activeDropCard: HTMLElement | null = null;
     let activeDropClass: 'drag-drop-above' | 'drag-drop-below' | null = null;
+    let activeDropRect: DOMRect | null = null;        // Cached bounding metrics to prevent layout thrashing
+    let currentHoveredCard: HTMLElement | null = null;
 
     const controller = new AbortController();
     const { signal } = controller;
@@ -53,22 +55,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         store.toggleSelection(id, multiSelect);
         refreshAll();
     }, { signal });
-
-    // don't work, the browser probably don't dispatch any even to intercept
-    window.addEventListener('wheel', (e: WheelEvent) => {
-        if (isDragging) {
-            // Depending on your CSS layout, you might need to target '#editor-container' or '.app-shell' 
-            // instead of window if your app has an internal scrollable div.
-            window.scrollBy({
-                top: e.deltaY,
-                left: e.deltaX,
-                behavior: 'auto' // 'auto' ensures immediate response without smoothing lag during drag
-            });
-        }
-    }, {
-        passive: true,
-        signal: signal
-    });
 
     // CONSOLIDATED INPUT ROUTER (Handles Undo Debouncing + Link Validation)
     container.addEventListener('input', (e) => {
@@ -258,6 +244,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             activeDropCard.classList.remove('drag-drop-above', 'drag-drop-below');
             activeDropCard = null;
             activeDropClass = null;
+            activeDropRect = null; // Purge layout metric cache
         }
     };
 
@@ -310,62 +297,61 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         refreshAll();
     }, { signal });
 
-    const updateTargetTrackers = (clientY: number, targetElement: HTMLElement) => {
-        const cardEl = targetElement.closest('.key-card') as HTMLElement;
+    const updateTargetTrackers = (clientY: number, cardEl: HTMLElement) => {
+        const actualCard = cardEl.classList.contains('key-card') ? cardEl : cardEl.closest('.key-card') as HTMLElement;
 
-        if (!cardEl) {
+        if (!actualCard) {
             clearDropMarkers();
             return;
         }
 
-        const rect = cardEl.getBoundingClientRect();
-        const relativeMouseY = clientY - rect.top;
-        const currentClass = relativeMouseY < rect.height / 2 ? 'drag-drop-above' : 'drag-drop-below';
+        // Cache the bounding client rect ONLY when entering a new card context
+        if (activeDropCard !== actualCard || !activeDropRect) {
+            activeDropRect = actualCard.getBoundingClientRect();
+        }
 
-        // Only touch the DOM if the target card or position state actually changed!
-        if (activeDropCard !== cardEl || activeDropClass !== currentClass) {
-            clearDropMarkers(); // Clear the old one
-            cardEl.classList.add(currentClass);
-            activeDropCard = cardEl;
+        const relativeMouseY = clientY - activeDropRect.top;
+        const currentClass = relativeMouseY < activeDropRect.height / 2 ? 'drag-drop-above' : 'drag-drop-below';
+
+        // Only update the DOM if the target layout or position state actually altered
+        if (activeDropCard !== actualCard || activeDropClass !== currentClass) {
+            const rectToKeep = activeDropCard === actualCard ? activeDropRect : null;
+
+            clearDropMarkers(); // Safe cleanup
+
+            actualCard.classList.add(currentClass);
+            activeDropCard = actualCard;
             activeDropClass = currentClass;
+
+            // Preserve current metrics or safely compute for next state transitions
+            activeDropRect = rectToKeep || actualCard.getBoundingClientRect();
         }
     };
 
-    /*
-    // Mouse tracker for paste routing
-   container.addEventListener('mousemove', (e: MouseEvent) => {
-        // Only calculate paste routing drop-zones when NO mouse buttons are being pressed
-        if (e.buttons === 0) {
-            if (!store.hasClipboardData()) {
-                clearDropMarkers();
-                return;
-            }
-
-            const target = e.target as HTMLElement;
-            if (target.closest('.key-card')) {
-                updateTargetTrackers(e.clientY, target);
-            } else {
-                clearDropMarkers();
-            }
-        }
-    }, { signal }); */
-    
-    
+    // Cache the currently hovered card element to avoid expensive .closest() walks during mousemove
     container.addEventListener('mouseover', (e: MouseEvent) => {
-        if (!store.hasClipboardData() || e.buttons !== 0) return;
+        if (e.buttons !== 0 || !store.hasClipboardData()) return;
 
         const target = e.target as HTMLElement;
-        const cardEl = target.closest('.key-card') as HTMLElement;
-        if (!cardEl) {
-            clearDropMarkers();
-            return;
-        }
+        const card = target.closest('.key-card') as HTMLElement | null;
 
-        // Instead of querying bounding boxes on mousemove, calculate it once when entering the card area,
-        // or use a simple debounced check if relative tracking is vital.
+        if (card !== currentHoveredCard) {
+            currentHoveredCard = card;
+            if (!currentHoveredCard) {
+                clearDropMarkers();
+            }
+        }
+    }, { signal });
+
+    // Mouse tracker for paste routing (Now executes lightweight pure math at 144Hz+)
+    container.addEventListener('mousemove', (e: MouseEvent) => {
+        if (e.buttons === 0 && store.hasClipboardData() && currentHoveredCard) {
+            updateTargetTrackers(e.clientY, currentHoveredCard);
+        }
     }, { signal });
 
     container.addEventListener('mouseleave', () => {
+        currentHoveredCard = null;
         clearDropMarkers();
     }, { signal });
 

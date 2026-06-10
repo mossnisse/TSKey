@@ -11,18 +11,12 @@ const HTML_ESCAPE_MAP: Record<string, string> = {
 
 /**
  * Escapes volatile HTML control characters to block XSS vector injections.
- * Uses a single-pass regex matching sequence for optimal processing speed.
  */
 export function escapeHTML(str: string): string {
     if (!str) return '';
     return str.replace(/[&<>"']/g, (match) => HTML_ESCAPE_MAP[match]);
 }
 
-/**
- * Streams a raw payload string out of runtime memory and drops it straight 
- * into the client system filesystem as an explicit file download. Includes
- * automated fallbacks to bypass restrictive Content Security Policies (CSP).
- */
 export function triggerFileDownload(content: string, filename: string, mimeType: string): void {
     let url: string | null = null;
     let downloadAnchor: HTMLAnchorElement | null = null;
@@ -68,7 +62,6 @@ export function triggerFileDownload(content: string, filename: string, mimeType:
 
 /**
  * Sniffs client-side agent configurations to check if the target ecosystem
- * utilizes Apple standard human interface shortcuts (Meta/Command configurations).
  */
 export const IS_MAC: boolean = (() => {
     // Modern User-Agent Client Hints API (Chrome, Edge, Opera)
@@ -90,7 +83,7 @@ export const IS_MAC: boolean = (() => {
 
 /**
  * Explicit Type Guard asserting whether incoming structural payloads conform 
- * cleanly to the strict data contract properties required by a Couplet array.
+ * to the data properties required by a Couplet array.
  */
 export function isValidCoupletArray(data: any): data is Couplet[] {
     if (!Array.isArray(data)) return false;
@@ -120,8 +113,8 @@ export function isValidCoupletArray(data: any): data is Couplet[] {
 }
 
 /**
- * Generates an O(1) hash map connecting unique Couplet database record IDs 
- * directly to their current dynamic arrays positional sorting coordinates.
+ * Generates an O(1) hash map connecting unique Couplet record IDs 
+ * to their current dynamic arrays coordinates.
  */
 export function buildIdToIndexMap(key: readonly Couplet[]): Map<number, number> {
     const map = new Map<number, number>();

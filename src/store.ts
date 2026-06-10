@@ -139,7 +139,7 @@ export class KeyStore {
     public undo(): boolean {
         if (this.undoStack.length === 0) return false;
 
-        this.redoStack.push({ dichotomousKey: this.state.dichotomousKey });
+        this.redoStack.push({ dichotomousKey: [...this.state.dichotomousKey] });
 
         if (this.redoStack.length > this.maxHistoryLimit) {
             this.redoStack.shift();
@@ -157,7 +157,7 @@ export class KeyStore {
     public redo(): boolean {
         if (this.redoStack.length === 0) return false;
 
-        this.undoStack.push({ dichotomousKey: this.state.dichotomousKey });
+        this.undoStack.push({ dichotomousKey: [...this.state.dichotomousKey] });
 
         if (this.undoStack.length > this.maxHistoryLimit) {
             this.undoStack.shift();
@@ -261,19 +261,29 @@ export class KeyStore {
     // MUTATORS (State modifiers with history tracking)
     // ==========================================
 
-    /** Explicitly commits a history point. Useful after text editing finishes (blur). */
     public commitHistoryCheckpoint() {
         if (!this.hasUncommittedChanges) return;
-        this.saveCheckpoint();
+        this.hasUncommittedChanges = false;
     }
 
     public updateCouplet(id: number, fields: Partial<Omit<Couplet, 'id'>>) {
-        this.state.dichotomousKey = this.state.dichotomousKey.map(c => {
-            if (c.id === id) {
-                return { ...c, ...fields };
-            }
-            return c;
-        });
+        if (!this.hasUncommittedChanges) {
+            this.saveCheckpoint();
+        }
+
+        const index = this.state.dichotomousKey.findIndex(c => c.id === id);
+        if (index === -1) return;
+
+        const updatedCouplet = { ...this.state.dichotomousKey[index], ...fields };
+
+        if (this.hasUncommittedChanges) {
+            this.state.dichotomousKey[index] = updatedCouplet;
+        } else {
+            const newKey = [...this.state.dichotomousKey];
+            newKey[index] = updatedCouplet;
+            this.state.dichotomousKey = newKey;
+        }
+
         this.hasUncommittedChanges = true;
     }
 
@@ -500,10 +510,6 @@ export class KeyStore {
 
         if (modified) {
             this.hasUncommittedChanges = true;
-            // Trigger internal graph diagnostics validation if available
-            if (typeof (this as any).validateKey === 'function') {
-                (this as any).validateKey();
-            }
             return true;
         }
 
@@ -757,9 +763,9 @@ export class KeyStore {
             // Save state snapshot for structural Undo/Redo tracking before updating
             this.saveCheckpoint();
 
-            // Hydrate state safe in the knowledge schema runtime structure matches expectations
             this.state.dichotomousKey = targetKeyData;
             this.clearSelection();
+            this.activeEditingCardId = null;
             this.hasUncommittedChanges = true;
 
             return {

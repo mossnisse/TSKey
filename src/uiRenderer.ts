@@ -181,13 +181,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
         <div class="modal-body">
           <div class="settings-group">
             <h4>System Memory Rules</h4>
-            <label class="setting-item">
-              <input type="checkbox" id="setting-autosave" checked />
-              <span>Enable Browser LocalStorage Sync Engine</span>
-            </label>
-            <p style="font-size: 12px; color: var(--color-text-muted); margin-left: 24px; margin-top: 4px;">
-              Forces state configurations to continuously synchronize natively.
-            </p>
+            <h4>View</h4>
           </div>
         </div>
       </div>
@@ -448,7 +442,6 @@ export function renderPrintView(store: KeyStore) {
 
     key.forEach((c, index) => {
         const currentDisplayNum = index + 1;
-        // -- FIX: Ensure print layout matches editor view broken-link detection contracts --
         const idx1 = c.link1 ? idToIndexMap.get(c.link1) : undefined;
         const idx2 = c.link2 ? idToIndexMap.get(c.link2) : undefined;
 
@@ -502,7 +495,9 @@ export function renderPrintView(store: KeyStore) {
                 }
             }
 
-            container.appendChild(block);
+            if (container.children[index] !== block) {
+                container.insertBefore(block, container.children[index] || null);
+            }
         } else {
             block = document.createElement('div');
             block.className = 'print-step-block';
@@ -566,7 +561,6 @@ export function showToast(message: string, type: 'success' | 'error' = 'success'
 
         // 'aria-live="polite"' acts as a safe catch-all wrapper context
         container.setAttribute('aria-live', 'polite');
-        container.setAttribute('aria-atomic', 'true');
 
         document.body.appendChild(container);
     }
