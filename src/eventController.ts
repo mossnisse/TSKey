@@ -12,6 +12,21 @@ const DEBOUNCE_TYPING_MS = 800;
 const AUTO_SCROLL_THRESHOLD_PX = 80;
 const AUTO_SCROLL_SPEED_PX = 15;
 
+let refreshScheduled = false;
+
+/**
+ * Wraps a synchronous render call in a performance-friendly animation frame.
+ */
+function batchedRefresh(refreshFn: () => void) {
+    if (refreshScheduled) return;
+    refreshScheduled = true;
+
+    requestAnimationFrame(() => {
+        refreshFn();
+        refreshScheduled = false;
+    });
+}
+
 /**
  * Centralized Delegated Events Router Engine.
  * Wires behavioral controls directly onto DOM structural layouts.
@@ -27,6 +42,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     let activeDropClass: 'drag-drop-above' | 'drag-drop-below' | null = null;
     let activeDropRect: DOMRect | null = null;        // Cached bounding metrics to prevent layout thrashing
 
+
     const controller = new AbortController();
     const { signal } = controller;
 
@@ -36,7 +52,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         // If the user clicked the editor background layout area itself, drop focus
         if (target.id === 'editor-container' || target.classList.contains('editor-workspace')) {
             store.clearSelection();
-            refreshAll();
+            batchedRefresh(refreshAll);
             return;
         }
 
@@ -51,7 +67,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         const multiSelect = e.ctrlKey || e.metaKey || e.shiftKey;
 
         store.toggleSelection(id, multiSelect);
-        refreshAll();
+        batchedRefresh(refreshAll);
     }, { signal });
 
     // CONSOLIDATED INPUT ROUTER (Handles Undo Debouncing + Link Validation)
@@ -83,7 +99,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         typingTimeoutId = window.setTimeout(() => {
             typingSessionActive = false;
             typingTimeoutId = null;
-            refreshAll(); // Safely reconciles dynamic card errors/badges while retaining cursor focus
+            batchedRefresh(refreshAll);
         }, DEBOUNCE_TYPING_MS);
 
         let updatePayload: Partial<Omit<Couplet, 'id'>> = {};
@@ -191,7 +207,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
                 // Defer layout updates only if the user isn't interacting with app controls
                 if (!isClickingControl) {
-                    setTimeout(refreshAll, 0);
+                    batchedRefresh(refreshAll);
                 }
             }
         }
@@ -233,7 +249,9 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         const id = Number(card.getAttribute('data-id'));
         store.startDragging(id);
         card.classList.remove('is-hovered', 'is-active');
-        card.style.opacity = '0.4';
+        requestAnimationFrame(() => {
+            card.style.opacity = '0.4';
+        });
     }, { signal });
 
     const clearDropMarkers = () => {
@@ -289,7 +307,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         const position: 'above' | 'below' = card.classList.contains('drag-drop-above') ? 'above' : 'below';
 
         store.reorderCouplets(store.draggedId, coupletId, position);
-        refreshAll();
+        batchedRefresh(refreshAll);
     }, { signal });
 
     const updateTargetTrackers = (clientY: number, cardEl: HTMLElement) => {
@@ -334,8 +352,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             // Simple, clean state instruction
             store.saveToStorage();
             showToast("💾 Changes saved to Browser Local Storage!", "success");
-            refreshAll();
-
+            batchedRefresh(refreshAll);
         } catch (error: any) {
             console.error("Save Operation Failed: ", error);
             let userMessage = "Failed to save data. An unknown error occurred.";
@@ -373,7 +390,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             }
 
             showToast("Key configuration data imported successfully!", "success");
-            refreshAll();
+            batchedRefresh(refreshAll);
         } catch (err) {
             alert("Malformed JSON structure: Unable to parse file stream.");
         } finally {
@@ -387,11 +404,11 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
     // --- EDIT MENU ACTION BINDINGS ---
     document.querySelector('#cmd-undo')?.addEventListener('click', () => {
-        if (store.undo()) refreshAll();
+        if (store.undo()) batchedRefresh(refreshAll);
     }, { signal });
 
     document.querySelector('#cmd-redo')?.addEventListener('click', () => {
-        if (store.redo()) refreshAll();
+        if (store.redo()) batchedRefresh(refreshAll);
     }, { signal });
 
     document.querySelector('#cmd-cut')?.addEventListener('click', () => {
@@ -400,7 +417,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             if (confirm(`Confirm cutting ${selectedCount} highlighted step(s) to clipboard?`)) {
                 store.cutSelectedCards();
                 showToast(`Cut ${selectedCount} step(s) to clipboard.`, 'success');
-                refreshAll();
+                batchedRefresh(refreshAll);
             }
         }
     }, { signal });
@@ -410,7 +427,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         if (selectedCount > 0) {
             store.copySelectedCards();
             showToast(`Copied ${selectedCount} step(s) to clipboard.`, 'success');
-            refreshAll();
+            batchedRefresh(refreshAll);
         }
     }, { signal });
 
@@ -428,7 +445,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             if (confirm("Confirm removing highlighted key steps?")) {
                 store.deleteSelected();
                 showToast(`Deleted ${selectedCount} step(s).`, 'success');
-                refreshAll();
+                batchedRefresh(refreshAll);
             }
         }
     }, { signal });
@@ -437,7 +454,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         if (store.getSelectedIds().size > 0) {
             if (store.swapSelectedCouplets()) {
                 showToast("Swapped choice configurations.", "success");
-                refreshAll();
+                batchedRefresh(refreshAll);
             }
         }
     }, { signal });
@@ -449,14 +466,14 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
     document.querySelector('#cmd-clear')?.addEventListener('click', () => {
         store.clearSelection();
-        refreshAll();
+        batchedRefresh(refreshAll);
     }, { signal });
 
     // --- TOOLS MENU ACTION BINDINGS ---
     document.querySelector('#cmd-reorder')?.addEventListener('click', () => {
         store.autoOrder();
         showToast("Key steps reordered with shorter branches first!", "success");
-        refreshAll();
+        batchedRefresh(refreshAll);
     }, { signal });
 
     return () => {
@@ -496,7 +513,7 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
             if (hasModifier && e.key.toLowerCase() === 'a') {
                 e.preventDefault();
                 store.selectAll();
-                refreshAll();
+                batchedRefresh(refreshAll);
                 return;
             }
 
@@ -599,9 +616,9 @@ function executePaste(store: KeyStore, refreshAll: () => void, position: 'above'
             : selectedArray[0];
     } else if (key.length > 0) {
         // Fallback: If nothing is selected, target the absolute boundaries of the list
-        targetId = position === 'above' 
-            ? key[0].id                 
-            : key[key.length - 1].id; 
+        targetId = position === 'above'
+            ? key[0].id
+            : key[key.length - 1].id;
     }
 
     // If the key is completely empty (key.length === 0), targetId remains undefined,
@@ -613,6 +630,6 @@ function executePaste(store: KeyStore, refreshAll: () => void, position: 'above'
             : (position === 'above' ? 'at the beginning' : 'at the end');
 
         showToast(`Pasted steps ${locationText}.`, "success");
-        refreshAll();
+        batchedRefresh(refreshAll);
     }
 }

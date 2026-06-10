@@ -164,7 +164,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
               <tr><td>Cut Selected Step Cards</td><td><code>${IS_MAC ? '⌘ + X' : 'Ctrl + X'}</code></td></tr>
               <tr><td>Copy Selected Step Cards</td><td><code>${IS_MAC ? '⌘ + C' : 'Ctrl + C'}</code></td></tr>
               <tr><td>Paste Step Cards Below selected steps</td><td><code>${IS_MAC ? '⌘ + V' : 'Ctrl + V'}</code></td></tr>
-              <tr><td>Paste Step Cards Above selected steps</td><td><code>${IS_MAC ? '⌘ + V' : 'Shift + Ctrl + V'}</code></td></tr>
+              <tr><td>Paste Step Cards Above selected steps</td><td><code>${IS_MAC ? 'Shift + ⌘ + V' : 'Shift + Ctrl + V'}</code></td></tr>
               <tr><td>Append New Step Card</td><td><code>Alt + N</code></td></tr>
               <tr><td>Swap Alternative Rows in selected steps</td><td><code>Alt + S</code></td></tr>
               <tr><td>Undo Last Action</td><td><code>${IS_MAC ? '⌘ + Z' : 'Ctrl + Z'}</code></td></tr>
