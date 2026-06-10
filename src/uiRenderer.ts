@@ -78,9 +78,13 @@ export function initializeShell(appDiv: HTMLDivElement) {
               <span>📋 Copy Selected Cards</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘C' : 'Ctrl+C'}</span>
             </button>
-            <button id="cmd-paste" class="dropdown-action">
-              <span>📥 Paste Clipboard Contents</span>
+            <button id="cmd-paste-below" class="dropdown-action">
+              <span>📥 Paste steps below selection</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘V' : 'Ctrl+V'}</span>
+            </button>
+            <button id="cmd-paste-above" class="dropdown-action">
+              <span>📥 Paste above selections</span>
+              <span class="menu-shortcut">${IS_MAC ? '⌘V' : 'Shift+Ctrl+V'}</span>
             </button>
             <button id="cmd-delete" class="dropdown-action">
               <span>🗑️ Delete Selected Cards</span>

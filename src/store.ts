@@ -118,9 +118,6 @@ export class KeyStore {
     // ==========================================
 
     private saveCheckpoint() {
-        // If we were sitting on an undone branch and make a new change, 
-        // the old redo timeline branch is discarded. 
-        // If the saved point was on that discarded branch, invalidate it.
         if (this.redoStack.length > 0 && this.savedHistoryIndex > this.currentHistoryIndex) {
             this.savedHistoryIndex = -1;
         }
@@ -148,7 +145,6 @@ export class KeyStore {
         const nextState = this.undoStack.pop();
         if (nextState) this.state = nextState;
 
-        // Decrement down the absolute timeline
         this.currentHistoryIndex--;
         this.hasUncommittedChanges = false;
         return true;
@@ -202,8 +198,8 @@ export class KeyStore {
     // ==========================================
 
     /**
-     * Computes a highly optimized inverted lookup map of all inbound links 
-     * across the entire key sequence in a single O(N) execution pass.
+     * Computes inverted lookup map of all inbound links 
+     * across the entire key.
      */
     public generateInboundLinksMap(): Map<number, string[]> {
         const map = new Map<number, string[]>();
@@ -236,11 +232,9 @@ export class KeyStore {
 
         const lookupMap = idMap || new Map<number, Couplet>(key.map(c => [c.id, c]));
 
-        // PIvOT TO STACK: Functions identically for building a set of reachable nodes
         const stack: number[] = [key[0].id];
 
         while (stack.length > 0) {
-            // O(1) constant time extraction!
             const activeId = stack.pop()!;
 
             if (!reachable.has(activeId)) {
@@ -248,7 +242,6 @@ export class KeyStore {
 
                 const match = lookupMap.get(activeId);
                 if (match) {
-                    // Order of links doesn't matter for gathering reachability sets
                     if (match.link2) stack.push(match.link2);
                     if (match.link1) stack.push(match.link1);
                 }
@@ -482,9 +475,8 @@ export class KeyStore {
     }
 
     /**
-         * Swaps alternative choices, target links, and taxa fields for all selected cards.
-         * Automatically saves a history checkpoint for undo support.
-         */
+    * Swaps alternative choices, target links, and taxa fields for all selected cards.
+    */
     public swapSelectedCouplets(): boolean {
         if (this.selectedIds.size === 0) return false;
 
@@ -517,25 +509,19 @@ export class KeyStore {
     }
 
     public reorderCouplets(srcId: number, targetId: number, position: 'above' | 'below' = 'above'): boolean {
-        // Locate the item indices safely
         const arr = [...this.state.dichotomousKey];
         const srcIdx = arr.findIndex(c => c.id === srcId);
         const targetIdx = arr.findIndex(c => c.id === targetId);
 
-        // Defensive Guard: If either ID vanished, abort immediately 
         if (srcIdx === -1 || targetIdx === -1) {
             console.warn(`Aborted reordering: srcIdx (${srcIdx}) or targetIdx (${targetIdx}) was invalid.`);
             return false;
         }
 
-        // Commit history state before mutating data
         this.saveCheckpoint();
 
-        // Remove the dragged item from its current sequence location
         const [movedItem] = arr.splice(srcIdx, 1);
 
-        // Locate the target item's *new* index location after the array collapse
-        // This removes index-shifting math errors entirely
         let insertIdx = arr.findIndex(c => c.id === targetId);
 
         // Adjust the insertion pointer if appending below the card target
@@ -554,7 +540,6 @@ export class KeyStore {
     public autoOrder() {
         if (this.state.dichotomousKey.length === 0) return;
 
-        // Commit history state SAFELY before transforming data
         this.saveCheckpoint();
 
         // Build an efficient lookup map of the current state
@@ -584,7 +569,7 @@ export class KeyStore {
         const depthCache = new Map<number, number>();
         const dynamicVisited = new Set<number>();
 
-        // NEW: Function to infer depth natively from strings if unresolved
+        // infer depth natively from strings if unresolved
         const getEdgeDepth = (taxaStr: string, linkId: number): number => {
             const type = classifyBranch(taxaStr, linkId);
             if (type === 'terminal') return 0;

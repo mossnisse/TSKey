@@ -27,7 +27,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     let activeDropCard: HTMLElement | null = null;
     let activeDropClass: 'drag-drop-above' | 'drag-drop-below' | null = null;
     let activeDropRect: DOMRect | null = null;        // Cached bounding metrics to prevent layout thrashing
-    let currentHoveredCard: HTMLElement | null = null;
 
     const controller = new AbortController();
     const { signal } = controller;
@@ -328,32 +327,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         }
     };
 
-    // Cache the currently hovered card element to avoid expensive .closest() walks during mousemove
-    container.addEventListener('mouseover', (e: MouseEvent) => {
-        if (e.buttons !== 0 || !store.hasClipboardData()) return;
-
-        const target = e.target as HTMLElement;
-        const card = target.closest('.key-card') as HTMLElement | null;
-
-        if (card !== currentHoveredCard) {
-            currentHoveredCard = card;
-            if (!currentHoveredCard) {
-                clearDropMarkers();
-            }
-        }
-    }, { signal });
-
-    // Mouse tracker for paste routing (Now executes lightweight pure math at 144Hz+)
-    container.addEventListener('mousemove', (e: MouseEvent) => {
-        if (e.buttons === 0 && store.hasClipboardData() && currentHoveredCard) {
-            updateTargetTrackers(e.clientY, currentHoveredCard);
-        }
-    }, { signal });
-
-    container.addEventListener('mouseleave', () => {
-        currentHoveredCard = null;
-        clearDropMarkers();
-    }, { signal });
 
     // ==========================================
     // MENU BAR ACTION DISPATCHERS
@@ -445,25 +418,12 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         }
     }, { signal });
 
-    document.querySelector('#cmd-paste')?.addEventListener('click', () => {
-        let targetId: number | undefined = undefined;
-        let position: 'above' | 'below' = 'below';
+    document.querySelector('#cmd-paste-above')?.addEventListener('click', () => {
+        executePaste(store, refreshAll, 'above');
+    }, { signal });
 
-        const hoverMarker = document.querySelector('.drag-drop-above, .drag-drop-below') as HTMLElement;
-        const hoverCard = hoverMarker?.closest('.key-card') as HTMLElement;
-
-        if (hoverCard) {
-            targetId = Number(hoverCard.getAttribute('data-id'));
-            position = hoverMarker.classList.contains('drag-drop-above') ? 'above' : 'below';
-        } else {
-            const selectedArray = Array.from(store.getSelectedIds());
-            targetId = selectedArray.length > 0 ? selectedArray[selectedArray.length - 1] : undefined;
-        }
-
-        if (store.pasteCards(targetId, position)) {
-            showToast("Pasted steps from clipboard.", "success");
-            refreshAll();
-        }
+    document.querySelector('#cmd-paste-below')?.addEventListener('click', () => {
+        executePaste(store, refreshAll, 'below');
     }, { signal });
 
     document.querySelector('#cmd-delete')?.addEventListener('click', () => {
@@ -601,7 +561,9 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
 
             if (hasModifier && e.key.toLowerCase() === 'v') {
                 e.preventDefault();
-                document.querySelector<HTMLButtonElement>('#cmd-paste')?.click();
+                // e.shiftKey determines the direction natively
+                const position = e.shiftKey ? 'above' : 'below';
+                executePaste(store, refreshAll, position);
                 return;
             }
         }
@@ -627,4 +589,25 @@ function createNewCoupletWithFocus(store: KeyStore, refreshAll: () => void) {
     if (textarea) {
         textarea.focus();
     }
-} 
+}
+
+function executePaste(store: KeyStore, refreshAll: () => void, position: 'above' | 'below') {
+    let targetId: number | undefined = undefined;
+    const selectedArray = Array.from(store.getSelectedIds());
+
+    if (selectedArray.length > 0) {
+        // Smart Targeting: 
+        // If pasting 'below', anchor to the LAST selected item so it goes at the end of the block.
+        // If pasting 'above', anchor to the FIRST selected item so it pushes the block down.
+        targetId = position === 'below'
+            ? selectedArray[selectedArray.length - 1]
+            : selectedArray[0];
+    }
+
+    // store.pasteCards(undefined, 'below') should be handled by your store logic 
+    // to append to the very end of the key.
+    if (store.pasteCards(targetId, position)) {
+        showToast(`Pasted steps ${targetId ? position + ' selection' : 'at the end'}.`, "success");
+        refreshAll();
+    }
+}
