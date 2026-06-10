@@ -20,7 +20,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     const container = document.querySelector('#editor-container') as HTMLElement;
     if (!container) return;
 
-    let isDragging = false;
     let typingSessionActive = false;
     let currentEditingFieldKey: string | null = null; // Tracks exactly which card + field is active
     let typingTimeoutId: number | null = null;        // Holds the debounce timer reference
@@ -227,7 +226,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
     // Centralized HTML5 Drag-and-Drop Operations
     container.addEventListener('dragstart', (e) => {
-        isDragging = true;
         const target = e.target as HTMLElement;
         const card = target.closest('.key-card') as HTMLElement;
         if (!card) return;
@@ -248,7 +246,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     };
 
     container.addEventListener('dragend', (e) => {
-        isDragging = false;
         const target = e.target as HTMLElement;
         const card = target.closest('.key-card') as HTMLElement;
         if (!card) return;
@@ -281,7 +278,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     }, { signal });
 
     container.addEventListener('drop', (e) => {
-        isDragging = false;
         e.preventDefault();
         const target = e.target as HTMLElement;
         const card = target.closest('.key-card') as HTMLElement;
@@ -594,20 +590,29 @@ function createNewCoupletWithFocus(store: KeyStore, refreshAll: () => void) {
 function executePaste(store: KeyStore, refreshAll: () => void, position: 'above' | 'below') {
     let targetId: number | undefined = undefined;
     const selectedArray = Array.from(store.getSelectedIds());
+    const key = store.getKey();
 
     if (selectedArray.length > 0) {
-        // Smart Targeting: 
-        // If pasting 'below', anchor to the LAST selected item so it goes at the end of the block.
-        // If pasting 'above', anchor to the FIRST selected item so it pushes the block down.
+        // If cards are selected, anchor to the boundaries of the selection block
         targetId = position === 'below'
             ? selectedArray[selectedArray.length - 1]
             : selectedArray[0];
+    } else if (key.length > 0) {
+        // Fallback: If nothing is selected, target the absolute boundaries of the list
+        targetId = position === 'above' 
+            ? key[0].id                 
+            : key[key.length - 1].id; 
     }
 
-    // store.pasteCards(undefined, 'below') should be handled by your store logic 
-    // to append to the very end of the key.
+    // If the key is completely empty (key.length === 0), targetId remains undefined,
+    // which allows the store to initialize the first cards normally.
     if (store.pasteCards(targetId, position)) {
-        showToast(`Pasted steps ${targetId ? position + ' selection' : 'at the end'}.`, "success");
+        // Dynamically tailor the feedback toast so the user knows exactly where it landed
+        const locationText = selectedArray.length > 0
+            ? `${position} selection`
+            : (position === 'above' ? 'at the beginning' : 'at the end');
+
+        showToast(`Pasted steps ${locationText}.`, "success");
         refreshAll();
     }
 }

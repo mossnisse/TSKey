@@ -428,6 +428,10 @@ export class KeyStore {
 
         this.saveCheckpoint();
 
+        if (this.activeEditingCardId !== null && selectedIds.has(this.activeEditingCardId)) {
+            this.activeEditingCardId = null;
+        }
+
         // Copy selected items to the buffer
         this.clipboardBuffer = this.state.dichotomousKey
             .filter(c => selectedIds.has(c.id))
@@ -462,6 +466,11 @@ export class KeyStore {
         this.saveCheckpoint();
 
         const removedIds = this.selectedIds;
+
+        if (this.activeEditingCardId !== null && removedIds.has(this.activeEditingCardId)) {
+            this.activeEditingCardId = null;
+        }
+
         this.state.dichotomousKey = this.state.dichotomousKey
             .filter(c => !removedIds.has(c.id))
             .map(c => ({

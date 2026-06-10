@@ -82,33 +82,53 @@
 }
 
 /* ==========================================
-   STICKY APPLICATION TOOLBAR
+   INITIAL HIDDEN STATES (ID Specificity Match)
    ========================================== */
-   /*
-.sticky-toolbar {
-    position: sticky;
-    top: 0;
-    z-index: 100;
-    background: var(--color-bg);
-    padding: 14px 0;
-    margin-bottom: 24px;
-    border-bottom: 1px solid var(--color-border-light);
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 16px;
+
+/* Target the IDs directly to override any existing stylesheet layout rules on startup */
+#file-import-hidden,
+#modal-shortcuts,
+#modal-options,
+#modal-about {
+    display: none;
+}
+/* ==========================================
+   ABOUT MODAL SPECIFIC STYLES
+   ========================================== */
+.about-modal-window {
+    max-width: 400px;
 }
 
-.toolbar-divider {
-    border-left: 1px solid var(--color-border-light);
-    height: 20px;
-    margin: 0 5px;
+.about-modal-body {
+    text-align: center;
+    padding: 20px 10px;
 }
 
-.toolbar-spacer {
-    flex-grow: 1;
-}*/
+.about-title {
+    font-size: 18px;
+    margin-bottom: 4px;
+}
+
+.about-version {
+    color: var(--color-text-muted);
+    font-size: 13px;
+    margin-bottom: 16px;
+}
+
+.about-description {
+    font-size: 13px;
+    line-height: 1.5;
+    margin-bottom: 16px;
+}
+
+.about-divider {
+    margin: 16px 0;
+}
+
+.about-credits {
+    font-size: 11px;
+    color: var(--color-text-muted);
+}
 
 /* ==========================================
    MENU

@@ -47,13 +47,13 @@ export function initializeShell(appDiv: HTMLDivElement) {
             </button>
             <div class="menu-divider"></div>
             <button id="cmd-export-text" class="dropdown-action">
-              <span>📄 Export Publication Plain Text (.txt)</span>
+              <span>📄 Export to Plain Text file(.txt)</span>
             </button>
             <button id="cmd-export-html" class="dropdown-action">
-              <span>🌐 Export Publication Web Page (.html)</span>
+              <span>🌐 Export to a Web Page (.html)</span>
             </button>
             <button id="cmd-export-latex" class="dropdown-action">
-              <span>🔏 Export LaTeX Document (.tex)</span>
+              <span>🔏 Export to an LaTeX Document (.tex)</span>
             </button>
           </div>
         </div>
@@ -91,11 +91,11 @@ export function initializeShell(appDiv: HTMLDivElement) {
               <span class="menu-shortcut">Delete</span>
             </button>
             <button id="cmd-swap" class="dropdown-action">
-              <span>🔄 Swap Alternatives</span>
+              <span>🔄 Swap place for Alternatives</span>
               <span class="menu-shortcut">${IS_MAC ? 'Option+S' : 'Alt+S'}</span>
             </button>
             <button id="cmd-add" class="dropdown-action">
-              <span>➕ Append New Step Card</span>
+              <span>➕ Append New Step</span>
               <span class="menu-shortcut">Alt+N</span>
             </button>
             <button id="cmd-clear" class="dropdown-action">
@@ -130,7 +130,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
           </div>
         </div>
 
-        <input type="file" id="file-import-hidden" accept=".json" style="display: none;" />
+        <input type="file" id="file-import-hidden" accept=".json" />
       </div>
     
       <div class="main-layout">
@@ -148,10 +148,10 @@ export function initializeShell(appDiv: HTMLDivElement) {
       </div>
     </div>
 
-    <div id="modal-shortcuts" class="modal-overlay" style="display: none;">
+    <div id="modal-shortcuts" class="modal-overlay">
       <div class="modal-window">
         <div class="modal-header">
-          <h3>⌨️ Keyboard Shortcuts Reference</h3>
+          <h3>⌨️ Keyboard Shortcuts</h3>
           <button id="modal-shortcuts-close" class="modal-close-x">&times;</button>
         </div>
         <div class="modal-body">
@@ -163,9 +163,10 @@ export function initializeShell(appDiv: HTMLDivElement) {
               <tr><td>Select All Step Cards</td><td><code>${IS_MAC ? '⌘ + A' : 'Ctrl + A'}</code></td></tr>
               <tr><td>Cut Selected Step Cards</td><td><code>${IS_MAC ? '⌘ + X' : 'Ctrl + X'}</code></td></tr>
               <tr><td>Copy Selected Step Cards</td><td><code>${IS_MAC ? '⌘ + C' : 'Ctrl + C'}</code></td></tr>
-              <tr><td>Paste Step Cards Below</td><td><code>${IS_MAC ? '⌘ + V' : 'Ctrl + V'}</code></td></tr>
+              <tr><td>Paste Step Cards Below selected steps</td><td><code>${IS_MAC ? '⌘ + V' : 'Ctrl + V'}</code></td></tr>
+              <tr><td>Paste Step Cards Above selected steps</td><td><code>${IS_MAC ? '⌘ + V' : 'Shift + Ctrl + V'}</code></td></tr>
               <tr><td>Append New Step Card</td><td><code>Alt + N</code></td></tr>
-              <tr><td>Swap Alternative Rows</td><td><code>Alt + S</code></td></tr>
+              <tr><td>Swap Alternative Rows in selected steps</td><td><code>Alt + S</code></td></tr>
               <tr><td>Undo Last Action</td><td><code>${IS_MAC ? '⌘ + Z' : 'Ctrl + Z'}</code></td></tr>
               <tr><td>Redo Action</td><td><code>${IS_MAC ? '⌘ + Y' : 'Ctrl + Y'}</code></td></tr>
               <tr><td>Delete Selected step cards</td><td><code>Delete</code> / <code>Backspace</code></td></tr>
@@ -176,7 +177,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
       </div>
     </div>
 
-    <div id="modal-options" class="modal-overlay" style="display: none;">
+    <div id="modal-options" class="modal-overlay">
       <div class="modal-window">
         <div class="modal-header">
           <h3>🔧 Options & Settings</h3>
@@ -191,22 +192,22 @@ export function initializeShell(appDiv: HTMLDivElement) {
       </div>
     </div>
 
-    <div id="modal-about" class="modal-overlay" style="display: none;">
-      <div class="modal-window" style="max-width: 400px;">
+    <div id="modal-about" class="modal-overlay">
+      <div class="modal-window about-modal-window">
         <div class="modal-header">
-          <h3>ℹ️ About Application</h3>
+          <h3>ℹ️ About</h3>
           <button id="modal-about-close" class="modal-close-x">&times;</button>
         </div>
-        <div class="modal-body" style="text-align: center; padding: 20px 10px;">
-          <h4 style="font-size: 18px; margin-bottom: 4px;">${APP_NAME}</h4>
-          <p style="color: var(--color-text-muted); font-size: 13px; margin-bottom: 16px;">
+        <div class="modal-body about-modal-body">
+          <h4 class="about-title">${APP_NAME}</h4>
+          <p class="about-version">
             Version ${APP_VERSION} (2026 Engine Core)
           </p>
-          <p style="font-size: 13px; line-height: 1.5; margin-bottom: 16px;">
+          <p class="about-description">
             An interactive editor for writing classical biological dichotomous keys used to identify biological taxonomic units on morphological characters.
           </p>
-          <div class="menu-divider" style="margin: 16px 0;"></div>
-          <p style="font-size: 11px; color: var(--color-text-muted);">
+          <div class="menu-divider about-divider"></div>
+          <p class="about-credits">
             Written by Nils Ericson 2026<br>Released under the zlib license
           </p>
         </div>
@@ -242,7 +243,8 @@ export function renderMenu(store: KeyStore) {
     // Selection/Card Specific Operations
     const cutBtn = document.querySelector('#cmd-cut') as HTMLButtonElement | null;
     const copyBtn = document.querySelector('#cmd-copy') as HTMLButtonElement | null;
-    const pasteBtn = document.querySelector('#cmd-paste') as HTMLButtonElement | null;
+    const pasteBtnBelow = document.querySelector('#cmd-paste-below') as HTMLButtonElement | null;
+    const pasteBtnAbove = document.querySelector('#cmd-paste-above') as HTMLButtonElement | null;
     const deleteBtn = document.querySelector('#cmd-delete') as HTMLButtonElement | null;
     const swapBtn = document.querySelector('#cmd-swap') as HTMLButtonElement | null;
     const clearBtn = document.querySelector('#cmd-clear') as HTMLButtonElement | null;
@@ -271,7 +273,6 @@ export function renderMenu(store: KeyStore) {
     if (copyBtn) copyBtn.disabled = !hasSelection;
     if (deleteBtn) {
         deleteBtn.disabled = !hasSelection;
-        deleteBtn.innerHTML = `<span>🗑️ Delete Selected Cards</span><span class="menu-shortcut">Delete</span>`;
     }
     if (swapBtn) {
         swapBtn.disabled = !hasSelection;
@@ -281,7 +282,8 @@ export function renderMenu(store: KeyStore) {
     }
 
     // Paste is unblocked only if memory buffer houses matching structural configurations
-    if (pasteBtn) pasteBtn.disabled = !hasClipboard;
+    if (pasteBtnBelow) pasteBtnBelow.disabled = !hasClipboard;
+    if (pasteBtnAbove) pasteBtnAbove.disabled = !hasClipboard;
 
     // Algorithmic optimization tool mapping rules
     if (reorderBtn) reorderBtn.disabled = !hasKeyElements;
