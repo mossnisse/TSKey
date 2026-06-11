@@ -1,6 +1,6 @@
 // uiRenderer.ts
 import { KeyStore, APP_NAME, APP_VERSION } from './store.ts';
-import { escapeHTML, buildIdToIndexMap, isUnresolvedLink, IS_MAC } from './utils.ts';
+import { escapeHTML, buildIdToIndexMap, resolveDestination, IS_MAC } from './utils.ts';
 
 // ==========================================
 // CORE LAYOUT HELPERS
@@ -101,7 +101,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
               <span class="menu-shortcut">Esc</span>
             </button>
             <button id="cmd-select-all" class="dropdown-action">
-              <span>☑️ Sellect all steps</span>
+              <span>☑️ Select all steps</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘A' : 'Ctrl+A'}</span>
             </button>
           </div>
@@ -301,36 +301,19 @@ export function renderEditorCards(store: KeyStore) {
 
     const existingCards = Array.from(container.querySelectorAll('.key-card')) as HTMLElement[];
     const existingMap = new Map<number, HTMLElement>();
+    
     existingCards.forEach(card => {
-        const id = Number(card.getAttribute('data-id'));
-        existingMap.set(id, card);
+        const idAttr = card.getAttribute('data-id');
+        if (idAttr) existingMap.set(Number(idAttr), card);
     });
 
     key.forEach((couplet, index) => {
         const displayNum = index + 1;
         const isSelected = selectedIds.has(couplet.id);
-
         const inboundLinks = inboundLinksMap.get(couplet.id) || [];
-        // Account for broken links where an internal ID exists but the target step was deleted
-        const idx1 = couplet.link1 ? idToIndexMap.get(couplet.link1) : undefined;
-        const idx2 = couplet.link2 ? idToIndexMap.get(couplet.link2) : undefined;
-
-        // If link exists but index doesn't, show the taxa string or fallback to '?' so it doesn't clear the DOM field
-        const dest1Val = couplet.link1
-            ? (idx1 !== undefined ? (idx1 + 1).toString() : (couplet.taxa1 || '?'))
-            : couplet.taxa1;
-
-        const dest2Val = couplet.link2
-            ? (idx2 !== undefined ? (idx2 + 1).toString() : (couplet.taxa2 || '?'))
-            : couplet.taxa2;
-
-        // Mark broken link pointers OR raw unresolved numeric strings as input errors
-        const isUnresolved1 = isUnresolvedLink(couplet.link1, couplet.taxa1, idToIndexMap);
-        const isUnresolved2 = isUnresolvedLink(couplet.link2, couplet.taxa2, idToIndexMap);
-
+        const dest1 = resolveDestination(couplet.link1, couplet.taxa1, idToIndexMap);
+        const dest2 = resolveDestination(couplet.link2, couplet.taxa2, idToIndexMap);
         const cardErrors = activeDiagnostics.get(couplet.id) || [];
-
-        // Centralized UI text bindings to prevent DOM reconciler mismatches
         const computedTitle = `${displayNum}.`;
         const badgeClass = inboundLinks.length ? 'badge badge-linked' : (index === 0 ? 'badge badge-linked' : 'badge badge-isolated');
         const badgeLabel = inboundLinks.length ? `← ${inboundLinks.join(', ')}` : (index === 0 ? '🏁 root' : '⚠️ isolated');
@@ -338,23 +321,17 @@ export function renderEditorCards(store: KeyStore) {
         let warningInnerHtml = '';
         cardErrors.forEach(err => {
             const modifierClass = err.severity === 'error' ? 'error-text' : 'warning-text';
-            // Use escapeHTML to immunize arbitrary message data strings
             warningInnerHtml += `<span class="${modifierClass}">⚠️ ${escapeHTML(err.message)}</span>`;
         });
-
         const warningBlockHtml = cardErrors.length > 0 ? `<div class="warning-block">${warningInnerHtml}</div>` : '';
 
         let card = existingMap.get(couplet.id);
         if (card) {
             existingMap.delete(couplet.id);
-
             card.classList.toggle('is-selected', isSelected);
 
-            // Flawless reconciliation matching via variables
             const titleEl = card.querySelector('.card-title');
-            if (titleEl && titleEl.textContent !== computedTitle) {
-                titleEl.textContent = computedTitle;
-            }
+            if (titleEl && titleEl.textContent !== computedTitle) titleEl.textContent = computedTitle;
 
             const badgeEl = card.querySelector('.badge');
             if (badgeEl) {
@@ -363,12 +340,12 @@ export function renderEditorCards(store: KeyStore) {
             }
 
             syncField(card, 'textarea[data-field="alt1"]', couplet.alt1);
-            const dest1El = syncField(card, 'input[data-field="dest1"]', dest1Val);
-            dest1El?.classList.toggle('input-error', isUnresolved1);
+            const dest1El = syncField(card, 'input[data-field="dest1"]', dest1.inputValue);
+            dest1El?.classList.toggle('input-error', dest1.isUnresolved);
 
             syncField(card, 'textarea[data-field="alt2"]', couplet.alt2);
-            const dest2El = syncField(card, 'input[data-field="dest2"]', dest2Val);
-            dest2El?.classList.toggle('input-error', isUnresolved2);
+            const dest2El = syncField(card, 'input[data-field="dest2"]', dest2.inputValue);
+            dest2El?.classList.toggle('input-error', dest2.isUnresolved);
 
             const currentWarningBlock = card.querySelector('.warning-block');
             if (cardErrors.length > 0) {
@@ -403,7 +380,7 @@ export function renderEditorCards(store: KeyStore) {
                   <textarea class="input-sync card-textarea" data-field="alt1" placeholder="Enter diagnostic trait details...">${escapeHTML(couplet.alt1)}</textarea>
                   <div class="card-meta-pane">
                     <label class="meta-label">→
-                      <input type="text" class="input-sync input-destination ${isUnresolved1 ? 'input-error' : ''}" data-field="dest1" placeholder="Taxon or Step #" value="${escapeHTML(dest1Val)}" />
+                      <input type="text" class="input-sync input-destination ${dest1.isUnresolved ? 'input-error' : ''}" data-field="dest1" placeholder="Taxon or Step #" value="${escapeHTML(dest1.inputValue)}" />
                     </label>
                   </div>
                 </div>
@@ -411,7 +388,7 @@ export function renderEditorCards(store: KeyStore) {
                   <textarea class="input-sync card-textarea" data-field="alt2" placeholder="Enter contrast alternative description...">${escapeHTML(couplet.alt2)}</textarea>
                   <div class="card-meta-pane">
                     <label class="meta-label">→
-                      <input type="text" class="input-sync input-destination ${isUnresolved2 ? 'input-error' : ''}" data-field="dest2" placeholder="Taxon or Step #" value="${escapeHTML(dest2Val)}" />
+                      <input type="text" class="input-sync input-destination ${dest2.isUnresolved ? 'input-error' : ''}" data-field="dest2" placeholder="Taxon or Step #" value="${escapeHTML(dest2.inputValue)}" />
                     </label>
                   </div>
                 </div>
@@ -436,30 +413,17 @@ export function renderPrintView(store: KeyStore) {
 
     const existingBlocks = Array.from(container.querySelectorAll('.print-step-block')) as HTMLElement[];
     const existingMap = new Map<number, HTMLElement>();
+    
     existingBlocks.forEach(block => {
-        const id = Number(block.getAttribute('data-id'));
-        existingMap.set(id, block);
+        const idAttr = block.getAttribute('data-id');
+        if (idAttr) existingMap.set(Number(idAttr), block);
     });
 
     key.forEach((c, index) => {
         const currentDisplayNum = index + 1;
-        const idx1 = c.link1 ? idToIndexMap.get(c.link1) : undefined;
-        const idx2 = c.link2 ? idToIndexMap.get(c.link2) : undefined;
 
-        const isUnresolved1 = isUnresolvedLink(c.link1, c.taxa1, idToIndexMap);
-        const isUnresolved2 = isUnresolvedLink(c.link2, c.taxa2, idToIndexMap);
-
-        const dest1Info = isUnresolved1
-            ? { text: c.taxa1 || '?', className: 'error-text' }
-            : (c.taxa1
-                ? { text: c.taxa1, className: 'print-dest-taxon' }
-                : (c.link1 && idx1 !== undefined ? { text: (idx1 + 1).toString(), className: 'print-dest-strong' } : { text: '...', className: '' }));
-
-        const dest2Info = isUnresolved2
-            ? { text: c.taxa2 || '?', className: 'error-text' }
-            : (c.taxa2
-                ? { text: c.taxa2, className: 'print-dest-taxon' }
-                : (c.link2 && idx2 !== undefined ? { text: (idx2 + 1).toString(), className: 'print-dest-strong' } : { text: '...', className: '' }));
+        const dest1 = resolveDestination(c.link1, c.taxa1, idToIndexMap);
+        const dest2 = resolveDestination(c.link2, c.taxa2, idToIndexMap);
 
         const val1 = c.alt1 || '___';
         const val2 = c.alt2 || '___';
@@ -477,23 +441,21 @@ export function renderPrintView(store: KeyStore) {
             const txt1 = block.querySelector('.print-row[data-choice="1"] .print-text');
             if (txt1 && txt1.textContent !== val1) txt1.textContent = val1;
 
-            const dest1 = block.querySelector('.print-row[data-choice="1"] .print-dest');
-            if (dest1) {
-                if (dest1.textContent !== dest1Info.text) dest1.textContent = dest1Info.text;
-                if (dest1.className !== `print-dest ${dest1Info.className}`.trim()) {
-                    dest1.className = `print-dest ${dest1Info.className}`.trim();
-                }
+            const dest1El = block.querySelector('.print-row[data-choice="1"] .print-dest');
+            if (dest1El) {
+                if (dest1El.textContent !== dest1.printText) dest1El.textContent = dest1.printText;
+                const expectedClass = `print-dest ${dest1.printClass}`.trim();
+                if (dest1El.className !== expectedClass) dest1El.className = expectedClass;
             }
 
             const txt2 = block.querySelector('.print-row[data-choice="2"] .print-text');
             if (txt2 && txt2.textContent !== val2) txt2.textContent = val2;
 
-            const dest2 = block.querySelector('.print-row[data-choice="2"] .print-dest');
-            if (dest2) {
-                if (dest2.textContent !== dest2Info.text) dest2.textContent = dest2Info.text;
-                if (dest2.className !== `print-dest ${dest2Info.className}`.trim()) {
-                    dest2.className = `print-dest ${dest2Info.className}`.trim();
-                }
+            const dest2El = block.querySelector('.print-row[data-choice="2"] .print-dest');
+            if (dest2El) {
+                if (dest2El.textContent !== dest2.printText) dest2El.textContent = dest2.printText;
+                const expectedClass = `print-dest ${dest2.printClass}`.trim();
+                if (dest2El.className !== expectedClass) dest2El.className = expectedClass;
             }
 
             if (container.children[index] !== block) {
@@ -527,19 +489,19 @@ export function renderPrintView(store: KeyStore) {
             const txt1 = block.querySelector('.print-row[data-choice="1"] .print-text');
             if (txt1) txt1.textContent = val1;
 
-            const dest1 = block.querySelector('.print-row[data-choice="1"] .print-dest');
-            if (dest1) {
-                dest1.textContent = dest1Info.text;
-                if (dest1Info.className) dest1.className = `print-dest ${dest1Info.className}`.trim();
+            const dest1El = block.querySelector('.print-row[data-choice="1"] .print-dest');
+            if (dest1El) {
+                dest1El.textContent = dest1.printText;
+                if (dest1.printClass) dest1El.className = `print-dest ${dest1.printClass}`.trim();
             }
 
             const txt2 = block.querySelector('.print-row[data-choice="2"] .print-text');
             if (txt2) txt2.textContent = val2;
 
-            const dest2 = block.querySelector('.print-row[data-choice="2"] .print-dest');
-            if (dest2) {
-                dest2.textContent = dest2Info.text;
-                if (dest2Info.className) dest2.className = `print-dest ${dest2Info.className}`.trim();
+            const dest2El = block.querySelector('.print-row[data-choice="2"] .print-dest');
+            if (dest2El) {
+                dest2El.textContent = dest2.printText;
+                if (dest2.printClass) dest2El.className = `print-dest ${dest2.printClass}`.trim();
             }
 
             container.appendChild(block);
@@ -560,7 +522,6 @@ export function showToast(message: string, type: 'success' | 'error' = 'success'
         container = document.createElement('div');
         container.className = 'toast-container';
 
-        // 'aria-live="polite"' acts as a safe catch-all wrapper context
         container.setAttribute('aria-live', 'polite');
 
         document.body.appendChild(container);
@@ -570,12 +531,9 @@ export function showToast(message: string, type: 'success' | 'error' = 'success'
     toast.className = `toast toast-${type}`;
     toast.textContent = message;
 
-    // Assign semantic ARIA alert states based on the priority of the notification
     if (type === 'error') {
-        // Errors require an assertive interruption profile
         toast.setAttribute('role', 'alert');
     } else {
-        // Success states use standard status messaging profiles
         toast.setAttribute('role', 'status');
     }
 

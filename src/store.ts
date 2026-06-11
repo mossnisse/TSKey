@@ -260,7 +260,7 @@ export class KeyStore {
     // MUTATORS (State modifiers with history tracking)
     // ==========================================
 
-    public commitHistoryCheckpoint() {
+    public endTypingSession() {
         if (!this.hasUncommittedChanges) return;
         this.hasUncommittedChanges = false;
     }
@@ -516,6 +516,8 @@ export class KeyStore {
     }
 
     public reorderCouplets(srcId: number, targetId: number, position: 'above' | 'below' = 'above'): boolean {
+        if (srcId === targetId) return false;
+
         const arr = [...this.state.dichotomousKey];
         const srcIdx = arr.findIndex(c => c.id === srcId);
         const targetIdx = arr.findIndex(c => c.id === targetId);
@@ -526,14 +528,13 @@ export class KeyStore {
         }
 
         this.saveCheckpoint();
-
         const [movedItem] = arr.splice(srcIdx, 1);
 
-        let insertIdx = arr.findIndex(c => c.id === targetId);
-
-        // Adjust the insertion pointer if appending below the card target
-        if (position === 'below') {
-            insertIdx++;
+        let insertIdx = targetIdx;
+        if (position === 'above' && srcIdx < targetIdx) {
+            insertIdx--; // Target shifted left because we removed an item before it
+        } else if (position === 'below' && srcIdx > targetIdx) {
+            insertIdx++; // Target stayed put, but we want to place it after the target
         }
 
         arr.splice(insertIdx, 0, movedItem);

@@ -9,9 +9,6 @@ const HTML_ESCAPE_MAP: Record<string, string> = {
     "'": '&#039;'
 };
 
-/**
- * Escapes volatile HTML control characters to block XSS vector injections.
- */
 export function escapeHTML(str: string): string {
     if (!str) return '';
     return str.replace(/[&<>"']/g, (match) => HTML_ESCAPE_MAP[match]);
@@ -27,8 +24,6 @@ export function triggerFileDownload(content: string, filename: string, mimeType:
             url = URL.createObjectURL(blob);
         } catch (cspError) {
             console.warn("Blob URL creation blocked by environment security constraints. Attempting standard Base64 encoding fallback.", cspError);
-
-            // Modern, safe alternative to btoa(unescape(encodeURIComponent(content)))
             const binaryBytes = new TextEncoder().encode(content);
             let binaryString = '';
             for (let i = 0; i < binaryBytes.byteLength; i++) {
@@ -45,12 +40,10 @@ export function triggerFileDownload(content: string, filename: string, mimeType:
         document.body.appendChild(downloadAnchor);
         downloadAnchor.click();
     } finally {
-        // Clean up the DOM node instantly so it leaves no footprint in the document
         if (downloadAnchor && document.body.contains(downloadAnchor)) {
             document.body.removeChild(downloadAnchor);
         }
 
-        // Only revoke memory allocations if the active URL was successfully generated as a live blob stream
         if (url && url.startsWith('blob:')) {
             const urlToRevoke = url;
             setTimeout(() => {
@@ -95,6 +88,7 @@ export function isValidCoupletArray(data: any): data is Couplet[] {
             item &&
             typeof item === 'object' &&
             typeof item.id === 'number' &&
+            item.id > 0 &&
             typeof item.alt1 === 'string' &&
             typeof item.alt2 === 'string' &&
             typeof item.link1 === 'number' &&
@@ -113,8 +107,7 @@ export function isValidCoupletArray(data: any): data is Couplet[] {
 }
 
 /**
- * Generates an O(1) hash map connecting unique Couplet record IDs 
- * to their current dynamic arrays coordinates.
+ * Generates an O(1) hash map connecting unique Couplet record IDs to their current dynamic arrays coordinates.
  */
 export function buildIdToIndexMap(key: readonly Couplet[]): Map<number, number> {
     const map = new Map<number, number>();
@@ -132,14 +125,90 @@ export function getStepNumberById(idToIndexMap: Map<number, number>, targetId: n
 }
 
 /**
- * Validates whether a choice destination is unresolved (a broken link pointer 
- * or an accidental raw numeric string placed in a text taxon field).
+ * functions for handling Destination links
  */
-export function isUnresolvedLink(linkId: number, taxaStr: string, idToIndexMap: Map<number, number>): boolean {
-    // If a link exists (not 0), check if its target ID is missing from the index map
-    if (linkId !== 0) {
-        return idToIndexMap.get(linkId) === undefined;
+
+export interface DestinationResolution {
+    inputValue: string;    // Raw text to bind inside edit input boxes
+    printText: string;     // Formatted layout text for the publication panel
+    printClass: string;    // Target CSS class mapping for styles/errors
+    isUnresolved: boolean; // Flag to trigger immediate error styling highlights
+}
+
+/**
+ * Resolves a destination's raw link and taxa state into a explicit UI and print configuration.
+ */
+export function resolveDestination(link: number, taxa: string, idToIndexMap: Map<number, number>): DestinationResolution {
+    // Case A: The destination is actively configured to point to an internal step ID
+    if (link !== 0) {
+        const index = idToIndexMap.get(link);
+        if (index !== undefined) {
+            const stepNumStr = (index + 1).toString();
+            return {
+                inputValue: stepNumStr,
+                printText: stepNumStr,
+                printClass: 'print-dest-strong',
+                isUnresolved: false
+            };
+        }
+        // Broken Link Fallback: The step pointer exists but the target card was deleted
+        const fallback = taxa || '?';
+        return {
+            inputValue: fallback,
+            printText: fallback,
+            printClass: 'error-text',
+            isUnresolved: true
+        };
     }
-    // If no link exists, check if the text field contains a raw number (e.g., user typed "3" instead of selecting a link)
-    return /^\d+$/.test(taxaStr);
+
+    // Case B: Link is 0 (unlinked). Check if it's completely blank
+    if (!taxa) {
+        return {
+            inputValue: '',
+            printText: '...',
+            printClass: '',
+            isUnresolved: false
+        };
+    }
+
+    // Case C: Link is 0, but user typed a raw step number that doesn't exist yet
+    if (/^\d+$/.test(taxa)) {
+        return {
+            inputValue: taxa,
+            printText: taxa,
+            printClass: 'error-text',
+            isUnresolved: true
+        };
+    }
+
+    // Case D: Standard descriptive taxon string (e.g., "Homo sapiens")
+    return {
+        inputValue: taxa,
+        printText: taxa,
+        printClass: 'print-dest-taxon',
+        isUnresolved: false
+    };
+}
+
+/**
+ * Robust input parser for editing. Determines if typed characters represent
+ * a valid step connection, an unresolved step reference, or a plain taxon name.
+ */
+export function parseDestinationInput(input: string, key: readonly Couplet[]): { link: number; taxa: string } {
+    const trimmed = input.trim();
+
+    if (/^\d+$/.test(trimmed)) {
+        const stepNum = parseInt(trimmed, 10);
+        const index = stepNum - 1;
+
+        if (index >= 0 && index < key.length) {
+            // Target step is active in canvas: secure stable pointer connection
+            return { link: key[index].id, taxa: '' };
+        }
+        // Target step doesn't exist yet: store raw number as an unresolved string in taxa
+        return { link: 0, taxa: trimmed };
+    }
+
+    // Is descriptive textual taxon identification
+    return { link: 0, taxa: trimmed };
 }

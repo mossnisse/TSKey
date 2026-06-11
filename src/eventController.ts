@@ -1,7 +1,7 @@
 // eventController.ts
 import type { KeyStore, Couplet } from './store.ts';
 import { renderPrintView, showToast } from './uiRenderer.ts';
-import { IS_MAC } from './utils.ts';
+import { IS_MAC, resolveDestination, parseDestinationInput, buildIdToIndexMap } from './utils.ts';
 import { exportKeyToHTML } from './exporters/htmlExporter.ts';
 import { exportKeyToLaTeX } from './exporters/latexExporter.ts';
 import { exportKeyToPlainText } from './exporters/plainTextExporter.ts';
@@ -80,7 +80,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
         // Undo History Checkpoint Manager
         if (!typingSessionActive || currentEditingFieldKey !== fieldKey) {
-            store.commitHistoryCheckpoint(); 
+            store.endTypingSession();
             typingSessionActive = true;
             currentEditingFieldKey = fieldKey;
         }
@@ -102,36 +102,17 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         if (field === 'dest1' || field === 'dest2') {
             const linkField = field === 'dest1' ? 'link1' : 'link2';
             const taxaField = field === 'dest1' ? 'taxa1' : 'taxa2';
-            const valStr = target.value.trim();
-
-            if (/^\d+$/.test(valStr)) {
-
-                // Input is purely numerical: Treat as a Goto Step
-                const num = parseInt(valStr, 10);
-
-                if (num > 0 && num <= key.length) {
-                    const targetCard = key[num - 1];
-                    updatePayload[linkField] = targetCard.id;
-                    updatePayload[taxaField] = '';
-                    target.classList.remove('input-error');
-                } else {
-                    // Unresolved link: Zero out ID link, store invalid value placeholder
-                    updatePayload[linkField] = 0;
-                    updatePayload[taxaField] = valStr;
-                    target.classList.add('input-error');
-                }
-            } else {
-                // Input contains text: Treat as a Taxon
-                updatePayload[linkField] = 0;
-                updatePayload[taxaField] = valStr;
-                target.classList.remove('input-error');
-            }
+            const parsed = parseDestinationInput(target.value, key);
+            updatePayload[linkField] = parsed.link;
+            updatePayload[taxaField] = parsed.taxa;
+            const idToIndexMap = buildIdToIndexMap(key);
+            const resolution = resolveDestination(parsed.link, parsed.taxa, idToIndexMap);
+            target.classList.toggle('input-error', resolution.isUnresolved);
         } else {
             updatePayload[field as keyof Omit<Couplet, 'id'>] = target.value as never;
         }
 
         store.updateCouplet(id, updatePayload);
-        renderPrintView(store);
     }, { signal });
 
     // Centralized Drag and Form Text Highlight Mitigation
@@ -466,7 +447,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         store.selectAll();
         batchedRefresh(refreshAll);
     }, { signal });
-    
+
 
     // --- TOOLS MENU ACTION BINDINGS ---
     document.querySelector('#cmd-reorder')?.addEventListener('click', () => {
@@ -510,7 +491,7 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
 
             if (hasModifier && e.key.toLowerCase() === 'a') {
                 e.preventDefault();
-                document.querySelector<HTMLButtonElement>('#cmd-sellect-all')?.click();
+                document.querySelector<HTMLButtonElement>('#cmd-select-all')?.click();
                 return;
             }
 
