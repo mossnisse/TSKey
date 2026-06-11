@@ -544,6 +544,9 @@ export class KeyStore {
         return true;
     }
 
+
+    // order they key with shorter branches first. unresolved links are implied to have longer branches the higher number, 
+    // empty/broken links are implied to be long. When the branches are the same length they should not be changed.
     public autoOrder() {
         if (this.state.dichotomousKey.length === 0) return;
 
@@ -583,7 +586,7 @@ export class KeyStore {
             if (type === 'linked') return calculateBranchDepth(linkId);
             // Treat the unresolved numeric string as its simulated depth (higher number = deeper branch)
             if (type === 'unresolved') return parseInt(taxaStr.trim(), 10) || 0;
-            return 0; // broken
+            return 0; // broken, should'nt it be treated as an long branch?
         };
 
         const calculateBranchDepth = (id: number): number => {
@@ -618,7 +621,7 @@ export class KeyStore {
                     case 'terminal': return 1;
                     case 'linked':
                     case 'unresolved': return 2; // Grouped: both imply continuing paths
-                    case 'broken': return 3;
+                    case 'broken': return 3;  // imply it should be an long branch
                 }
             };
 
@@ -631,14 +634,7 @@ export class KeyStore {
                 shouldSwap = true;
             } else if (rank1 === rank2) {
                 // Tie-breakers when both alternatives share the same structural rank
-                if (rank1 === 1) {
-                    // Both are Taxa terminal options.
-                    if (c.link2 !== 0 && c.link1 !== 0) {
-                        if (c.link2 < c.link1) shouldSwap = true;
-                    } else if (c.link1 !== 0 && c.link2 === 0) {
-                        shouldSwap = true;
-                    }
-                } else if (rank1 === 2) {
+                if (rank1 === 2) {
                     // Both are continuing paths (Linked vs Unresolved vs Both)
                     const depth1 = getEdgeDepth(c.taxa1, c.link1);
                     const depth2 = getEdgeDepth(c.taxa2, c.link2);
@@ -650,13 +646,8 @@ export class KeyStore {
                         // Depth ties. Prefer resolving actual linked paths first as convention.
                         if (type1 !== type2) {
                             if (type2 === 'linked') shouldSwap = true;
-                        } else if (type1 === 'linked') {
-                            if (c.link2 < c.link1) shouldSwap = true;
                         }
                     }
-                } else if (rank1 === 3) {
-                    // Both are completely broken paths
-                    if (c.link2 < c.link1) shouldSwap = true;
                 }
             }
 

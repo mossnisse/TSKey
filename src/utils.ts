@@ -75,8 +75,7 @@ export const IS_MAC: boolean = (() => {
 })();
 
 /**
- * Explicit Type Guard asserting whether incoming structural payloads conform 
- * to the data properties required by a Couplet array.
+ * Checks if the json is an valid array of Couplets.
  */
 export function isValidCoupletArray(data: any): data is Couplet[] {
     if (!Array.isArray(data)) return false;

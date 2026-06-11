@@ -250,7 +250,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         e.preventDefault();
 
         // --- EDGE AUTO-SCROLL LOGIC ---
-
         if (e.clientY < AUTO_SCROLL_THRESHOLD_PX) {
             // Cursor is near the top of the viewport
             window.scrollBy(0, -AUTO_SCROLL_SPEED_PX);
