@@ -1,5 +1,4 @@
 // eventController.ts
-
 import type { KeyStore, Couplet } from './store.ts';
 import { renderPrintView, showToast } from './uiRenderer.ts';
 import { IS_MAC } from './utils.ts';
@@ -15,7 +14,7 @@ const AUTO_SCROLL_SPEED_PX = 15;
 let refreshScheduled = false;
 
 /**
- * Wraps a synchronous render call in a performance-friendly animation frame.
+ * Makes so it's never more than one refresh per frame.
  */
 function batchedRefresh(refreshFn: () => void) {
     if (refreshScheduled) return;
@@ -27,10 +26,6 @@ function batchedRefresh(refreshFn: () => void) {
     });
 }
 
-/**
- * Centralized Delegated Events Router Engine.
- * Wires behavioral controls directly onto DOM structural layouts.
- */
 export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     const container = document.querySelector('#editor-container') as HTMLElement;
     if (!container) return;
@@ -41,7 +36,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     let activeDropCard: HTMLElement | null = null;
     let activeDropClass: 'drag-drop-above' | 'drag-drop-below' | null = null;
     let activeDropRect: DOMRect | null = null;        // Cached bounding metrics to prevent layout thrashing
-
+    let cachedScrollY = 0;
 
     const controller = new AbortController();
     const { signal } = controller;
@@ -85,7 +80,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
         // Undo History Checkpoint Manager
         if (!typingSessionActive || currentEditingFieldKey !== fieldKey) {
-            store.commitHistoryCheckpoint(); // Save state BEFORE these new edits apply
+            store.commitHistoryCheckpoint(); 
             typingSessionActive = true;
             currentEditingFieldKey = fieldKey;
         }
@@ -172,12 +167,10 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             const fieldKey = id && field ? `${id}-${field}` : null;
 
             // Verify if focus is genuinely leaving the active field session.
-            // This completely immunizes the handler against programmatic DOM re-render loops.
             const isActualSessionEnd = currentEditingFieldKey !== null && currentEditingFieldKey === fieldKey;
 
             // Only run side-effects and teardowns if this is a genuine session end
             if (isActualSessionEnd) {
-                // Clear session tracking variables safely inside the guard
                 typingSessionActive = false;
                 currentEditingFieldKey = null;
 
@@ -187,7 +180,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
                     typingTimeoutId = null;
                 }
 
-                // Inform the data layer to drop active card context
                 store.clearActiveCard();
 
                 // Trigger the warning toast if the field has an unresolved destination
@@ -318,9 +310,12 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             return;
         }
 
-        // Cache the bounding client rect ONLY when entering a new card context
-        if (activeDropCard !== actualCard || !activeDropRect) {
+        const currentScrollY = window.scrollY;
+
+        // Invalidate cache if switching cards, missing rect, OR if the page scrolled
+        if (activeDropCard !== actualCard || !activeDropRect || cachedScrollY !== currentScrollY) {
             activeDropRect = actualCard.getBoundingClientRect();
+            cachedScrollY = currentScrollY;
         }
 
         const relativeMouseY = clientY - activeDropRect.top;
@@ -328,16 +323,14 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
         // Only update the DOM if the target layout or position state actually altered
         if (activeDropCard !== actualCard || activeDropClass !== currentClass) {
-            const rectToKeep = activeDropCard === actualCard ? activeDropRect : null;
+            const rectToPreserve = activeDropRect;
 
-            clearDropMarkers(); // Safe cleanup
+            clearDropMarkers();
 
             actualCard.classList.add(currentClass);
             activeDropCard = actualCard;
             activeDropClass = currentClass;
-
-            // Preserve current metrics or safely compute for next state transitions
-            activeDropRect = rectToKeep || actualCard.getBoundingClientRect();
+            activeDropRect = rectToPreserve;
         }
     };
 
@@ -469,6 +462,12 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         batchedRefresh(refreshAll);
     }, { signal });
 
+    document.querySelector('#cmd-select-all')?.addEventListener('click', () => {
+        store.selectAll();
+        batchedRefresh(refreshAll);
+    }, { signal });
+    
+
     // --- TOOLS MENU ACTION BINDINGS ---
     document.querySelector('#cmd-reorder')?.addEventListener('click', () => {
         store.autoOrder();
@@ -503,7 +502,6 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
 
         // CANVAS CONTEXT COMMANDS (Only if NOT typing)
         if (!isTyping) {
-            // insert a new couplet when canvas is active
             if (e.altKey && e.key.toLowerCase() === 'n') {
                 e.preventDefault();
                 document.querySelector<HTMLButtonElement>('#cmd-add')?.click();
@@ -512,12 +510,10 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
 
             if (hasModifier && e.key.toLowerCase() === 'a') {
                 e.preventDefault();
-                store.selectAll();
-                batchedRefresh(refreshAll);
+                document.querySelector<HTMLButtonElement>('#cmd-sellect-all')?.click();
                 return;
             }
 
-            // swap alternatives on selected card(s)
             if (e.altKey && e.key.toLowerCase() === 's') {
                 e.preventDefault();
                 document.querySelector<HTMLButtonElement>('#cmd-swap')?.click();
@@ -574,7 +570,6 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
 
             if (hasModifier && e.key.toLowerCase() === 'v') {
                 e.preventDefault();
-                // e.shiftKey determines the direction natively
                 const position = e.shiftKey ? 'above' : 'below';
                 executePaste(store, refreshAll, position);
                 return;
@@ -606,26 +601,24 @@ function createNewCoupletWithFocus(store: KeyStore, refreshAll: () => void) {
 
 function executePaste(store: KeyStore, refreshAll: () => void, position: 'above' | 'below') {
     let targetId: number | undefined = undefined;
-    const selectedArray = Array.from(store.getSelectedIds());
+    const selectedIds = store.getSelectedIds();
     const key = store.getKey();
 
-    if (selectedArray.length > 0) {
-        // If cards are selected, anchor to the boundaries of the selection block
+    const visibleSelection = key.filter(couplet => selectedIds.has(couplet.id));
+
+    if (visibleSelection.length > 0) {
         targetId = position === 'below'
-            ? selectedArray[selectedArray.length - 1]
-            : selectedArray[0];
+            ? visibleSelection[visibleSelection.length - 1].id // Bottom-most visible selected card
+            : visibleSelection[0].id;                          // Top-most visible selected card
     } else if (key.length > 0) {
-        // Fallback: If nothing is selected, target the absolute boundaries of the list
         targetId = position === 'above'
             ? key[0].id
             : key[key.length - 1].id;
     }
 
-    // If the key is completely empty (key.length === 0), targetId remains undefined,
-    // which allows the store to initialize the first cards normally.
+    // If the key is completely empty,  initialize the first cards normally.
     if (store.pasteCards(targetId, position)) {
-        // Dynamically tailor the feedback toast so the user knows exactly where it landed
-        const locationText = selectedArray.length > 0
+        const locationText = visibleSelection.length > 0
             ? `${position} selection`
             : (position === 'above' ? 'at the beginning' : 'at the end');
 

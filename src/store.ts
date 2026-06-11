@@ -11,7 +11,7 @@ export interface Couplet {
     alt2: string;
     link1: number; // Links to the internal ID of another couplet
     link2: number;
-    taxa1: string;
+    taxa1: string; // taxon name or an unresolved link to an step
     taxa2: string;
 }
 
@@ -100,7 +100,6 @@ export class KeyStore {
 
     /**
     * Wipes undo/redo timelines, selections, and drag-and-drop focus profiles 
-    * cleanly to avoid cross-contamination across different data files.
     */
     private resetTrackingContext(): void {
         this.undoStack = [];
@@ -147,6 +146,12 @@ export class KeyStore {
 
         this.currentHistoryIndex--;
         this.hasUncommittedChanges = false;
+
+        if (this.clipboardMode === 'cut') {
+            this.clipboardMode = 'copy';
+            this.cutIncomingLinksBuffer = [];
+        }
+
         return true;
     }
 
@@ -160,10 +165,14 @@ export class KeyStore {
         }
 
         this.currentHistoryIndex++;
-
         this.state = this.redoStack.pop()!;
-
         this.hasUncommittedChanges = false;
+
+        if (this.clipboardMode === 'cut') {
+            this.clipboardMode = 'copy';
+            this.cutIncomingLinksBuffer = [];
+        }
+
         return true;
     }
 
@@ -179,12 +188,10 @@ export class KeyStore {
         const selectedIds = this.getSelectedIds();
         if (selectedIds.size === 0) return;
 
-        // Clone internal objects completely, retaining IDs for translation maps
         this.clipboardBuffer = this.state.dichotomousKey
             .filter(c => selectedIds.has(c.id))
             .map(c => ({ ...c }));
 
-        // Reset clipboard mode
         this.clipboardMode = 'copy';
         this.cutIncomingLinksBuffer = [];
     }
@@ -198,8 +205,7 @@ export class KeyStore {
     // ==========================================
 
     /**
-     * Computes inverted lookup map of all inbound links 
-     * across the entire key.
+     * Computes inverted lookup map of all inbound links across the entire key.
      */
     public generateInboundLinksMap(): Map<number, string[]> {
         const map = new Map<number, string[]>();
@@ -268,14 +274,9 @@ export class KeyStore {
         if (index === -1) return;
 
         const updatedCouplet = { ...this.state.dichotomousKey[index], ...fields };
-
-        if (this.hasUncommittedChanges) {
-            this.state.dichotomousKey[index] = updatedCouplet;
-        } else {
-            const newKey = [...this.state.dichotomousKey];
-            newKey[index] = updatedCouplet;
-            this.state.dichotomousKey = newKey;
-        }
+        const newKey = [...this.state.dichotomousKey];
+        newKey[index] = updatedCouplet;
+        this.state.dichotomousKey = newKey;
 
         this.hasUncommittedChanges = true;
     }
@@ -309,7 +310,6 @@ export class KeyStore {
             }
         }
 
-        // Generate a new array with updated linkages and text-to-ID resolutions
         const updatedKey = this.state.dichotomousKey.map((couplet, index) => {
             let updated = { ...couplet };
 
@@ -410,7 +410,6 @@ export class KeyStore {
                 return updated;
             });
 
-            // Revert clipboard to 'copy' mode.
             this.clipboardMode = 'copy';
             this.cutIncomingLinksBuffer = [];
         }
@@ -489,7 +488,6 @@ export class KeyStore {
     public swapSelectedCouplets(): boolean {
         if (this.selectedIds.size === 0) return false;
 
-        // Capture current state in history stack before mutating
         this.saveCheckpoint();
 
         let modified = false;
@@ -538,7 +536,6 @@ export class KeyStore {
             insertIdx++;
         }
 
-        // Splice the item cleanly into its precise user-intended position
         arr.splice(insertIdx, 0, movedItem);
 
         this.state.dichotomousKey = arr;
@@ -737,12 +734,10 @@ export class KeyStore {
         try {
             let targetKeyData: unknown = null;
 
-            // Sniff payload topology to extract data payload safely
+            // Sniff payload topology to extract data payload safely  
             if (rawData && typeof rawData === 'object' && 'data' in rawData && 'metadata' in rawData) {
-                // New Wrapped Schema Layout format detected
                 targetKeyData = (rawData as { data: unknown }).data;
             } else {
-                // Fallback for Legacy Raw Array Format compatibility
                 targetKeyData = rawData;
             }
 
@@ -754,9 +749,7 @@ export class KeyStore {
                 };
             }
 
-            // Save state snapshot for structural Undo/Redo tracking before updating
             this.saveCheckpoint();
-
             this.state.dichotomousKey = targetKeyData;
             this.clearSelection();
             this.activeEditingCardId = null;
@@ -770,7 +763,7 @@ export class KeyStore {
         } catch (e) {
             return {
                 success: false,
-                errors: [e instanceof Error ? e.message : "Unknown engine exception during state hydration parsing."]
+                errors: [e instanceof Error ? e.message : "Unknown engine exception during parsing the json file."]
             };
         }
     }
@@ -798,7 +791,6 @@ export class KeyStore {
 
             const parsed = JSON.parse(rawStorage);
 
-            // Reuses your strict duplicate-safe type-guard checking rules cleanly
             if (isValidCoupletArray(parsed)) {
                 this.state = { dichotomousKey: parsed };
                 this.resetTrackingContext();
@@ -859,7 +851,6 @@ export class KeyStore {
         const diagnostics = new Map<number, KeyValidationError[]>();
         const key = this.state.dichotomousKey;
 
-        // Early exit for empty states
         if (key.length === 0) return diagnostics;
 
         const idMap = new Map<number, Couplet>();

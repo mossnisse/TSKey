@@ -11,7 +11,6 @@ function syncField(parent: HTMLElement, selector: string, value: string, forceUp
     const el = parent.querySelector(selector) as HTMLInputElement | HTMLTextAreaElement;
     if (!el) return null;
 
-    // Guard focus state so typing isn't interrupted during incremental DOM loops
     if ((forceUpdate || document.activeElement !== el) && el.value !== value) {
         el.value = value;
     }
@@ -23,8 +22,7 @@ function syncField(parent: HTMLElement, selector: string, value: string, forceUp
 // ==========================================
 
 /**
- * Renders the structural core layout app shell using discrete dialog layouts.
- * Fired once during initialization bootstrap.
+ * Renders the structural core layout app shell. Fired once during initialization bootstrap.
  */
 export function initializeShell(appDiv: HTMLDivElement) {
     appDiv.innerHTML = `
@@ -50,10 +48,10 @@ export function initializeShell(appDiv: HTMLDivElement) {
               <span>📄 Export to Plain Text file(.txt)</span>
             </button>
             <button id="cmd-export-html" class="dropdown-action">
-              <span>🌐 Export to a Web Page (.html)</span>
+              <span>🌐 Export to Web Page (.html)</span>
             </button>
             <button id="cmd-export-latex" class="dropdown-action">
-              <span>🔏 Export to an LaTeX Document (.tex)</span>
+              <span>🔏 Export to LaTeX Document (.tex)</span>
             </button>
           </div>
         </div>
@@ -101,6 +99,10 @@ export function initializeShell(appDiv: HTMLDivElement) {
             <button id="cmd-clear" class="dropdown-action">
               <span>🧼 Clear Selections</span>
               <span class="menu-shortcut">Esc</span>
+            </button>
+            <button id="cmd-select-all" class="dropdown-action">
+              <span>☑️ Sellect all steps</span>
+              <span class="menu-shortcut">${IS_MAC ? '⌘A' : 'Ctrl+A'}</span>
             </button>
           </div>
         </div>
@@ -217,58 +219,53 @@ export function initializeShell(appDiv: HTMLDivElement) {
 }
 
 /**
- * Synchronizes real-time application context, selection caches, history timelines, 
- * and clipboard state parameters directly into the desktop drop-down menu actions.
+ * Synchronizes real-time application context for the Menu, disable/enables them.
  */
 export function renderMenu(store: KeyStore) {
-    // Collect Context metrics from the App State Model
+    const menuBar = document.querySelector('.app-menu-bar');
+    if (!menuBar) return;
+
+    const getBtn = (id: string) => document.getElementById(id) as HTMLButtonElement | null;
+
     const selectedCount = store.getSelectedIds().size;
     const hasSelection = selectedCount > 0;
     const hasKeyElements = store.getKey().length > 0;
     const hasClipboard = store.hasClipboardData();
 
-    // Query Menu Items safely using exact structural IDs
-    const saveBtn = document.querySelector('#cmd-save') as HTMLButtonElement | null;
-    
-    // Export Commands
-    const expJsonBtn = document.querySelector('#cmd-export-json') as HTMLButtonElement | null;
-    const expTextBtn = document.querySelector('#cmd-export-text') as HTMLButtonElement | null;
-    const expHtmlBtn = document.querySelector('#cmd-export-html') as HTMLButtonElement | null;
-    const expLatexBtn = document.querySelector('#cmd-export-latex') as HTMLButtonElement | null;
+    // File submenu
+    const saveBtn = getBtn('cmd-save');
+    const expJsonBtn = getBtn('cmd-export-json');
+    const expTextBtn = getBtn('cmd-export-text');
+    const expHtmlBtn = getBtn('cmd-export-html');
+    const expLatexBtn = getBtn('cmd-export-latex');
 
-    // History Timeline Engine Actions
-    const undoBtn = document.querySelector('#cmd-undo') as HTMLButtonElement | null;
-    const redoBtn = document.querySelector('#cmd-redo') as HTMLButtonElement | null;
+    // Edit submenu
+    const undoBtn = getBtn('cmd-undo');
+    const redoBtn = getBtn('cmd-redo');
+    const cutBtn = getBtn('cmd-cut');
+    const copyBtn = getBtn('cmd-copy');
+    const pasteBtnBelow = getBtn('cmd-paste-below');
+    const pasteBtnAbove = getBtn('cmd-paste-above');
+    const deleteBtn = getBtn('cmd-delete');
+    const swapBtn = getBtn('cmd-swap');
+    const clearBtn = getBtn('cmd-clear');
 
-    // Selection/Card Specific Operations
-    const cutBtn = document.querySelector('#cmd-cut') as HTMLButtonElement | null;
-    const copyBtn = document.querySelector('#cmd-copy') as HTMLButtonElement | null;
-    const pasteBtnBelow = document.querySelector('#cmd-paste-below') as HTMLButtonElement | null;
-    const pasteBtnAbove = document.querySelector('#cmd-paste-above') as HTMLButtonElement | null;
-    const deleteBtn = document.querySelector('#cmd-delete') as HTMLButtonElement | null;
-    const swapBtn = document.querySelector('#cmd-swap') as HTMLButtonElement | null;
-    const clearBtn = document.querySelector('#cmd-clear') as HTMLButtonElement | null;
-
-    // Automation Systems
-    const reorderBtn = document.querySelector('#cmd-reorder') as HTMLButtonElement | null;
+    // Tools submenu
+    const reorderBtn = getBtn('cmd-reorder');
 
     // Mutate UI elements according to live state rules safely
     if (saveBtn) {
-        // Highlight when browser local storage synchronization requirements are uncommitted
         saveBtn.classList.toggle('has-unsaved-changes', store.hasUnsavedChanges());
     }
 
-    // Export capabilities are locked out if the workspace canvas contains zero cards
     if (expJsonBtn) expJsonBtn.disabled = !hasKeyElements;
     if (expTextBtn) expTextBtn.disabled = !hasKeyElements;
     if (expHtmlBtn) expHtmlBtn.disabled = !hasKeyElements;
     if (expLatexBtn) expLatexBtn.disabled = !hasKeyElements;
 
-    // Direct History Stack checks using our newly added KeyStore properties
     if (undoBtn) undoBtn.disabled = !store.canUndo;
     if (redoBtn) redoBtn.disabled = !store.canRedo;
 
-    // Clipboard and mutating commands require active item context selection pool bindings
     if (cutBtn) cutBtn.disabled = !hasSelection;
     if (copyBtn) copyBtn.disabled = !hasSelection;
     if (deleteBtn) {
@@ -281,11 +278,9 @@ export function renderMenu(store: KeyStore) {
         clearBtn.disabled = !hasSelection;
     }
 
-    // Paste is unblocked only if memory buffer houses matching structural configurations
     if (pasteBtnBelow) pasteBtnBelow.disabled = !hasClipboard;
     if (pasteBtnAbove) pasteBtnAbove.disabled = !hasClipboard;
 
-    // Algorithmic optimization tool mapping rules
     if (reorderBtn) reorderBtn.disabled = !hasKeyElements;
 }
 
@@ -294,7 +289,7 @@ export function renderMenu(store: KeyStore) {
  * Updates parameters, positions, and errors safely on existing elements without full teardown sweeps.
  */
 export function renderEditorCards(store: KeyStore) {
-    const container = document.querySelector('#editor-container');
+    const container = document.getElementById('editor-container');
     if (!container) return;
 
     const key = store.getKey();
@@ -316,7 +311,7 @@ export function renderEditorCards(store: KeyStore) {
         const isSelected = selectedIds.has(couplet.id);
 
         const inboundLinks = inboundLinksMap.get(couplet.id) || [];
-        // Account for broken links where an internal ID exists but the target step was deleted --
+        // Account for broken links where an internal ID exists but the target step was deleted
         const idx1 = couplet.link1 ? idToIndexMap.get(couplet.link1) : undefined;
         const idx2 = couplet.link2 ? idToIndexMap.get(couplet.link2) : undefined;
 
@@ -433,7 +428,7 @@ export function renderEditorCards(store: KeyStore) {
  * Renders the passive publication presentation view structure.
  */
 export function renderPrintView(store: KeyStore) {
-    const container = document.querySelector('#print-view-container');
+    const container = document.getElementById('print-view-container');
     if (!container) return;
 
     const key = store.getKey();
