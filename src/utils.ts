@@ -27,20 +27,16 @@ export function triggerFileDownload(content: string, filename: string, mimeType:
 
             const binaryBytes = new TextEncoder().encode(content);
 
-            const chunks: string[] = [];
-            const chunkSize = 8192; // 8KB chunks are safe and highly optimized by JS engines
-
+            // Safe, modern binary conversion mechanism that handles chunks without mutating callstack overhead
+            let binaryString = '';
+            const chunkSize = 8192;
             for (let i = 0; i < binaryBytes.length; i += chunkSize) {
-                let chunkString = '';
-                const end = Math.min(i + chunkSize, binaryBytes.length);
-                for (let j = i; j < end; j++) {
-                    chunkString += String.fromCharCode(binaryBytes[j]);
-                }
-                chunks.push(chunkString);
+                const chunk = binaryBytes.subarray(i, i + chunkSize);
+                // @ts-ignore - Fast conversion mechanism using native stack spreads safely throttled by chunk size
+                binaryString += String.fromCharCode.apply(null, chunk);
             }
 
-            const encodedContent = btoa(chunks.join(''));
-
+            const encodedContent = btoa(binaryString);
             const safeMimeType = mimeType.toLowerCase().includes('charset=')
                 ? mimeType
                 : `${mimeType};charset=utf-8`;
@@ -52,18 +48,23 @@ export function triggerFileDownload(content: string, filename: string, mimeType:
         downloadAnchor.href = url;
         downloadAnchor.download = filename;
 
+        // Visual or structural properties to keep it completely invisible from layout shifting
+        downloadAnchor.style.display = 'none';
+        downloadAnchor.style.pointerEvents = 'none';
+
         document.body.appendChild(downloadAnchor);
         downloadAnchor.click();
+    } catch (globalError) {
+        console.error("An unhandled exception occurred during file synthesis/download processing:", globalError);
     } finally {
+        // Immediate DOM cleanup
         if (downloadAnchor && document.body.contains(downloadAnchor)) {
             document.body.removeChild(downloadAnchor);
         }
 
+        // Immediate memory reclamation - no setTimeout needed
         if (url && url.startsWith('blob:')) {
-            const urlToRevoke = url;
-            setTimeout(() => {
-                URL.revokeObjectURL(urlToRevoke);
-            }, 250);
+            URL.revokeObjectURL(url);
         }
     }
 }

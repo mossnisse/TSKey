@@ -1,7 +1,9 @@
-// main.ts
+// main.ts - Updated application bootstrap routine
+
 import './style.css'; 
 import { KeyStore } from './store.ts';
-import { initializeShell, renderEditorCards, renderPrintView, renderMenu } from './uiRenderer.ts';
+// Added renderFigures to the import statement
+import { initializeShell, renderEditorCards, renderPrintView, renderMenu, renderFigures } from './uiRenderer.ts';
 import { setupGlobalListeners, setupKeyboardShortcuts } from './eventController.ts';
 
 // Baseline fallback blueprint structure
@@ -11,23 +13,28 @@ const fallbackData = [
     { id: 103, alt1: "Has scales", alt2: "Skin is smooth and moist", link1: 0, link2: 0, taxa1: "Reptile2", taxa2: "Amphibian" }
 ] as const;
 
+const fallbackFigures = [
+    { id: 101, filename: "testImage1.jpg", caption: "Test image1" },
+    { id: 102, filename: "testImage2.jpg", caption: "Test image2" },
+    { id: 103, filename: "testImage3.jpg", caption: "Test image3" }
+];
+
 // Defensive Shell Target Validation
 const appContainer = document.querySelector<HTMLDivElement>('#app');
 if (!appContainer) {
     throw new Error("Application bootstrap failed: DOM target element '#app' was not found.");
 }
 
-// Initialize Core State Tree Engine
-const store = new KeyStore([]); 
-
-// Spreads fallback data to keep the original immutable list un-mutated.
-store.loadFromStorage([...fallbackData]); 
+// Initialize Core State Tree Engine with initial baseline fallback figures
+const store = new KeyStore([], []);
+store.loadFromStorage([...fallbackData], [...fallbackFigures]);
 
 // Centralized View State Re-evaluation Coordinator Loop
 const refreshAll = () => {
     renderMenu(store);
     renderEditorCards(store);
     renderPrintView(store);
+    renderFigures(store); // Added to the refresh painter cycle loop
 };
 
 // Unsaved Progress Page Discard Guard Listener

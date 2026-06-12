@@ -43,6 +43,11 @@
     box-sizing: border-box;
 }
 
+/* Utility class for toggling viewports */
+.is-hidden {
+    display: none !important;
+}
+
 /* ==========================================
    EDITING CONTROL
    ========================================== */
@@ -562,6 +567,117 @@
 
 .key-card.drag-drop-below::after {
     bottom: -6px;
+}
+
+/* ==========================================
+   FIGURES GALLERY & ATTACHMENT PANEL
+   ========================================== */
+
+/* Main Container tracking layout geometry */
+#figure-container {
+    display: flex;
+    flex-direction: column;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--radius-lg);
+    max-height: 1200px;
+    overflow-y: auto;
+    min-height: 120px;
+}
+
+/* Individual Figure Cards */
+.figure-card {
+    border: none;
+    border-bottom: 1px solid var(--color-border-light);
+    padding: 16px 16px;
+    background: transparent;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    cursor: pointer;
+    transition: var(--transition-base);
+}
+
+.figure-card:last-of-type {
+    border-bottom: none;
+}
+
+/* Hover and Context Selection Rules (Mirrors .key-card) */
+.figure-card:hover {
+    background-color: var(--color-bg-muted);
+}
+
+.figure-card.is-selected {
+    border-left: 4px solid var(--color-primary);
+    background: var(--color-primary-light);
+}
+
+/* Header context tracking layout */
+.figure-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+}
+
+.figure-card-title {
+    margin: 0;
+    color: var(--color-primary);
+    font-weight: 700;
+    font-size: 13px;
+    font-family: monospace;
+}
+
+/* Figure Interactive Inline Form Fields */
+.figure-input-filename {
+    font-family: monospace;
+    font-size: 13px;
+    font-weight: 600;
+    border: none;
+    border-bottom: 1px dashed transparent;
+    background: transparent;
+    color: var(--color-text);
+    width: 100%;
+    padding: 2px 0;
+    transition: border-color 0.15s ease;
+}
+
+.figure-input-filename:focus {
+    outline: none;
+    border-bottom-color: var(--color-primary);
+}
+
+.figure-textarea-caption {
+    font-family: sans-serif;
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--color-text-muted);
+    border: none;
+    border-bottom: 1px dashed transparent;
+    background: transparent;
+    resize: none;
+    overflow: hidden;
+    field-sizing: content; /* Matches modern native expanding behavior */
+    width: 100%;
+    padding: 2px 0;
+    transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.figure-textarea-caption:focus {
+    outline: none;
+    border-bottom-color: var(--color-primary);
+    color: var(--color-text);
+}
+
+/* Clean reference badge wrapper when figures are empty */
+.figures-empty-state {
+    padding: 32px;
+    text-align: center;
+    color: var(--color-text-muted);
+    font-size: 14px;
+    font-style: italic;
+    user-select: none;
 }
 
 /* ==========================================

@@ -108,10 +108,27 @@ export function initializeShell(appDiv: HTMLDivElement) {
         </div>
 
         <div class="menu-item">
+          <button class="menu-trigger">View</button>
+          <div class="menu-dropdown">
+            <button id="cmd-toggle-figures" class="dropdown-action">
+              <span>🖼️ Hide Figures Panel</span>
+              <span class="menu-shortcut">Ctrl+Shift+F</span>
+            </button>
+            <button id="cmd-toggle-print" class="dropdown-action">
+              <span>🖨️ Hide Print Preview</span>
+              <span class="menu-shortcut">Ctrl+Shift+P</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="menu-item">
           <button class="menu-trigger">Tools</button>
           <div class="menu-dropdown">
-            <button id="cmd-reorder" class="dropdown-action">
+            <button id="cmd-reorder-couplets" class="dropdown-action">
               <span>🔄 Order Steps</span>
+            </button>
+            <button id="cmd-reorder-figures" class="dropdown-action">
+              <span>🔄 Order Figures</span>
             </button>
           </div>
         </div>
@@ -142,11 +159,18 @@ export function initializeShell(appDiv: HTMLDivElement) {
           <button id="add-couplet-btn" class="btn-add-block">+ Add New Step Block (Alt+N)</button>
         </div>
 
+        <div class="figure-column">
+          <h2>Figures Reference Library</h2>
+          <div id="figure-container"></div>
+          <button id="add-figure-btn" class="btn-add-block">+ Add New Figure Attachment</button>
+        </div>
+
         <div class="print-column">
           <h2>Live Publication Render</h2>
           <hr class="hr-print" />
           <div id="print-view-container" class="print-grid"></div>
         </div>
+       
       </div>
     </div>
 
@@ -227,8 +251,9 @@ export function renderMenu(store: KeyStore) {
 
     const getBtn = (id: string) => document.getElementById(id) as HTMLButtonElement | null;
 
-    const selectedCount = store.getSelectedIds().size;
-    const hasSelection = selectedCount > 0;
+    const selectedCoupletCount = store.getSelectedCoupletIds().size;
+    const selectedFigureCount = store.getSelectedFigureIds().size;
+    const hasSelection = selectedCoupletCount > 0 || selectedFigureCount > 0;
     const hasKeyElements = store.getKey().length > 0;
     const hasClipboard = store.hasClipboardData();
 
@@ -251,7 +276,7 @@ export function renderMenu(store: KeyStore) {
     const clearBtn = getBtn('cmd-clear');
 
     // Tools submenu
-    const reorderBtn = getBtn('cmd-reorder');
+    const reorderBtn = getBtn('cmd-reorder-couplets');
 
     // Mutate UI elements according to live state rules safely
     if (saveBtn) {
@@ -282,6 +307,29 @@ export function renderMenu(store: KeyStore) {
     if (pasteBtnAbove) pasteBtnAbove.disabled = !hasClipboard;
 
     if (reorderBtn) reorderBtn.disabled = !hasKeyElements;
+
+    // view menu synchronization 
+    // also hides and shows the actuall panels, so in the wrong place
+    const toggleFiguresBtn = getBtn('cmd-toggle-figures');
+    const togglePrintBtn = getBtn('cmd-toggle-print');
+    const figureColumn = document.querySelector('.figure-column');
+    const printColumn = document.querySelector('.print-column');
+
+    if (toggleFiguresBtn && figureColumn) {
+        const isHidden = figureColumn.classList.contains('is-hidden');
+        const label = toggleFiguresBtn.querySelector('span');
+        if (label) {
+            label.textContent = isHidden ? '🖼️ Show Figures Panel' : '🖼️ Hide Figures Panel';
+        }
+    }
+
+    if (togglePrintBtn && printColumn) {
+        const isHidden = printColumn.classList.contains('is-hidden');
+        const label = togglePrintBtn.querySelector('span');
+        if (label) {
+            label.textContent = isHidden ? '🖨️ Show Print Preview' : '🖨️ Hide Print Preview';
+        }
+    }
 }
 
 /**
@@ -293,7 +341,7 @@ export function renderEditorCards(store: KeyStore) {
     if (!container) return;
 
     const key = store.getKey();
-    const selectedIds = store.getSelectedIds();
+    const selectedIds = store.getSelectedCoupletIds();
     const activeDiagnostics = store.runDiagnostics();
 
     const idToIndexMap = buildIdToIndexMap(key);
@@ -301,7 +349,7 @@ export function renderEditorCards(store: KeyStore) {
 
     const existingCards = Array.from(container.querySelectorAll('.key-card')) as HTMLElement[];
     const existingMap = new Map<number, HTMLElement>();
-    
+
     existingCards.forEach(card => {
         const idAttr = card.getAttribute('data-id');
         if (idAttr) existingMap.set(Number(idAttr), card);
@@ -401,10 +449,80 @@ export function renderEditorCards(store: KeyStore) {
     existingMap.forEach(card => card.remove());
 }
 
+export function renderFigures(store: KeyStore) {
+    const column = document.querySelector('.figure-column');
+    if (!column || column.classList.contains('is-hidden')) return;
+
+    const container = document.getElementById('figure-container');
+    if (!container) return;
+
+    const figures = store.getFigures();
+
+    // Map existing DOM child blocks securely to optimize focus states
+    const existingBlocks = Array.from(container.children) as HTMLElement[];
+    const existingMap = new Map<number, HTMLElement>();
+    existingBlocks.forEach(block => {
+        const id = Number(block.getAttribute('data-id'));
+        if (!isNaN(id)) existingMap.set(id, block);
+    });
+
+    figures.forEach((fig, index) => {
+        const displayNum = index + 1;
+        const isSelected = store.getSelectedFigureIds().has(fig.id);
+        let block = existingMap.get(fig.id);
+
+        if (!block) {
+            block = document.createElement('div');
+            block.className = 'figure-card';
+            block.setAttribute('data-id', fig.id.toString());
+            block.innerHTML = `
+                <div class="figure-card-header">
+                    <span class="figure-label">Figure ${displayNum}.</span>
+                    <span class="figure-id-tag"><code> ID: ${fig.id}</code></span>
+                </div>
+                <div class="figure-field-row">
+                    <label>Filename:</label>
+                    <input type="text" class="input-sync figure-input-filename" data-field="filename" />
+                </div>
+                <div class="figure-field-row">
+                    <label>Caption:</label>
+                    <textarea class="input-sync figure-input-caption" data-field="caption" rows="2"></textarea>
+                </div>
+            `;
+        } else {
+            // Update sequence tracking configurations
+            const labelEl = block.querySelector('.figure-label');
+            // Added trailing period back to keep the format identical to the initial render template
+            if (labelEl) labelEl.textContent = `Figure ${displayNum}.`;
+            existingMap.delete(fig.id);
+        }
+
+        container.appendChild(block);
+        block.classList.toggle('is-selected', isSelected);
+
+        // Sync form element content safely without dropping typing caret locations
+        const fileInput = block.querySelector('.figure-input-filename') as HTMLInputElement;
+        if (fileInput && document.activeElement !== fileInput && fileInput.value !== fig.filename) {
+            fileInput.value = fig.filename;
+        }
+
+        const captionInput = block.querySelector('.figure-input-caption') as HTMLTextAreaElement;
+        if (captionInput && document.activeElement !== captionInput && captionInput.value !== fig.caption) {
+            captionInput.value = fig.caption;
+        }
+    });
+
+    // Clean up residual elements safely from deletion sweeps
+    existingMap.forEach(block => block.remove());
+}
+
 /**
  * Renders the passive publication presentation view structure.
  */
 export function renderPrintView(store: KeyStore) {
+    const column = document.querySelector('.print-column');
+    if (!column || column.classList.contains('is-hidden')) return;
+    
     const container = document.getElementById('print-view-container');
     if (!container) return;
 
@@ -413,7 +531,7 @@ export function renderPrintView(store: KeyStore) {
 
     const existingBlocks = Array.from(container.querySelectorAll('.print-step-block')) as HTMLElement[];
     const existingMap = new Map<number, HTMLElement>();
-    
+
     existingBlocks.forEach(block => {
         const idAttr = block.getAttribute('data-id');
         if (idAttr) existingMap.set(Number(idAttr), block);
@@ -425,8 +543,8 @@ export function renderPrintView(store: KeyStore) {
         const dest1 = resolveDestination(c.link1, c.taxa1, idToIndexMap);
         const dest2 = resolveDestination(c.link2, c.taxa2, idToIndexMap);
 
-        const val1 = c.alt1 || '___';
-        const val2 = c.alt2 || '___';
+        const val1 = store.resolveTextReferences(c.alt1) || '___';
+        const val2 = store.resolveTextReferences(c.alt2) || '___';
 
         let block = existingMap.get(c.id);
 

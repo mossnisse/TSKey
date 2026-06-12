@@ -27,8 +27,8 @@ function batchedRefresh(refreshFn: () => void) {
 }
 
 export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
-    const container = document.querySelector('#editor-container') as HTMLElement;
-    if (!container) return;
+    const keyContainer = document.querySelector('#editor-container') as HTMLElement;
+    if (!keyContainer) return;
 
     let typingSessionActive = false;
     let currentEditingFieldKey: string | null = null; // Tracks exactly which card + field is active
@@ -41,7 +41,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     const controller = new AbortController();
     const { signal } = controller;
 
-    container.addEventListener('click', (e: MouseEvent) => {
+    keyContainer.addEventListener('click', (e: MouseEvent) => {
         const target = e.target as HTMLElement;
 
         // If the user clicked the editor background layout area itself, drop focus
@@ -65,77 +65,156 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         batchedRefresh(refreshAll);
     }, { signal });
 
+    document.body.addEventListener('click', (e) => {
+        const target = e.target as HTMLElement;
+        if (target.id === 'add-figure-btn') {
+            store.addFigure("", "");
+            batchedRefresh(refreshAll);
+        }
+    }, { signal });
+
     // CONSOLIDATED INPUT ROUTER (Handles Undo Debouncing + Link Validation)
-    container.addEventListener('input', (e) => {
+    keyContainer.addEventListener('input', (e) => {
         const target = e.target as HTMLInputElement | HTMLTextAreaElement;
         if (!target.classList.contains('input-sync')) return;
         const card = target.closest('.key-card') as HTMLElement;
-        if (!card) return;
+        const figureCard = target.closest('.figure-card') as HTMLElement;
+        if (!card && !figureCard) return;
 
-        const id = Number(card.getAttribute('data-id'));
-        const field = target.getAttribute('data-field')!;
-        const fieldKey = `${id}-${field}`;
-        store.setActiveCard(id);
+        if (card) {
+            const id = Number(card.getAttribute('data-id'));
+            const field = target.getAttribute('data-field')!;
+            const fieldKey = `${id}-${field}`;
+            store.setActiveCouplet(id);
 
-        // Undo History Checkpoint Manager
-        if (!typingSessionActive || currentEditingFieldKey !== fieldKey) {
-            store.endTypingSession();
-            typingSessionActive = true;
-            currentEditingFieldKey = fieldKey;
-        }
-
-        // Clear previous timer to extend the active typing chunk
-        if (typingTimeoutId !== null) {
-            clearTimeout(typingTimeoutId);
-        }
-
-        // Synchronize the text change immediately to the store without waiting
-        let updatePayload: Partial<Omit<Couplet, 'id'>> = {};
-        const currentValue = target.value;
-
-        if (field === 'dest1' || field === 'dest2') {
-            const linkField = field === 'dest1' ? 'link1' : 'link2';
-            const taxaField = field === 'dest1' ? 'taxa1' : 'taxa2';
-
-            // We parse using the current snapshot of the key array
-            const parsed = parseDestinationInput(currentValue, store.getKey());
-            updatePayload[linkField] = parsed.link;
-            updatePayload[taxaField] = parsed.taxa;
-        } else {
-            updatePayload[field as keyof Omit<Couplet, 'id'>] = currentValue as never;
-        }
-
-        store.updateCouplet(id, updatePayload);
-
-        // If user stops typing for 800ms, trigger heavy map lookups & structural warnings
-        typingTimeoutId = window.setTimeout(() => {
-            typingSessionActive = false;
-            typingTimeoutId = null;
-
-            // Perform link validation safely inside the debounce window
-            if (field === 'dest1' || field === 'dest2') {
-                const updatedKey = store.getKey();
-                const currentCouplet = updatedKey.find(c => c.id === id);
-
-                if (currentCouplet) {
-                    const link = field === 'dest1' ? currentCouplet.link1 : currentCouplet.link2;
-                    const taxa = field === 'dest1' ? currentCouplet.taxa1 : currentCouplet.taxa2;
-
-                    // Heavy operation moved completely outside the high-frequency keystroke pipeline
-                    const idToIndexMap = buildIdToIndexMap(updatedKey);
-                    const resolution = resolveDestination(link, taxa, idToIndexMap);
-
-                    target.classList.toggle('input-error', resolution.isUnresolved);
-                }
+            // Undo History Checkpoint Manager
+            if (!typingSessionActive || currentEditingFieldKey !== fieldKey) {
+                store.endTypingSession();
+                typingSessionActive = true;
+                currentEditingFieldKey = fieldKey;
             }
 
-            batchedRefresh(refreshAll);
-        }, DEBOUNCE_TYPING_MS);
+            // Clear previous timer to extend the active typing chunk
+            if (typingTimeoutId !== null) {
+                clearTimeout(typingTimeoutId);
+            }
 
+            // Synchronize the text change immediately to the store without waiting
+            let updatePayload: Partial<Omit<Couplet, 'id'>> = {};
+            const currentValue = target.value;
+
+            if (field === 'dest1' || field === 'dest2') {
+                const linkField = field === 'dest1' ? 'link1' : 'link2';
+                const taxaField = field === 'dest1' ? 'taxa1' : 'taxa2';
+
+                // We parse using the current snapshot of the key array
+                const parsed = parseDestinationInput(currentValue, store.getKey());
+                updatePayload[linkField] = parsed.link;
+                updatePayload[taxaField] = parsed.taxa;
+            } else {
+                updatePayload[field as keyof Omit<Couplet, 'id'>] = currentValue as never;
+            }
+
+            store.updateCouplet(id, updatePayload);
+
+            // If user stops typing for 800ms, trigger heavy map lookups & structural warnings
+            typingTimeoutId = window.setTimeout(() => {
+                typingSessionActive = false;
+                typingTimeoutId = null;
+
+                // Perform link validation safely inside the debounce window
+                if (field === 'dest1' || field === 'dest2') {
+                    const updatedKey = store.getKey();
+                    const currentCouplet = updatedKey.find(c => c.id === id);
+
+                    if (currentCouplet) {
+                        const link = field === 'dest1' ? currentCouplet.link1 : currentCouplet.link2;
+                        const taxa = field === 'dest1' ? currentCouplet.taxa1 : currentCouplet.taxa2;
+
+                        // Heavy operation moved completely outside the high-frequency keystroke pipeline
+                        const idToIndexMap = buildIdToIndexMap(updatedKey);
+                        const resolution = resolveDestination(link, taxa, idToIndexMap);
+
+                        target.classList.toggle('input-error', resolution.isUnresolved);
+                    }
+                }
+
+                batchedRefresh(refreshAll);
+            }, DEBOUNCE_TYPING_MS);
+        }
     }, { signal });
 
+    // --- Figures bindings ---
+    const figureContainer = document.getElementById('figure-container');
+
+    if (figureContainer) {
+        figureContainer.addEventListener('input', (e) => {
+            const target = e.target as HTMLInputElement | HTMLTextAreaElement;
+
+            // Ensure we are interacting with a bound sync field
+            if (!target.classList.contains('input-sync')) return;
+
+            const figureCard = target.closest('.figure-card') as HTMLElement;
+            if (!figureCard) return;
+
+            const figId = Number(figureCard.getAttribute('data-id'));
+            const field = target.getAttribute('data-field') as 'filename' | 'caption';
+            const fieldKey = `fig-${figId}-${field}`;
+
+            // Manage debounce typing timelines
+            if (!typingSessionActive || currentEditingFieldKey !== fieldKey) {
+                store.endTypingSession(); // commit any lingering state frame
+                typingSessionActive = true;
+                currentEditingFieldKey = fieldKey;
+            }
+
+            if (typingTimeoutId !== null) {
+                clearTimeout(typingTimeoutId);
+            }
+
+            // Construct the partial Figure update object dynamically
+            const fields = { [field]: target.value };
+
+            // Dispatch the update to your KeyStore instance
+            store.updateFigure(figId, fields);
+
+            // Debounce structural refreshes to avoid dropping the typing caret position
+            typingTimeoutId = window.setTimeout(() => {
+                typingSessionActive = false;
+                typingTimeoutId = null;
+                batchedRefresh(refreshAll); // Batch updates safely via requestAnimationFrame
+            }, DEBOUNCE_TYPING_MS);
+        }, { signal }); // Inherits abort tracking from the parent listener lifecycle
+    }
+
+    if (figureContainer) {
+        figureContainer.addEventListener('click', (e: MouseEvent) => {
+            const target = e.target as HTMLElement;
+
+            // Clear selection if clicking the background layout area of the figure panel itself
+            if (target === figureContainer) {
+                store.clearFigureSelection();
+                batchedRefresh(refreshAll);
+                return;
+            }
+
+            // Prevent selection toggles if interacting with input fields/textareas
+            if (target.closest('input, textarea')) return;
+
+            const figureCard = target.closest('.figure-card') as HTMLElement;
+            if (!figureCard) return;
+            const id = Number(figureCard.getAttribute('data-id'));
+
+            // Support multi-select with command/modifier keys
+            const multiSelect = e.ctrlKey || e.metaKey || e.shiftKey;
+
+            store.toggleFigureSelection(id, multiSelect);
+            batchedRefresh(refreshAll);
+        }, { signal });
+    }
+
     // Centralized Drag and Form Text Highlight Mitigation
-    container.addEventListener('focusin', (e) => {
+    keyContainer.addEventListener('focusin', (e) => {
         const target = e.target as HTMLElement;
 
         if (target.matches('input, textarea')) {
@@ -154,7 +233,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     }, { signal });
 
     // Centralized Serialization Execution Focusout
-    container.addEventListener('focusout', (e: FocusEvent) => {
+    keyContainer.addEventListener('focusout', (e: FocusEvent) => {
         const target = e.target as HTMLElement;
 
         if (target.matches('input, textarea')) {
@@ -180,7 +259,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
                     typingTimeoutId = null;
                 }
 
-                store.clearActiveCard();
+                store.clearActiveCouplet();
 
                 // Trigger the warning toast if the field has an unresolved destination
                 if (target.classList.contains('input-error') && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) && card) {
@@ -233,13 +312,13 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     }, { signal });
 
     // Centralized HTML5 Drag-and-Drop Operations
-    container.addEventListener('dragstart', (e) => {
+    keyContainer.addEventListener('dragstart', (e) => {
         const target = e.target as HTMLElement;
         const card = target.closest('.key-card') as HTMLElement;
         if (!card) return;
 
         const id = Number(card.getAttribute('data-id'));
-        store.startDragging(id);
+        store.startDraggingCouplet(id);
         card.classList.remove('is-hovered', 'is-active');
         requestAnimationFrame(() => {
             card.style.opacity = '0.4';
@@ -255,17 +334,17 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         }
     };
 
-    container.addEventListener('dragend', (e) => {
+    keyContainer.addEventListener('dragend', (e) => {
         const target = e.target as HTMLElement;
         const card = target.closest('.key-card') as HTMLElement;
         if (!card) return;
 
         card.style.opacity = '1';
-        store.stopDragging();
+        store.stopDraggingCouplet();
         clearDropMarkers();
     }, { signal });
 
-    container.addEventListener('dragover', (e: DragEvent) => {
+    keyContainer.addEventListener('dragover', (e: DragEvent) => {
         e.preventDefault();
 
         // --- EDGE AUTO-SCROLL LOGIC ---
@@ -279,25 +358,25 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         updateTargetTrackers(e.clientY, e.target as HTMLElement);
     }, { signal });
 
-    container.addEventListener('dragleave', (e: DragEvent) => {
+    keyContainer.addEventListener('dragleave', (e: DragEvent) => {
         const target = e.relatedTarget as HTMLElement;
-        if (!target || !container.contains(target)) {
+        if (!target || !keyContainer.contains(target)) {
             clearDropMarkers();
         }
     }, { signal });
 
-    container.addEventListener('drop', (e) => {
+    keyContainer.addEventListener('drop', (e) => {
         e.preventDefault();
         const target = e.target as HTMLElement;
         const card = target.closest('.key-card') as HTMLElement;
         if (!card) return;
         const coupletId = Number(card.getAttribute('data-id'));
-        if (store.draggedId === null || store.draggedId === coupletId) return;
+        if (store.draggedCoupletId === null || store.draggedCoupletId === coupletId) return;
 
         // Unified source of truth: Read directly from the target card's layout classes
         const position: 'above' | 'below' = card.classList.contains('drag-drop-above') ? 'above' : 'below';
 
-        store.reorderCouplets(store.draggedId, coupletId, position);
+        store.reorderCouplets(store.draggedCoupletId, coupletId, position);
         batchedRefresh(refreshAll);
     }, { signal });
 
@@ -409,10 +488,10 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     }, { signal });
 
     document.querySelector('#cmd-cut')?.addEventListener('click', () => {
-        const selectedCount = store.getSelectedIds().size;
+        const selectedCount = store.getSelectedCoupletIds().size;
         if (selectedCount > 0) {
             if (confirm(`Confirm cutting ${selectedCount} highlighted step(s) to clipboard?`)) {
-                store.cutSelectedCards();
+                store.cutSelectedCouplets();
                 showToast(`Cut ${selectedCount} step(s) to clipboard.`, 'success');
                 batchedRefresh(refreshAll);
             }
@@ -420,9 +499,9 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     }, { signal });
 
     document.querySelector('#cmd-copy')?.addEventListener('click', () => {
-        const selectedCount = store.getSelectedIds().size;
+        const selectedCount = store.getSelectedCoupletIds().size;
         if (selectedCount > 0) {
-            store.copySelectedCards();
+            store.copySelectedCouplets();
             showToast(`Copied ${selectedCount} step(s) to clipboard.`, 'success');
             batchedRefresh(refreshAll);
         }
@@ -437,18 +516,26 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     }, { signal });
 
     document.querySelector('#cmd-delete')?.addEventListener('click', () => {
-        const selectedCount = store.getSelectedIds().size;
-        if (selectedCount > 0) {
+        const selectedKeyCount = store.getSelectedCoupletIds().size;
+        const selectedFigCount = store.getSelectedFigureIds().size;
+        if (selectedKeyCount > 0) {
             if (confirm("Confirm removing highlighted key steps?")) {
-                store.deleteSelected();
-                showToast(`Deleted ${selectedCount} step(s).`, 'success');
+                store.deleteSelectedCouplets();
+                showToast(`Deleted ${selectedKeyCount} step(s).`, 'success');
+                batchedRefresh(refreshAll);
+            }
+        }
+        if (selectedFigCount > 0) {
+            if (confirm("Confirm removing highlighted figures?")) {
+                store.deleteSelectedFigures();
+                showToast(`Deleted ${selectedKeyCount} figure(s).`, 'success');
                 batchedRefresh(refreshAll);
             }
         }
     }, { signal });
 
     document.querySelector('#cmd-swap')?.addEventListener('click', () => {
-        if (store.getSelectedIds().size > 0) {
+        if (store.getSelectedCoupletIds().size > 0) {
             if (store.swapSelectedCouplets()) {
                 showToast("Swapped choice configurations.", "success");
                 batchedRefresh(refreshAll);
@@ -471,10 +558,30 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         batchedRefresh(refreshAll);
     }, { signal });
 
+    // --- View Menu action bindings ---
+    document.querySelector('#cmd-toggle-figures')?.addEventListener('click', () => {
+        const figureColumn = document.querySelector('.figure-column');
+        if (!figureColumn) return;
+        figureColumn.classList.toggle('is-hidden');
+        batchedRefresh(refreshAll); 
+    }, { signal });
+
+    document.querySelector('#cmd-toggle-print')?.addEventListener('click', () => {
+        const printColumn = document.querySelector('.print-column');
+        if (!printColumn) return;
+        printColumn.classList.toggle('is-hidden');
+        batchedRefresh(refreshAll);
+    }, { signal });
 
     // --- TOOLS MENU ACTION BINDINGS ---
-    document.querySelector('#cmd-reorder')?.addEventListener('click', () => {
-        store.autoOrder();
+    document.querySelector('#cmd-reorder-couplets')?.addEventListener('click', () => {
+        store.autoOrderCouplets();
+        showToast("Key steps reordered with shorter branches first!", "success");
+        batchedRefresh(refreshAll);
+    }, { signal });
+
+    document.querySelector('#cmd-reorder-couplets')?.addEventListener('click', () => {
+        store.autoOrderCouplets();
         showToast("Key steps reordered with shorter branches first!", "success");
         batchedRefresh(refreshAll);
     }, { signal });
@@ -589,6 +696,18 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
                 executePaste(store, refreshAll, position);
                 return;
             }
+
+           if (e.shiftKey && e.key.toLowerCase() === 'f') {
+                e.preventDefault();
+                document.querySelector<HTMLButtonElement>('#cmd-toggle-figures')?.click();
+                return;
+            }
+
+            if (e.shiftKey && e.key.toLowerCase() === 'p') {
+                e.preventDefault();
+                document.querySelector<HTMLButtonElement>('#cmd-toggle-print')?.click();
+                return;
+            }
         }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -616,7 +735,7 @@ function createNewCoupletWithFocus(store: KeyStore, refreshAll: () => void) {
 
 function executePaste(store: KeyStore, refreshAll: () => void, position: 'above' | 'below') {
     let targetId: number | undefined = undefined;
-    const selectedIds = store.getSelectedIds();
+    const selectedIds = store.getSelectedCoupletIds();
     const key = store.getKey();
 
     const visibleSelection = key.filter(couplet => selectedIds.has(couplet.id));
@@ -632,7 +751,7 @@ function executePaste(store: KeyStore, refreshAll: () => void, position: 'above'
     }
 
     // If the key is completely empty,  initialize the first cards normally.
-    if (store.pasteCards(targetId, position)) {
+    if (store.pasteCouplets(targetId, position)) {
         const locationText = visibleSelection.length > 0
             ? `${position} selection`
             : (position === 'above' ? 'at the beginning' : 'at the end');
@@ -641,3 +760,4 @@ function executePaste(store: KeyStore, refreshAll: () => void, position: 'above'
         batchedRefresh(refreshAll);
     }
 }
+
