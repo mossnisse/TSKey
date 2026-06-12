@@ -1,6 +1,6 @@
 // eventController.ts
 import type { KeyStore, Couplet } from './store.ts';
-import { renderPrintView, showToast } from './uiRenderer.ts';
+import { showToast } from './uiRenderer.ts';
 import { IS_MAC, resolveDestination, parseDestinationInput, buildIdToIndexMap } from './utils.ts';
 import { exportKeyToHTML } from './exporters/htmlExporter.ts';
 import { exportKeyToLaTeX } from './exporters/latexExporter.ts';
@@ -74,7 +74,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
         const id = Number(card.getAttribute('data-id'));
         const field = target.getAttribute('data-field')!;
-        const key = store.getKey();
         const fieldKey = `${id}-${field}`;
         store.setActiveCard(id);
 
@@ -90,29 +89,49 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             clearTimeout(typingTimeoutId);
         }
 
-        // If user stops typing for 800ms, trigger full re-evaluation of structural warnings safely
-        typingTimeoutId = window.setTimeout(() => {
-            typingSessionActive = false;
-            typingTimeoutId = null;
-            batchedRefresh(refreshAll);
-        }, DEBOUNCE_TYPING_MS);
-
+        // Synchronize the text change immediately to the store without waiting
         let updatePayload: Partial<Omit<Couplet, 'id'>> = {};
+        const currentValue = target.value;
 
         if (field === 'dest1' || field === 'dest2') {
             const linkField = field === 'dest1' ? 'link1' : 'link2';
             const taxaField = field === 'dest1' ? 'taxa1' : 'taxa2';
-            const parsed = parseDestinationInput(target.value, key);
+
+            // We parse using the current snapshot of the key array
+            const parsed = parseDestinationInput(currentValue, store.getKey());
             updatePayload[linkField] = parsed.link;
             updatePayload[taxaField] = parsed.taxa;
-            const idToIndexMap = buildIdToIndexMap(key);
-            const resolution = resolveDestination(parsed.link, parsed.taxa, idToIndexMap);
-            target.classList.toggle('input-error', resolution.isUnresolved);
         } else {
-            updatePayload[field as keyof Omit<Couplet, 'id'>] = target.value as never;
+            updatePayload[field as keyof Omit<Couplet, 'id'>] = currentValue as never;
         }
 
         store.updateCouplet(id, updatePayload);
+
+        // If user stops typing for 800ms, trigger heavy map lookups & structural warnings
+        typingTimeoutId = window.setTimeout(() => {
+            typingSessionActive = false;
+            typingTimeoutId = null;
+
+            // Perform link validation safely inside the debounce window
+            if (field === 'dest1' || field === 'dest2') {
+                const updatedKey = store.getKey();
+                const currentCouplet = updatedKey.find(c => c.id === id);
+
+                if (currentCouplet) {
+                    const link = field === 'dest1' ? currentCouplet.link1 : currentCouplet.link2;
+                    const taxa = field === 'dest1' ? currentCouplet.taxa1 : currentCouplet.taxa2;
+
+                    // Heavy operation moved completely outside the high-frequency keystroke pipeline
+                    const idToIndexMap = buildIdToIndexMap(updatedKey);
+                    const resolution = resolveDestination(link, taxa, idToIndexMap);
+
+                    target.classList.toggle('input-error', resolution.isUnresolved);
+                }
+            }
+
+            batchedRefresh(refreshAll);
+        }, DEBOUNCE_TYPING_MS);
+
     }, { signal });
 
     // Centralized Drag and Form Text Highlight Mitigation
@@ -326,13 +345,18 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             store.saveToStorage();
             showToast("💾 Changes saved to Browser Local Storage!", "success");
             batchedRefresh(refreshAll);
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error("Save Operation Failed: ", error);
             let userMessage = "Failed to save data. An unknown error occurred.";
-            if (error.name === 'QuotaExceededError' || error.code === 22) {
-                userMessage = "⚠️ Save Failed: Browser Local Storage is completely full! Please free up space or export your key as a JSON file.";
-            } else if (error.message) {
-                userMessage = `⚠️ Save Failed: ${error.message}`;
+
+            if (error instanceof Error) {
+                const code = 'code' in error ? (error as { code?: unknown }).code : undefined;
+
+                if (error.name === 'QuotaExceededError' || code === 22) {
+                    userMessage = "⚠️ Save Failed: Browser Local Storage is completely full! Please free up space or export your key as a JSON file.";
+                } else {
+                    userMessage = `⚠️ Save Failed: ${error.message}`;
+                }
             }
             alert(userMessage);
         }
@@ -465,6 +489,17 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
  */
 export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) {
     const handleKeyDown = (e: KeyboardEvent) => {
+        const activeModal = document.querySelector('.modal-overlay[style*="display: flex"]') as HTMLElement | null;
+        if (activeModal) {
+            // If they press Escape, let it fall through or close the modal
+            if (e.key === 'Escape') return;
+
+            // Block the Tab key entirely from leaking into the underlying canvas cards
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                return;
+            }
+        }
         const hasModifier = IS_MAC ? e.metaKey : e.ctrlKey;
         const activeElement = document.activeElement;
         const isTyping = activeElement && (

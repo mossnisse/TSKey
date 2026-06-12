@@ -24,13 +24,28 @@ export function triggerFileDownload(content: string, filename: string, mimeType:
             url = URL.createObjectURL(blob);
         } catch (cspError) {
             console.warn("Blob URL creation blocked by environment security constraints. Attempting standard Base64 encoding fallback.", cspError);
+
             const binaryBytes = new TextEncoder().encode(content);
-            let binaryString = '';
-            for (let i = 0; i < binaryBytes.byteLength; i++) {
-                binaryString += String.fromCharCode(binaryBytes[i]);
+
+            const chunks: string[] = [];
+            const chunkSize = 8192; // 8KB chunks are safe and highly optimized by JS engines
+
+            for (let i = 0; i < binaryBytes.length; i += chunkSize) {
+                let chunkString = '';
+                const end = Math.min(i + chunkSize, binaryBytes.length);
+                for (let j = i; j < end; j++) {
+                    chunkString += String.fromCharCode(binaryBytes[j]);
+                }
+                chunks.push(chunkString);
             }
-            const encodedContent = btoa(binaryString);
-            url = `data:${mimeType};base64,${encodedContent}`;
+
+            const encodedContent = btoa(chunks.join(''));
+
+            const safeMimeType = mimeType.toLowerCase().includes('charset=')
+                ? mimeType
+                : `${mimeType};charset=utf-8`;
+
+            url = `data:${safeMimeType};base64,${encodedContent}`;
         }
 
         downloadAnchor = document.createElement('a');

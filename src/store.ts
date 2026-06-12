@@ -526,6 +526,10 @@ export class KeyStore {
             console.warn(`Aborted reordering: srcIdx (${srcIdx}) or targetIdx (${targetIdx}) was invalid.`);
             return false;
         }
+        if (targetIdx === -1) {
+            console.warn(`Aborted reordering: Target ID (${targetId}) not found.`);
+            return false;
+        }
 
         this.saveCheckpoint();
         const [movedItem] = arr.splice(srcIdx, 1);
@@ -558,21 +562,27 @@ export class KeyStore {
         );
 
         // Helper closures to cleanly detect string and link states
-        const hasTaxa = (taxaStr: string) => !!taxaStr && taxaStr.trim() !== '';
-        const isNumericReference = (taxaStr: string) => /^\d+$/.test(taxaStr.trim());
         const isValidLink = (linkId: number) => linkId !== 0 && idToCoupletMap.has(linkId);
 
-        type BranchType =
-            | 'terminal'
-            | 'unresolved'
-            | 'linked'
-            | 'broken';
+        type BranchType = 'terminal' | 'unresolved' | 'linked' | 'broken';
 
+        // Consolidated branch classifier
         const classifyBranch = (taxaStr: string, linkId: number): BranchType => {
-            if (hasTaxa(taxaStr) && !isNumericReference(taxaStr)) return 'terminal';
+            const trimmed = taxaStr.trim();
+            const isNumeric = /^\d+$/.test(trimmed);
+
+            if (trimmed !== '' && !isNumeric) return 'terminal';
             if (isValidLink(linkId)) return 'linked';
-            if (isNumericReference(taxaStr)) return 'unresolved';
+            if (isNumeric) return 'unresolved';
             return 'broken';
+        };
+
+        // Declarative rank lookup object (replaces getChoiceRank function)
+        const rankMap: Record<BranchType, number> = {
+            terminal: 1,
+            linked: 2,
+            unresolved: 2, // Both imply continuing paths
+            broken: 3      // Implies a long/broken branch
         };
 
         // Compute branch depths recursively (Memoized to prevent infinite loops on cycles)
@@ -585,12 +595,12 @@ export class KeyStore {
             if (type === 'terminal') return 0;
             if (type === 'linked') return calculateBranchDepth(linkId);
             // Treat the unresolved numeric string as its simulated depth (higher number = deeper branch)
-            if (type === 'unresolved') return parseInt(taxaStr.trim(), 10) || 0;
-            return 0; // broken, should'nt it be treated as an long branch?
+            if (type === 'unresolved') return parseInt(taxaStr.trim(), 10) || 0;  // sketchy but may be the best we can do, number only imply relative length
+            return 10000; // if link is broken, count it as an long branch
         };
 
         const calculateBranchDepth = (id: number): number => {
-            if (id === 0 || !idToCoupletMap.has(id)) return 0;
+            if (!isValidLink(id)) return 0;
             if (depthCache.has(id)) return depthCache.get(id)!;
             if (dynamicVisited.has(id)) return 0; // Handle cyclic loops gracefully
 
@@ -616,17 +626,8 @@ export class KeyStore {
             const type1 = classifyBranch(c.taxa1, c.link1);
             const type2 = classifyBranch(c.taxa2, c.link2);
 
-            const getChoiceRank = (type: BranchType): number => {
-                switch (type) {
-                    case 'terminal': return 1;
-                    case 'linked':
-                    case 'unresolved': return 2; // Grouped: both imply continuing paths
-                    case 'broken': return 3;  // imply it should be an long branch
-                }
-            };
-
-            const rank1 = getChoiceRank(type1);
-            const rank2 = getChoiceRank(type2);
+            const rank1 = rankMap[type1];
+            const rank2 = rankMap[type2];
 
             let shouldSwap = false;
 
