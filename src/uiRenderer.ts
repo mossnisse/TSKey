@@ -27,36 +27,30 @@ function syncField(parent: HTMLElement, selector: string, value: string, forceUp
 export function initializeShell(appDiv: HTMLDivElement) {
     appDiv.innerHTML = `
     <div class="app-shell">
-      <div class="app-menu-bar">
+      <div class="app-menu-bar" role="menubar" aria-label="Application Menu">
         
-        <div class="menu-item">
-          <button class="menu-trigger">File</button>
-          <div class="menu-dropdown">
-            <button id="cmd-save" class="dropdown-action">
+        <div class="menu-item" role="none">
+          <button id="menu-file-trigger" class="menu-trigger" 
+                  role="menuitem" 
+                  aria-haspopup="menu" 
+                  aria-expanded="false">File</button>
+          
+          <div class="menu-dropdown" role="menu" aria-labelledby="menu-file-trigger">
+            <button id="cmd-save" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>💾 Save to local Browser Memory</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘S' : 'Ctrl+S'}</span>
             </button>
-            <div class="menu-divider"></div>
-            <button id="cmd-trigger-import" class="dropdown-action">
+            <div class="menu-divider" role="separator"></div>
+            <button id="cmd-trigger-import" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>📤 Import JSON Dataset...</span>
             </button>
-            <button id="cmd-export-json" class="dropdown-action">
+            <button id="cmd-export-json" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>📥 Export Native JSON File...</span>
-            </button>
-            <div class="menu-divider"></div>
-            <button id="cmd-export-text" class="dropdown-action">
-              <span>📄 Export to Plain Text file(.txt)</span>
-            </button>
-            <button id="cmd-export-html" class="dropdown-action">
-              <span>🌐 Export to Web Page (.html)</span>
-            </button>
-            <button id="cmd-export-latex" class="dropdown-action">
-              <span>🔏 Export to LaTeX Document (.tex)</span>
             </button>
           </div>
         </div>
 
-        <div class="menu-item">
+        <div class="menu-item" role="none">
           <button class="menu-trigger">Edit</button>
           <div class="menu-dropdown">
             <button id="cmd-undo" class="dropdown-action">
@@ -82,7 +76,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
             </button>
             <button id="cmd-paste-above" class="dropdown-action">
               <span>📥 Paste above selections</span>
-              <span class="menu-shortcut">${IS_MAC ? '⌘V' : 'Shift+Ctrl+V'}</span>
+              <span class="menu-shortcut">${IS_MAC ? 'Shift+⌘V' : 'Shift+Ctrl+V'}</span>
             </button>
             <button id="cmd-delete" class="dropdown-action">
               <span>🗑️ Delete Selected Cards</span>
@@ -107,7 +101,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
           </div>
         </div>
 
-        <div class="menu-item">
+        <div class="menu-item" role="none">
           <button class="menu-trigger">View</button>
           <div class="menu-dropdown">
             <button id="cmd-toggle-figures" class="dropdown-action">
@@ -121,7 +115,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
           </div>
         </div>
 
-        <div class="menu-item">
+        <div class="menu-item" role="none">
           <button class="menu-trigger">Tools</button>
           <div class="menu-dropdown">
             <button id="cmd-reorder-couplets" class="dropdown-action">
@@ -133,7 +127,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
           </div>
         </div>
 
-        <div class="menu-item">
+        <div class="menu-item" role="none">
           <button class="menu-trigger">Window</button>
           <div class="menu-dropdown">
             <button id="cmd-open-shortcuts" class="dropdown-action">
@@ -254,6 +248,7 @@ export function renderMenu(store: KeyStore) {
     const selectedCoupletCount = store.getSelectedCoupletIds().size;
     const selectedFigureCount = store.getSelectedFigureIds().size;
     const hasSelection = selectedCoupletCount > 0 || selectedFigureCount > 0;
+    const hasCoupletSelection = selectedCoupletCount > 0;
     const hasKeyElements = store.getKey().length > 0;
     const hasClipboard = store.hasClipboardData();
 
@@ -291,13 +286,13 @@ export function renderMenu(store: KeyStore) {
     if (undoBtn) undoBtn.disabled = !store.canUndo;
     if (redoBtn) redoBtn.disabled = !store.canRedo;
 
-    if (cutBtn) cutBtn.disabled = !hasSelection;
-    if (copyBtn) copyBtn.disabled = !hasSelection;
+    if (cutBtn) cutBtn.disabled = !hasCoupletSelection;
+    if (copyBtn) copyBtn.disabled = !hasCoupletSelection;
     if (deleteBtn) {
         deleteBtn.disabled = !hasSelection;
     }
     if (swapBtn) {
-        swapBtn.disabled = !hasSelection;
+        swapBtn.disabled = !hasCoupletSelection;
     }
     if (clearBtn) {
         clearBtn.disabled = !hasSelection;
@@ -308,7 +303,8 @@ export function renderMenu(store: KeyStore) {
 
     if (reorderBtn) reorderBtn.disabled = !hasKeyElements;
 
-    // view menu synchronization 
+    // view menu synchronization - reads panel visibility state and updates button labels accordingly
+    // (the actual toggling of panels is handled by the click event listeners in eventController)
     const toggleFiguresBtn = getBtn('cmd-toggle-figures');
     const togglePrintBtn = getBtn('cmd-toggle-print');
     const figureColumn = document.querySelector('.figure-column');
@@ -386,11 +382,11 @@ export function renderEditorCards(store: KeyStore) {
                 if (badgeEl.textContent !== badgeLabel) badgeEl.textContent = badgeLabel;
             }
 
-            syncField(card, 'textarea[data-field="alt1"]', couplet.alt1);
+            syncField(card, 'textarea[data-field="alt1"]', store.decodeTextReferencesForEditor(couplet.alt1));
             const dest1El = syncField(card, 'input[data-field="dest1"]', dest1.inputValue);
             dest1El?.classList.toggle('input-error', dest1.isUnresolved);
 
-            syncField(card, 'textarea[data-field="alt2"]', couplet.alt2);
+            syncField(card, 'textarea[data-field="alt2"]', store.decodeTextReferencesForEditor(couplet.alt2));
             const dest2El = syncField(card, 'input[data-field="dest2"]', dest2.inputValue);
             dest2El?.classList.toggle('input-error', dest2.isUnresolved);
 
@@ -424,7 +420,7 @@ export function renderEditorCards(store: KeyStore) {
                   <span class="drag-handle">☰</span>
                 </div>
                 <div class="card-row">
-                  <textarea class="input-sync card-textarea" data-field="alt1" placeholder="Enter diagnostic trait details...">${escapeHTML(couplet.alt1)}</textarea>
+                  <textarea class="input-sync card-textarea" data-field="alt1" placeholder="Enter diagnostic trait details...">${escapeHTML(store.decodeTextReferencesForEditor(couplet.alt1))}</textarea>
                   <div class="card-meta-pane">
                     <label class="meta-label">→
                       <input type="text" class="input-sync input-destination ${dest1.isUnresolved ? 'input-error' : ''}" data-field="dest1" placeholder="Taxon or Step #" value="${escapeHTML(dest1.inputValue)}" />
@@ -432,7 +428,7 @@ export function renderEditorCards(store: KeyStore) {
                   </div>
                 </div>
                 <div class="card-row">
-                  <textarea class="input-sync card-textarea" data-field="alt2" placeholder="Enter contrast alternative description...">${escapeHTML(couplet.alt2)}</textarea>
+                  <textarea class="input-sync card-textarea" data-field="alt2" placeholder="Enter contrast alternative description...">${escapeHTML(store.decodeTextReferencesForEditor(couplet.alt2))}</textarea>
                   <div class="card-meta-pane">
                     <label class="meta-label">→
                       <input type="text" class="input-sync input-destination ${dest2.isUnresolved ? 'input-error' : ''}" data-field="dest2" placeholder="Taxon or Step #" value="${escapeHTML(dest2.inputValue)}" />
@@ -476,8 +472,7 @@ export function renderFigures(store: KeyStore) {
             block.setAttribute('data-id', fig.id.toString());
             block.innerHTML = `
                     <div class="figure-card-header">
-                        <span class="figure-card-title">Figure ${displayNum}.</span>
-                        <span class="figure-id-tag"><code>ID: ${fig.id}</code></span>
+                        <span class="figure-card-title">${displayNum}.</span>
                     </div>
                     
                     <div class="figure-field-row">
@@ -494,11 +489,13 @@ export function renderFigures(store: KeyStore) {
             // Update sequence tracking configurations
             const labelEl = block.querySelector('.figure-card-title');
             // Added trailing period back to keep the format identical to the initial render template
-            if (labelEl) labelEl.textContent = `Figure ${displayNum}.`;
+            if (labelEl) labelEl.textContent = `${displayNum}.`;
             existingMap.delete(fig.id);
         }
 
-        container.appendChild(block);
+        if (container.children[index] !== block) {
+            container.insertBefore(block, container.children[index] || null);
+        }
         block.classList.toggle('is-selected', isSelected);
 
         // Sync form element content safely without dropping typing caret locations
@@ -584,7 +581,6 @@ export function renderPrintView(store: KeyStore) {
             block = document.createElement('div');
             block.className = 'print-step-block';
             block.setAttribute('data-id', c.id.toString());
-            block.style.display = 'contents';
 
             block.innerHTML = `
                 <div class="print-step-num"></div>

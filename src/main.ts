@@ -1,8 +1,7 @@
-// main.ts - Updated application bootstrap routine
+// main.ts - Updated application bootstrap routine with lifecycle controls
 
 import './style.css'; 
 import { KeyStore } from './store.ts';
-// Added renderFigures to the import statement
 import { initializeShell, renderEditorCards, renderPrintView, renderMenu, renderFigures } from './uiRenderer.ts';
 import { setupGlobalListeners, setupKeyboardShortcuts } from './eventController.ts';
 
@@ -34,21 +33,30 @@ const refreshAll = () => {
     renderMenu(store);
     renderEditorCards(store);
     renderPrintView(store);
-    renderFigures(store); // Added to the refresh painter cycle loop
+    renderFigures(store); 
 };
 
+// Track all cleanups needed if the app unmounts or reloads via HMR
+const cleanups: Array<() => void> = [];
+
 // Unsaved Progress Page Discard Guard Listener
-window.addEventListener('beforeunload', (event) => {
+const handleBeforeUnload = (event: BeforeUnloadEvent) => {
     if (store.hasUnsavedChanges()) {
         event.preventDefault();
         event.returnValue = '';
     }
-});
+};
+window.addEventListener('beforeunload', handleBeforeUnload);
+cleanups.push(() => window.removeEventListener('beforeunload', handleBeforeUnload));
 
 // Assemble Interactive Frame Environments Context
 initializeShell(appContainer);
-setupGlobalListeners(store, refreshAll);
-setupKeyboardShortcuts(store, refreshAll);
 
-// Initial UI Paint Sweep
+// FIX: Capture and store the cleanup tokens
+const destroyGlobalListeners = setupGlobalListeners(store, refreshAll);
+const destroyKeyboardShortcuts = setupKeyboardShortcuts(store, refreshAll);
+
+cleanups.push(destroyGlobalListeners);
+cleanups.push(destroyKeyboardShortcuts);
+
 refreshAll();

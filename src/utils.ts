@@ -27,12 +27,11 @@ export function triggerFileDownload(content: string, filename: string, mimeType:
 
             const binaryBytes = new TextEncoder().encode(content);
 
-            // Safe, modern binary conversion mechanism that handles chunks without mutating callstack overhead
             let binaryString = '';
             const chunkSize = 8192;
             for (let i = 0; i < binaryBytes.length; i += chunkSize) {
                 const chunk = binaryBytes.subarray(i, i + chunkSize);
-                // @ts-ignore - Fast conversion mechanism using native stack spreads safely throttled by chunk size
+                // @ts-ignore
                 binaryString += String.fromCharCode.apply(null, chunk);
             }
 
@@ -48,27 +47,38 @@ export function triggerFileDownload(content: string, filename: string, mimeType:
         downloadAnchor.href = url;
         downloadAnchor.download = filename;
 
-        // Visual or structural properties to keep it completely invisible from layout shifting
         downloadAnchor.style.display = 'none';
         downloadAnchor.style.pointerEvents = 'none';
 
         document.body.appendChild(downloadAnchor);
         downloadAnchor.click();
+
+        // FIX: Capture local references for the asynchronous macro-task queue
+        const finalAnchor = downloadAnchor;
+        const finalUrl = url;
+
+        // Give the browser's download manager 200ms to process the stream safely
+        setTimeout(() => {
+            if (finalAnchor && document.body.contains(finalAnchor)) {
+                document.body.removeChild(finalAnchor);
+            }
+            if (finalUrl && finalUrl.startsWith('blob:')) {
+                URL.revokeObjectURL(finalUrl);
+            }
+        }, 200);
+
     } catch (globalError) {
         console.error("An unhandled exception occurred during file synthesis/download processing:", globalError);
-    } finally {
-        // Immediate DOM cleanup
+        
+        // Fallback: If an error occurs BEFORE scheduling the timeout, clean up immediately
         if (downloadAnchor && document.body.contains(downloadAnchor)) {
             document.body.removeChild(downloadAnchor);
         }
-
-        // Immediate memory reclamation - no setTimeout needed
         if (url && url.startsWith('blob:')) {
             URL.revokeObjectURL(url);
         }
     }
 }
-
 /**
  * Sniffs client-side agent configurations to check if the target ecosystem
  */

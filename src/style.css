@@ -191,9 +191,19 @@
   padding: 4px 0;
 }
 
-/* Hover-Reveal Logic Cascade */
-.menu-item:hover .menu-dropdown {
+/* Reveal Dropdown when hovered OR when explicitly opened via keyboard */
+.menu-item:hover .menu-dropdown,
+.menu-trigger[aria-expanded="true"] + .menu-dropdown {
   display: block;
+}
+
+/* Ensure active top bar triggers look active when expanded via keyboard */
+.menu-trigger:focus-visible,
+.menu-trigger[aria-expanded="true"] {
+  background-color: #e5e5e5;
+  border-radius: 4px;
+  outline: 2px solid #2196f3;
+  outline-offset: -2px;
 }
 
 /* Inner Action Buttons */
@@ -211,10 +221,19 @@
   align-items: center;
 }
 
-.dropdown-action:hover {
-  background-color: #007acc;
+.dropdown-action:hover,
+.dropdown-action:focus {
+  background-color: var(--color-primary, #2196f3);
   color: #ffffff;
+  outline: none; /* Safely remove browser ring since we provide full row background coloring */
 }
+
+/* Ensure shortcut text remains legible on focus row color inversion */
+.dropdown-action:hover .menu-shortcut,
+.dropdown-action:focus .menu-shortcut {
+  color: #e0e0e0;
+}
+
 
 /* Disabled Action Treatment inside Desktop Menus */
 .dropdown-action:disabled {
@@ -679,16 +698,6 @@
     border-bottom-color: var(--color-primary);
 }
 
-/* Clean reference badge wrapper when figures are empty */
-.figures-empty-state {
-    padding: 32px;
-    text-align: center;
-    color: var(--color-text-muted);
-    font-size: 14px;
-    font-style: italic;
-    user-select: none;
-}
-
 /* ==========================================
    PASSIVE PUBLICATION PRINT VIEW PANELS
    ========================================== */
@@ -726,6 +735,10 @@
     font-weight: bold;
     align-self: start;
     color: var(--color-text);
+}
+
+.print-step-block {
+    display: contents;
 }
 
 .print-row {

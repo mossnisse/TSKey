@@ -110,6 +110,7 @@ export class KeyStore {
 
     public markSaved() {
         this.savedHistoryIndex = this.currentHistoryIndex;
+        this.hasUncommittedChanges = false;
     }
 
     public hasUnsavedChanges(): boolean {
@@ -548,12 +549,8 @@ export class KeyStore {
         const srcIdx = arr.findIndex(c => c.id === srcId);
         const targetIdx = arr.findIndex(c => c.id === targetId);
 
-        if (srcIdx === -1 ) {
-            console.warn(`Aborted reordering: srcIdx (${srcIdx}) was invalid.`);
-            return false;
-        }
-        if (targetIdx === -1) {
-            console.warn(`Aborted reordering: Target ID (${targetId}) not found.`);
+        if (srcIdx === -1 || targetIdx === -1) {
+            console.warn(`Aborted reordering: srcIdx (${srcIdx}) or targetIdx (${targetIdx}) was invalid.`);
             return false;
         }
 
@@ -870,15 +867,25 @@ export class KeyStore {
             for (const text of fieldsToScan) {
                 if (!text) continue;
 
-                // Regex matching [fig: VALUE] tokens
-                const tokenRegex = /\[fig:\s*(.*?)\s*\]/gi;
                 let match: RegExpExecArray | null;
 
-                while ((match = tokenRegex.exec(text)) !== null) {
+                // Primary: match new storage format [figID: N] — value is always an internal ID
+                const idTokenRegex = /\[figID:\s*(\d+)\s*\]/gi;
+                while ((match = idTokenRegex.exec(text)) !== null) {
+                    const id = parseInt(match[1].trim(), 10);
+                    const matchedFig = idToFig.get(id);
+                    if (matchedFig && !seenFigureIds.has(matchedFig.id)) {
+                        seenFigureIds.add(matchedFig.id);
+                        orderedFigures.push(matchedFig);
+                    }
+                }
+
+                // Legacy: match old [fig: VALUE] format — numeric = old ID, text = filename
+                const legacyTokenRegex = /\[fig:\s*(.*?)\s*\]/gi;
+                while ((match = legacyTokenRegex.exec(text)) !== null) {
                     const trimmedValue = match[1].trim();
                     let matchedFig: Figure | undefined = undefined;
 
-                    // Match logic: Try parsing as ID number first, then fallback to case-insensitive filename
                     const targetId = Number(trimmedValue);
                     if (!isNaN(targetId) && idToFig.has(targetId)) {
                         matchedFig = idToFig.get(targetId);
@@ -889,7 +896,6 @@ export class KeyStore {
                         }
                     }
 
-                    // If a valid figure is found and hasn't been collected yet, record it
                     if (matchedFig && !seenFigureIds.has(matchedFig.id)) {
                         seenFigureIds.add(matchedFig.id);
                         orderedFigures.push(matchedFig);
@@ -984,8 +990,8 @@ export class KeyStore {
     public saveToStorage(): void {
         const currentData = this.state.dichotomousKey;
 
-        if (!Array.isArray(currentData) || currentData.length === 0) {
-            throw new Error("Cannot save an empty or corrupted data structure.");
+        if (!Array.isArray(currentData)) {
+            throw new Error("Cannot save corrupted data structure.");
         }
 
         localStorage.setItem(STORAGE_KEY, JSON.stringify(currentData));
@@ -1171,14 +1177,15 @@ export class KeyStore {
         return diagnostics;
     }
 
-    /**  move to uiRenderer?
-    * Real-time parser that converts markup tokens like [fig:12] or [fig:filename.jpg] 
-    * into sequential, 1-based display text labels matching current position.
-    */
+    /**
+     * Converts all figure reference tokens in text to rendered print labels like (Fig. 3).
+     * Handles two formats:
+     *   [figID: 106]  — new storage format (internal ID, always stable)
+     *   [fig: value]  — legacy format (numeric value treated as old ID, text as filename)
+     */
     public resolveTextReferences(text: string): string {
         if (!text || !this.state.figures || this.state.figures.length === 0) return text;
 
-        // Create lookup maps mapping unique identifiers to 1-based sequence numbers
         const idToDisplayNum = new Map<number, number>();
         const filenameToDisplayNum = new Map<string, number>();
 
@@ -1188,26 +1195,94 @@ export class KeyStore {
             filenameToDisplayNum.set(fig.filename.trim().toLowerCase(), sequenceNumber);
         });
 
-        // Match patterns matching both token options: [fig:VALUE]
-        const tokenRegex = /\[fig:\s*(.*?)\s*\]/gi;
+        // resolve new storage format [figID: N] — value is always an internal ID
+        text = text.replace(/\[figID:\s*(\d+)\s*\]/gi, (_match, value) => {
+            const id = parseInt(value.trim(), 10);
+            const displayNum = idToDisplayNum.get(id);
+            return displayNum !== undefined
+                ? `(Fig. ${displayNum})`
+                : `[Broken Fig: ID ${id}]`;
+        });
 
-        return text.replace(tokenRegex, (_match, value) => {
+        // remove?
+        // resolve legacy format [fig: value] — numeric = old ID, text = filename
+        text = text.replace(/\[fig:\s*(.*?)\s*\]/gi, (_match, value) => {
             const trimmedValue = value.trim();
 
-            // Attempt Check if the token value is a permanent numeric ID
             const targetId = Number(trimmedValue);
             if (!isNaN(targetId) && idToDisplayNum.has(targetId)) {
                 return `(Fig. ${idToDisplayNum.get(targetId)})`;
             }
 
-            // Attempt Fall back to checking if the token matches a unique filename
             const lowercaseFilename = trimmedValue.toLowerCase();
             if (filenameToDisplayNum.has(lowercaseFilename)) {
                 return `(Fig. ${filenameToDisplayNum.get(lowercaseFilename)})`;
             }
 
-            // Return original fallback tag if the figure reference is missing or broken
             return `[Broken Fig: ${trimmedValue}]`;
+        });
+
+        return text;
+    }
+
+    /**
+     * Converts user-written [fig: N] (display number) or [fig: filename.jpg] tokens
+     * into stable internal storage tokens [figID: N] that survive figure reordering.
+     * Incomplete or unresolvable tokens are left unchanged.
+     * Called after the typing debounce and on field blur.
+     */
+    public encodeFigureTokens(text: string): string {
+        const figures = this.state.figures;
+        if (!text || !figures || figures.length === 0) return text;
+
+        const displayNumToId = new Map<number, number>();
+        const filenameToId = new Map<string, number>();
+
+        figures.forEach((fig, index) => {
+            displayNumToId.set(index + 1, fig.id);
+            filenameToId.set(fig.filename.trim().toLowerCase(), fig.id);
+        });
+
+        return text.replace(/\[fig:\s*(.*?)\s*\]/gi, (match, value) => {
+            const trimmed = value.trim();
+
+            // Try as a 1-based display number (the primary user-facing format)
+            const displayNum = parseInt(trimmed, 10);
+            if (!isNaN(displayNum) && String(displayNum) === trimmed && displayNumToId.has(displayNum)) {
+                return `[figID: ${displayNumToId.get(displayNum)!}]`;
+            }
+
+            // Try as a filename (case-insensitive)
+            const fig = filenameToId.get(trimmed.toLowerCase());
+            if (fig !== undefined) {
+                return `[figID: ${fig}]`;
+            }
+
+            // Cannot resolve — keep the original token so the user sees the problem
+            return match;
+        });
+    }
+
+    /**
+     * Converts stored [figID: N] tokens back to user-readable [fig: N] display numbers
+     * for rendering inside editor textareas. The display number reflects the figure's
+     * current position and automatically updates when figures are reordered.
+     */
+    public decodeTextReferencesForEditor(text: string): string {
+        const figures = this.state.figures;
+        if (!text || !figures || figures.length === 0) return text;
+
+        const idToDisplayNum = new Map<number, number>();
+        figures.forEach((fig, index) => {
+            idToDisplayNum.set(fig.id, index + 1);
+        });
+
+        return text.replace(/\[figID:\s*(\d+)\s*\]/gi, (match, value) => {
+            const id = parseInt(value.trim(), 10);
+            const displayNum = idToDisplayNum.get(id);
+            return displayNum !== undefined
+                ? `[fig: ${displayNum}]`
+                : match; // Keep broken token visible so the user knows it needs attention
         });
     }
 }

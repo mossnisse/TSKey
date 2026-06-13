@@ -28,7 +28,7 @@ function batchedRefresh(refreshFn: () => void) {
 
 export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     const keyContainer = document.querySelector('#editor-container') as HTMLElement;
-    if (!keyContainer) return;
+    if (!keyContainer) return () => { };
 
     let typingSessionActive = false;
     let currentEditingFieldKey: string | null = null; // Tracks exactly which card + field is active
@@ -45,7 +45,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         const target = e.target as HTMLElement;
 
         // If the user clicked the editor background layout area itself, drop focus
-        if (target.id === 'editor-container' || target.classList.contains('editor-workspace')) {
+        if (target.id === 'editor-container') {
             store.clearSelection();
             batchedRefresh(refreshAll);
             return;
@@ -65,13 +65,13 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         batchedRefresh(refreshAll);
     }, { signal });
 
-    document.body.addEventListener('click', (e) => {
-        const target = e.target as HTMLElement;
-        if (target.id === 'add-figure-btn') {
+    const addFigureBtn = document.getElementById('add-figure-btn');
+    if (addFigureBtn) {
+        addFigureBtn.addEventListener('click', () => {
             store.addFigure("", "");
             batchedRefresh(refreshAll);
-        }
-    }, { signal });
+        }, { signal });
+    }
 
     // CONSOLIDATED INPUT ROUTER (Handles Undo Debouncing + Link Validation)
     keyContainer.addEventListener('input', (e) => {
@@ -120,6 +120,19 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             typingSessionActive = false;
             typingTimeoutId = null;
 
+            // Encode any complete [fig: N] or [fig: filename] tokens to stable [figID: N] format.
+            // This runs outside the keystroke hot path so it never interferes with the cursor.
+            if (field !== 'dest1' && field !== 'dest2') {
+                const currentCouplet = store.getKey().find(c => c.id === id);
+                if (currentCouplet) {
+                    const rawValue = currentCouplet[field as keyof Omit<Couplet, 'id'>] as string;
+                    const encodedValue = store.encodeFigureTokens(rawValue);
+                    if (encodedValue !== rawValue) {
+                        store.updateCouplet(id, { [field]: encodedValue } as Partial<Omit<Couplet, 'id'>>);
+                    }
+                }
+            }
+
             // Perform link validation safely inside the debounce window
             if (field === 'dest1' || field === 'dest2') {
                 const updatedKey = store.getKey();
@@ -139,7 +152,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
             batchedRefresh(refreshAll);
         }, DEBOUNCE_TYPING_MS);
-
     }, { signal });
 
     // --- Figures bindings ---
@@ -183,9 +195,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
                 batchedRefresh(refreshAll); // Batch updates safely via requestAnimationFrame
             }, DEBOUNCE_TYPING_MS);
         }, { signal }); // Inherits abort tracking from the parent listener lifecycle
-    }
 
-    if (figureContainer) {
         figureContainer.addEventListener('click', (e: MouseEvent) => {
             const target = e.target as HTMLElement;
 
@@ -206,6 +216,9 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             const isTextInput = target.closest('input, textarea');
 
             if (isTextInput) {
+                // UX UPGRADE: If they click an input box, check if the card is already highlighted.
+                // If it isn't, select it immediately. If it is, do NOT toggle it off (deselect it)
+                // so they can freely reposition their cursor or highlight text without flashing states.
                 const isAlreadySelected = figureCard.classList.contains('is-selected');
                 if (!isAlreadySelected) {
                     store.toggleFigureSelection(id, multiSelect);
@@ -217,6 +230,49 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             store.toggleFigureSelection(id, multiSelect);
             batchedRefresh(refreshAll);
         }, { signal });
+
+        figureContainer.addEventListener('focusout', (e: FocusEvent) => {
+            const target = e.target as HTMLElement;
+
+            if (target.matches('input, textarea')) {
+                const figureCard = target.closest('.figure-card') as HTMLElement;
+                if (!figureCard) return;
+
+                const figId = Number(figureCard.getAttribute('data-id'));
+                const field = target.getAttribute('data-field');
+                const fieldKey = figId && field ? `fig-${figId}-${field}` : null;
+
+                // Verify if focus is genuinely leaving this active figure field session
+                const isActualSessionEnd = currentEditingFieldKey !== null && currentEditingFieldKey === fieldKey;
+
+                if (isActualSessionEnd) {
+                    typingSessionActive = false;
+                    currentEditingFieldKey = null;
+
+                    // Clear any pending debounce timers immediately on blur
+                    if (typingTimeoutId !== null) {
+                        clearTimeout(typingTimeoutId);
+                        typingTimeoutId = null;
+                    }
+
+                    // Evaluate next focus target context defensively
+                    const destination = e.relatedTarget as HTMLElement | null;
+                    const isClickingControl = destination instanceof Element && (
+                        destination.closest('.figure-card') ||
+                        destination.closest('.key-card') ||
+                        destination.closest('.app-menu-bar') ||
+                        destination.closest('#add-figure-btn') ||
+                        destination.closest('#control-panel-modal')
+                    );
+
+                    // Force an immediate structural refresh unless clicking an active app controller
+                    if (!isClickingControl) {
+                        batchedRefresh(refreshAll);
+                    }
+                }
+            }
+        }, { signal });
+
     }
 
     // Centralized Drag and Form Text Highlight Mitigation
@@ -266,6 +322,19 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
                 }
 
                 store.clearActiveCouplet();
+
+                // Encode any [fig: N] tokens that the debounce may not have reached
+                // (covers the case where the user typed and blurred before 800ms elapsed)
+                if (field && field !== 'dest1' && field !== 'dest2' && id !== null) {
+                    const currentCouplet = store.getKey().find(c => c.id === id);
+                    if (currentCouplet) {
+                        const rawValue = currentCouplet[field as keyof Omit<Couplet, 'id'>] as string;
+                        const encodedValue = store.encodeFigureTokens(rawValue);
+                        if (encodedValue !== rawValue) {
+                            store.updateCouplet(id, { [field]: encodedValue } as Partial<Omit<Couplet, 'id'>>);
+                        }
+                    }
+                }
 
                 // Trigger the warning toast if the field has an unresolved destination
                 if (target.classList.contains('input-error') && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) && card) {
@@ -592,6 +661,120 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         batchedRefresh(refreshAll);
     }, { signal });
 
+    // menu navigation
+
+    const menuBar = document.querySelector('.app-menu-bar') as HTMLElement;
+    if (menuBar) {
+        const { signal } = controller; // Uses your environment abort track
+
+        const getTriggers = () => Array.from(menuBar.querySelectorAll('.menu-trigger')) as HTMLButtonElement[];
+
+        const getDropdownActions = (trigger: HTMLButtonElement) => {
+            const dropdown = trigger.nextElementSibling;
+            if (!dropdown) return [];
+            // Extract selectable non-disabled items
+            return Array.from(dropdown.querySelectorAll('.dropdown-action:not(:disabled)')) as HTMLButtonElement[];
+        };
+
+        const closeAllMenus = () => {
+            getTriggers().forEach(t => t.setAttribute('aria-expanded', 'false'));
+        };
+
+        // 1. Mouse Click Toggle Toggles
+        menuBar.addEventListener('click', (e) => {
+            const target = e.target as HTMLElement;
+            const trigger = target.closest('.menu-trigger') as HTMLButtonElement | null;
+
+            if (trigger) {
+                e.stopPropagation();
+                const isExpanded = trigger.getAttribute('aria-expanded') === 'true';
+                closeAllMenus();
+                trigger.setAttribute('aria-expanded', isExpanded ? 'false' : 'true');
+            }
+        }, { signal });
+
+        // Global Click Outside closer
+        document.addEventListener('click', () => closeAllMenus(), { signal });
+
+        // 2. Keyboard Navigation Grid
+        menuBar.addEventListener('keydown', (e) => {
+            const activeEl = document.activeElement as HTMLButtonElement;
+            if (!activeEl) return;
+
+            const isTrigger = activeEl.classList.contains('menu-trigger');
+            const isAction = activeEl.classList.contains('dropdown-action');
+
+            if (!isTrigger && !isAction) return;
+
+            const triggers = getTriggers();
+            const currentTrigger = isTrigger ? activeEl : (activeEl.closest('.menu-item')?.querySelector('.menu-trigger') as HTMLButtonElement);
+            const actions = getDropdownActions(currentTrigger);
+            const triggerIndex = triggers.indexOf(currentTrigger);
+            const actionIndex = actions.indexOf(activeEl);
+
+            switch (e.key) {
+                case 'ArrowRight':
+                    e.preventDefault();
+                    const nextTrigger = triggers[(triggerIndex + 1) % triggers.length];
+                    const wasExpandedRight = currentTrigger.getAttribute('aria-expanded') === 'true';
+                    closeAllMenus();
+                    nextTrigger.focus();
+                    if (wasExpandedRight) {
+                        nextTrigger.setAttribute('aria-expanded', 'true');
+                    }
+                    break;
+
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    const prevTrigger = triggers[(triggerIndex - 1 + triggers.length) % triggers.length];
+                    const wasExpandedLeft = currentTrigger.getAttribute('aria-expanded') === 'true';
+                    closeAllMenus();
+                    prevTrigger.focus();
+                    if (wasExpandedLeft) {
+                        prevTrigger.setAttribute('aria-expanded', 'true');
+                    }
+                    break;
+
+                case 'ArrowDown':
+                    e.preventDefault();
+                    if (isTrigger) {
+                        currentTrigger.setAttribute('aria-expanded', 'true');
+                        if (actions.length > 0) actions[0].focus();
+                    } else if (isAction && actions.length > 0) {
+                        const nextAction = actions[(actionIndex + 1) % actions.length];
+                        nextAction.focus();
+                    }
+                    break;
+
+                case 'ArrowUp':
+                    e.preventDefault();
+                    if (isAction && actions.length > 0) {
+                        const prevAction = actions[(actionIndex - 1 + actions.length) % actions.length];
+                        prevAction.focus();
+                    }
+                    break;
+
+                case 'Escape':
+                    e.preventDefault();
+                    closeAllMenus();
+                    currentTrigger.focus();
+                    break;
+
+                case 'Enter':
+                case ' ':
+                    if (isTrigger) {
+                        e.preventDefault();
+                        const isExpanded = currentTrigger.getAttribute('aria-expanded') === 'true';
+                        currentTrigger.setAttribute('aria-expanded', isExpanded ? 'false' : 'true');
+                        if (!isExpanded && actions.length > 0) {
+                            setTimeout(() => actions[0].focus(), 10);
+                        }
+                    }
+                    break;
+            }
+        }, { signal });
+    }
+
     return () => {
         controller.abort(); // Cleans up all secondary global listeners safely
     };
@@ -605,7 +788,11 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
         const activeModal = document.querySelector('.modal-overlay[style*="display: flex"]') as HTMLElement | null;
         if (activeModal) {
             // If they press Escape, let it fall through or close the modal
-            if (e.key === 'Escape') return;
+            if (e.key === 'Escape') {
+                activeModal.style.display = 'none';
+                e.preventDefault();
+                return;
+            }
 
             // Block the Tab key entirely from leaking into the underlying canvas cards
             if (e.key === 'Tab') {
@@ -672,14 +859,6 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
 
             if (e.key === 'Escape') {
                 e.preventDefault();
-                const openModal = document.querySelector('.modal-overlay[style*="display: flex"]') as HTMLElement | null;
-
-                // closes dialogs
-                if (openModal) {
-                    openModal.style.display = 'none';
-                    return;
-                }
-
                 document.querySelector<HTMLButtonElement>('#cmd-clear')?.click();
                 return;
             }
