@@ -177,6 +177,17 @@ export function getStepNumberById(idToIndexMap: Map<number, number>, targetId: n
 }
 
 /**
+ * Generates an O(1) hash map connecting unique Figure record IDs to their sequential 1-based display numbers.
+ */
+export function buildFigureIdToDisplayNumMap(figures: readonly Figure[]): Map<number, number> {
+    const map = new Map<number, number>();
+    figures.forEach((fig, index) => {
+        map.set(fig.id, index + 1);
+    });
+    return map;
+}
+
+/**
  * functions for handling Destination links
  */
 

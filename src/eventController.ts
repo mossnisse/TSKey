@@ -3,6 +3,7 @@ import type { KeyStore, Couplet } from './store.ts';
 import type { UIStateStore } from './uiState.ts';
 import { showToast } from './uiRenderer.ts';
 import { IS_MAC, resolveDestination, parseDestinationInput, buildIdToIndexMap } from './utils.ts';
+import { figureStorage, activeObjectURLs } from './db.ts';
 import { exportKeyToHTML } from './exporters/htmlExporter.ts';
 import { exportKeyToLaTeX } from './exporters/latexExporter.ts';
 import { exportKeyToPlainText } from './exporters/plainTextExporter.ts';
@@ -236,6 +237,51 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                 });
             }
         }, { signal });
+
+        // Intercept action button clicks and proxy them over to the hidden picker frame
+    figureContainer.addEventListener('click', (e) => {
+        const target = e.target as HTMLElement;
+        if (target.classList.contains('btn-trigger-upload')) {
+            const card = target.closest('.figure-card') as HTMLElement;
+            const truePicker = card?.querySelector('.hidden-file-picker') as HTMLInputElement;
+            truePicker?.click();
+        }
+    });
+
+    // Intercept binary mutations when the operating system file picker dismisses
+    figureContainer.addEventListener('change', async (e) => {
+        const target = e.target as HTMLInputElement;
+        if (target.classList.contains('hidden-file-picker')) {
+            const file = target.files?.[0];
+            if (!file) return;
+
+            const card = target.closest('.figure-card') as HTMLElement;
+            const figId = Number(card?.getAttribute('data-id'));
+            if (isNaN(figId)) return;
+
+            // Commit binary stream payload directly into client IndexedDB space
+            await figureStorage.saveFigureBinary(figId, file);
+
+            // Evict and clean stale historical URL footprints from browser system memory
+            const oldUrl = activeObjectURLs.get(figId);
+            if (oldUrl) URL.revokeObjectURL(oldUrl);
+
+            // Populate the sync cache directory immediately using raw object bindings
+            const freshUrl = URL.createObjectURL(file);
+            activeObjectURLs.set(figId, freshUrl);
+
+            // Mutate string state properties inside KeyStore structure
+            // Assuming your store engine uses an interface structure similar to your inputs:
+            const filenameInput = card?.querySelector('.figure-input-filename') as HTMLInputElement;
+            if (filenameInput) {
+                filenameInput.value = file.name;
+                // Dispatch input event to notify your existing text synchronization loops
+                filenameInput.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+
+            refreshAll();
+        }
+    });
     }
 
     // Centralized Drag and Form Text Highlight Mitigation

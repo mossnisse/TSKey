@@ -2,6 +2,7 @@
 import { KeyStore, APP_NAME, APP_VERSION } from './store.ts';
 import { UIStateStore } from './uiState.ts';
 import { escapeHTML, buildIdToIndexMap, resolveDestination, IS_MAC } from './utils.ts';
+import { figureStorage, activeObjectURLs } from './db.ts';
 
 // ==========================================
 // CORE LAYOUT HELPERS
@@ -47,6 +48,16 @@ export function initializeShell(appDiv: HTMLDivElement) {
             </button>
             <button id="cmd-export-json" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>📥 Export Native JSON File...</span>
+            </button>
+            <div class="menu-divider"></div>
+            <button id="cmd-export-text" class="dropdown-action" role="menuitem" tabindex="-1">
+              <span>📄 Export to Plain Text file(.txt)</span>
+            </button>
+            <button id="cmd-export-html" class="dropdown-action" role="menuitem" tabindex="-1">
+              <span>🌐 Export to Web Page (.html)</span>
+            </button>
+            <button id="cmd-export-latex" class="dropdown-action" role="menuitem" tabindex="-1">
+              <span>🔏 Export to LaTeX Document (.tex)</span>
             </button>
           </div>
         </div>
@@ -449,7 +460,7 @@ export function renderEditorCards(store: KeyStore) {
     existingMap.forEach(card => card.remove());
 }
 
-export function renderFigures(store: KeyStore, uiState: UIStateStore) {
+export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll: () => void) {
     if (uiState.isFiguresHidden) return;
 
     const container = document.getElementById('figure-container');
@@ -457,7 +468,6 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore) {
 
     const figures = store.getFigures();
 
-    // Map existing DOM child blocks securely to optimize focus states
     const existingBlocks = Array.from(container.children) as HTMLElement[];
     const existingMap = new Map<number, HTMLElement>();
     existingBlocks.forEach(block => {
@@ -475,24 +485,30 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore) {
             block.className = 'figure-card';
             block.setAttribute('data-id', fig.id.toString());
             block.innerHTML = `
-                    <div class="figure-card-header">
-                        <span class="figure-card-title">${displayNum}.</span>
+                <div class="figure-card-header">
+                    <span class="figure-card-title">${displayNum}.</span>
+                </div>
+                
+                <div class="figure-preview-wrapper">
+                    <img class="figure-preview-img" alt="Figure view" style="display: none;" />
+                    <div class="figure-upload-overlay">
+                        <button type="button" class="btn-trigger-upload">Choose Image</button>
+                        <input type="file" class="hidden-file-picker" accept="image/*" style="display: none;" />
                     </div>
-                    
-                    <div class="figure-field-row">
-                        <label>Filename:</label>
-                        <input type="text" class="input-sync figure-input-filename" data-field="filename" />
-                    </div>
-                    
-                    <div class="figure-field-row">
-                        <label>Caption:</label>
-                        <textarea class="input-sync figure-input-caption" data-field="caption" rows="2"></textarea>
-                    </div>
+                </div>
+                
+                <div class="figure-field-row">
+                    <label>Filename:</label>
+                    <input type="text" class="input-sync figure-input-filename" data-field="filename" />
+                </div>
+                
+                <div class="figure-field-row">
+                    <label>Caption:</label>
+                    <textarea class="input-sync figure-input-caption" data-field="caption" rows="2"></textarea>
+                </div>
             `;
         } else {
-            // Update sequence tracking configurations
             const labelEl = block.querySelector('.figure-card-title');
-            // Added trailing period back to keep the format identical to the initial render template
             if (labelEl) labelEl.textContent = `${displayNum}.`;
             existingMap.delete(fig.id);
         }
@@ -502,7 +518,34 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore) {
         }
         block.classList.toggle('is-selected', isSelected);
 
-        // Sync form element content safely without dropping typing caret locations
+        // --- ASYNC BINARY PREVIEW SYNCHRONIZATION LOOP ---
+        const previewImg = block.querySelector('.figure-preview-img') as HTMLImageElement;
+        const cachedUrl = activeObjectURLs.get(fig.id);
+
+        if (cachedUrl) {
+            if (previewImg.src !== cachedUrl) {
+                previewImg.src = cachedUrl;
+                previewImg.style.display = 'block';
+            }
+        } else {
+            // If not cached, fetch safely without halting the paint process or looping
+            if (!previewImg.hasAttribute('data-loading-state')) {
+                previewImg.setAttribute('data-loading-state', 'pending');
+                
+                figureStorage.getFigureBinary(fig.id).then(blob => {
+                    previewImg.removeAttribute('data-loading-state');
+                    if (blob) {
+                        const newUrl = URL.createObjectURL(blob);
+                        activeObjectURLs.set(fig.id, newUrl);
+                        refreshAll(); // Safe invocation: will paint via cachedUrl branch next frame
+                    } else {
+                        previewImg.style.display = 'none';
+                    }
+                }).catch(() => previewImg.removeAttribute('data-loading-state'));
+            }
+        }
+
+        // Sync standard form inputs
         const fileInput = block.querySelector('.figure-input-filename') as HTMLInputElement;
         if (fileInput && document.activeElement !== fileInput && fileInput.value !== fig.filename) {
             fileInput.value = fig.filename;
@@ -514,7 +557,6 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore) {
         }
     });
 
-    // Clean up residual elements safely from deletion sweeps
     existingMap.forEach(block => block.remove());
 }
 

@@ -38,7 +38,7 @@ const refreshAll = () => {
     renderMenu(store, uiState);
     renderEditorCards(store);
     renderPrintView(store, uiState);
-    renderFigures(store, uiState);
+    renderFigures(store, uiState, refreshAll);
 };
 
 // Track all cleanups needed if the app unmounts or reloads via HMR

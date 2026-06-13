@@ -698,6 +698,53 @@
     border-bottom-color: var(--color-primary);
 }
 
+.figure-preview-wrapper {
+    position: relative;
+    width: 100%;
+    height: 160px;
+    background: var(--color-bg-muted);
+    border: 1px dashed var(--color-border);
+    border-radius: var(--radius-md);
+    margin-bottom: 12px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.figure-preview-img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #00000005;
+}
+
+.figure-upload-overlay {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    background: rgba(255, 255, 255, 0.9);
+    padding: 4px;
+    border-radius: var(--radius-sm);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.btn-trigger-upload {
+    background: var(--color-primary);
+    color: white;
+    border: none;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: var(--transition-base);
+}
+
+.btn-trigger-upload:hover {
+    background: var(--color-primary-hover);
+}
+
 /* ==========================================
    PASSIVE PUBLICATION PRINT VIEW PANELS
    ========================================== */
