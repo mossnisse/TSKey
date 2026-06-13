@@ -81,6 +81,10 @@
     flex: 1.2;
 }
 
+.figure-column {
+    flex: 1;
+}
+
 .heading-editor {
     margin-top: 0;
     color: var(--color-text);
@@ -347,7 +351,7 @@
 .key-card {
     border: none;
     border-bottom: 1px solid var(--color-border-light);
-    padding: 24px 12px;
+    padding: 20px 12px;
     margin-bottom: 0;
     border-radius: 0;
     background: transparent;
@@ -371,7 +375,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
     user-select: none;
 }
 
@@ -385,7 +389,7 @@
     margin: 0;
     color: var(--color-primary);
     font-weight: 700;
-    font-size: 14px;
+    font-size: 18px;
     font-family: monospace;
 }
 
@@ -421,9 +425,9 @@
 
 /* Card Fields layout - Guide rails connect items vertically */
 .card-row {
-    margin-bottom: 12px;
+    margin-bottom: 8px;
     display: flex;
-    gap: 16px;
+    gap: 12px;
     align-items: flex-start;
     position: relative;
     padding-left: 16px;
@@ -589,6 +593,7 @@
 .figure-card {
     border: none;
     border-bottom: 1px solid var(--color-border-light);
+    border-left: 4px solid transparent;
     padding: 16px 16px;
     background: transparent;
     position: relative;
@@ -619,18 +624,35 @@
     justify-content: space-between;
     align-items: center;
     user-select: none;
+    margin-bottom: 4px;
 }
 
 .figure-card-title {
     margin: 0;
     color: var(--color-primary);
     font-weight: 700;
+    font-size: 16px;
+}
+
+.figure-field-row {
+    display: flex;
+    align-items: flex-start; 
+    gap: 12px;               
+}
+
+.figure-field-row label {
     font-size: 13px;
-    font-family: monospace;
+    color: var(--color-text-muted);
+    min-width: 75px;        
+    flex-shrink: 0;        
+    padding-top: 2px;       
+    user-select: none;
 }
 
 /* Figure Interactive Inline Form Fields */
-.figure-input-filename {
+.figure-card .figure-input-filename,
+.figure-card .figure-input-caption {
+    flex: 1;             
     font-family: monospace;
     font-size: 13px;
     font-weight: 600;
@@ -638,36 +660,23 @@
     border-bottom: 1px dashed transparent;
     background: transparent;
     color: var(--color-text);
-    width: 100%;
     padding: 2px 0;
     transition: border-color 0.15s ease;
 }
 
-.figure-input-filename:focus {
-    outline: none;
-    border-bottom-color: var(--color-primary);
-}
-
-.figure-textarea-caption {
-    font-family: sans-serif;
-    font-size: 13px;
-    line-height: 1.4;
-    color: var(--color-text-muted);
-    border: none;
-    border-bottom: 1px dashed transparent;
-    background: transparent;
+/* Layer functional structural exceptions for the textarea element */
+.figure-input-caption {
     resize: none;
     overflow: hidden;
-    field-sizing: content; /* Matches modern native expanding behavior */
-    width: 100%;
-    padding: 2px 0;
-    transition: border-color 0.15s ease, color 0.15s ease;
+    field-sizing: content; /* Maintains native auto-expanding box behavior */
+    line-height: 1.5;
 }
 
-.figure-textarea-caption:focus {
+/* Shared focus state transformation feedback */
+.figure-input-filename:focus,
+.figure-input-caption:focus {
     outline: none;
     border-bottom-color: var(--color-primary);
-    color: var(--color-text);
 }
 
 /* Clean reference badge wrapper when figures are empty */

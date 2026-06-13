@@ -78,70 +78,68 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         const target = e.target as HTMLInputElement | HTMLTextAreaElement;
         if (!target.classList.contains('input-sync')) return;
         const card = target.closest('.key-card') as HTMLElement;
-        const figureCard = target.closest('.figure-card') as HTMLElement;
-        if (!card && !figureCard) return;
+        if (!card) return;
 
-        if (card) {
-            const id = Number(card.getAttribute('data-id'));
-            const field = target.getAttribute('data-field')!;
-            const fieldKey = `${id}-${field}`;
-            store.setActiveCouplet(id);
+        const id = Number(card.getAttribute('data-id'));
+        const field = target.getAttribute('data-field')!;
+        const fieldKey = `${id}-${field}`;
+        store.setActiveCouplet(id);
 
-            // Undo History Checkpoint Manager
-            if (!typingSessionActive || currentEditingFieldKey !== fieldKey) {
-                store.endTypingSession();
-                typingSessionActive = true;
-                currentEditingFieldKey = fieldKey;
-            }
-
-            // Clear previous timer to extend the active typing chunk
-            if (typingTimeoutId !== null) {
-                clearTimeout(typingTimeoutId);
-            }
-
-            // Synchronize the text change immediately to the store without waiting
-            let updatePayload: Partial<Omit<Couplet, 'id'>> = {};
-            const currentValue = target.value;
-
-            if (field === 'dest1' || field === 'dest2') {
-                const linkField = field === 'dest1' ? 'link1' : 'link2';
-                const taxaField = field === 'dest1' ? 'taxa1' : 'taxa2';
-
-                // We parse using the current snapshot of the key array
-                const parsed = parseDestinationInput(currentValue, store.getKey());
-                updatePayload[linkField] = parsed.link;
-                updatePayload[taxaField] = parsed.taxa;
-            } else {
-                updatePayload[field as keyof Omit<Couplet, 'id'>] = currentValue as never;
-            }
-
-            store.updateCouplet(id, updatePayload);
-
-            // If user stops typing for 800ms, trigger heavy map lookups & structural warnings
-            typingTimeoutId = window.setTimeout(() => {
-                typingSessionActive = false;
-                typingTimeoutId = null;
-
-                // Perform link validation safely inside the debounce window
-                if (field === 'dest1' || field === 'dest2') {
-                    const updatedKey = store.getKey();
-                    const currentCouplet = updatedKey.find(c => c.id === id);
-
-                    if (currentCouplet) {
-                        const link = field === 'dest1' ? currentCouplet.link1 : currentCouplet.link2;
-                        const taxa = field === 'dest1' ? currentCouplet.taxa1 : currentCouplet.taxa2;
-
-                        // Heavy operation moved completely outside the high-frequency keystroke pipeline
-                        const idToIndexMap = buildIdToIndexMap(updatedKey);
-                        const resolution = resolveDestination(link, taxa, idToIndexMap);
-
-                        target.classList.toggle('input-error', resolution.isUnresolved);
-                    }
-                }
-
-                batchedRefresh(refreshAll);
-            }, DEBOUNCE_TYPING_MS);
+        // Undo History Checkpoint Manager
+        if (!typingSessionActive || currentEditingFieldKey !== fieldKey) {
+            store.endTypingSession();
+            typingSessionActive = true;
+            currentEditingFieldKey = fieldKey;
         }
+
+        // Clear previous timer to extend the active typing chunk
+        if (typingTimeoutId !== null) {
+            clearTimeout(typingTimeoutId);
+        }
+
+        // Synchronize the text change immediately to the store without waiting
+        let updatePayload: Partial<Omit<Couplet, 'id'>> = {};
+        const currentValue = target.value;
+
+        if (field === 'dest1' || field === 'dest2') {
+            const linkField = field === 'dest1' ? 'link1' : 'link2';
+            const taxaField = field === 'dest1' ? 'taxa1' : 'taxa2';
+
+            // We parse using the current snapshot of the key array
+            const parsed = parseDestinationInput(currentValue, store.getKey());
+            updatePayload[linkField] = parsed.link;
+            updatePayload[taxaField] = parsed.taxa;
+        } else {
+            updatePayload[field as keyof Omit<Couplet, 'id'>] = currentValue as never;
+        }
+
+        store.updateCouplet(id, updatePayload);
+
+        // If user stops typing for 800ms, trigger heavy map lookups & structural warnings
+        typingTimeoutId = window.setTimeout(() => {
+            typingSessionActive = false;
+            typingTimeoutId = null;
+
+            // Perform link validation safely inside the debounce window
+            if (field === 'dest1' || field === 'dest2') {
+                const updatedKey = store.getKey();
+                const currentCouplet = updatedKey.find(c => c.id === id);
+
+                if (currentCouplet) {
+                    const link = field === 'dest1' ? currentCouplet.link1 : currentCouplet.link2;
+                    const taxa = field === 'dest1' ? currentCouplet.taxa1 : currentCouplet.taxa2;
+
+                    // Heavy operation moved completely outside the high-frequency keystroke pipeline
+                    const idToIndexMap = buildIdToIndexMap(updatedKey);
+                    const resolution = resolveDestination(link, taxa, idToIndexMap);
+
+                    target.classList.toggle('input-error', resolution.isUnresolved);
+                }
+            }
+
+            batchedRefresh(refreshAll);
+        }, DEBOUNCE_TYPING_MS);
+
     }, { signal });
 
     // --- Figures bindings ---
@@ -198,15 +196,23 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
                 return;
             }
 
-            // Prevent selection toggles if interacting with input fields/textareas
-            if (target.closest('input, textarea')) return;
-
             const figureCard = target.closest('.figure-card') as HTMLElement;
             if (!figureCard) return;
-            const id = Number(figureCard.getAttribute('data-id'));
 
-            // Support multi-select with command/modifier keys
+            const id = Number(figureCard.getAttribute('data-id'));
             const multiSelect = e.ctrlKey || e.metaKey || e.shiftKey;
+
+            // Check if the user clicked directly inside a form control
+            const isTextInput = target.closest('input, textarea');
+
+            if (isTextInput) {
+                const isAlreadySelected = figureCard.classList.contains('is-selected');
+                if (!isAlreadySelected) {
+                    store.toggleFigureSelection(id, multiSelect);
+                    batchedRefresh(refreshAll);
+                }
+                return; // Gracefully exit and let the native text focus/caret placement occur
+            }
 
             store.toggleFigureSelection(id, multiSelect);
             batchedRefresh(refreshAll);
@@ -528,7 +534,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         if (selectedFigCount > 0) {
             if (confirm("Confirm removing highlighted figures?")) {
                 store.deleteSelectedFigures();
-                showToast(`Deleted ${selectedKeyCount} figure(s).`, 'success');
+                showToast(`Deleted ${selectedFigCount} figure(s).`, 'success');
                 batchedRefresh(refreshAll);
             }
         }
@@ -563,7 +569,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         const figureColumn = document.querySelector('.figure-column');
         if (!figureColumn) return;
         figureColumn.classList.toggle('is-hidden');
-        batchedRefresh(refreshAll); 
+        batchedRefresh(refreshAll);
     }, { signal });
 
     document.querySelector('#cmd-toggle-print')?.addEventListener('click', () => {
@@ -580,9 +586,9 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         batchedRefresh(refreshAll);
     }, { signal });
 
-    document.querySelector('#cmd-reorder-couplets')?.addEventListener('click', () => {
-        store.autoOrderCouplets();
-        showToast("Key steps reordered with shorter branches first!", "success");
+    document.querySelector('#cmd-reorder-figures')?.addEventListener('click', () => {
+        store.autoOrderFigures();
+        showToast("Figures reordered to match key reference order!", "success");
         batchedRefresh(refreshAll);
     }, { signal });
 
@@ -697,13 +703,13 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
                 return;
             }
 
-           if (e.shiftKey && e.key.toLowerCase() === 'f') {
+            if (hasModifier && e.shiftKey && e.key.toLowerCase() === 'f') {
                 e.preventDefault();
                 document.querySelector<HTMLButtonElement>('#cmd-toggle-figures')?.click();
                 return;
             }
 
-            if (e.shiftKey && e.key.toLowerCase() === 'p') {
+            if (hasModifier && e.shiftKey && e.key.toLowerCase() === 'p') {
                 e.preventDefault();
                 document.querySelector<HTMLButtonElement>('#cmd-toggle-print')?.click();
                 return;

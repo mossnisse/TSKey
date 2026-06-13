@@ -160,7 +160,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
         </div>
 
         <div class="figure-column">
-          <h2>Figures Reference Library</h2>
+          <h2>Figure References</h2>
           <div id="figure-container"></div>
           <button id="add-figure-btn" class="btn-add-block">+ Add New Figure Attachment</button>
         </div>
@@ -309,7 +309,6 @@ export function renderMenu(store: KeyStore) {
     if (reorderBtn) reorderBtn.disabled = !hasKeyElements;
 
     // view menu synchronization 
-    // also hides and shows the actuall panels, so in the wrong place
     const toggleFiguresBtn = getBtn('cmd-toggle-figures');
     const togglePrintBtn = getBtn('cmd-toggle-print');
     const figureColumn = document.querySelector('.figure-column');
@@ -476,22 +475,24 @@ export function renderFigures(store: KeyStore) {
             block.className = 'figure-card';
             block.setAttribute('data-id', fig.id.toString());
             block.innerHTML = `
-                <div class="figure-card-header">
-                    <span class="figure-label">Figure ${displayNum}.</span>
-                    <span class="figure-id-tag"><code> ID: ${fig.id}</code></span>
-                </div>
-                <div class="figure-field-row">
-                    <label>Filename:</label>
-                    <input type="text" class="input-sync figure-input-filename" data-field="filename" />
-                </div>
-                <div class="figure-field-row">
-                    <label>Caption:</label>
-                    <textarea class="input-sync figure-input-caption" data-field="caption" rows="2"></textarea>
-                </div>
+                    <div class="figure-card-header">
+                        <span class="figure-card-title">Figure ${displayNum}.</span>
+                        <span class="figure-id-tag"><code>ID: ${fig.id}</code></span>
+                    </div>
+                    
+                    <div class="figure-field-row">
+                        <label>Filename:</label>
+                        <input type="text" class="input-sync figure-input-filename" data-field="filename" />
+                    </div>
+                    
+                    <div class="figure-field-row">
+                        <label>Caption:</label>
+                        <textarea class="input-sync figure-input-caption" data-field="caption" rows="2"></textarea>
+                    </div>
             `;
         } else {
             // Update sequence tracking configurations
-            const labelEl = block.querySelector('.figure-label');
+            const labelEl = block.querySelector('.figure-card-title');
             // Added trailing period back to keep the format identical to the initial render template
             if (labelEl) labelEl.textContent = `Figure ${displayNum}.`;
             existingMap.delete(fig.id);
@@ -522,7 +523,7 @@ export function renderFigures(store: KeyStore) {
 export function renderPrintView(store: KeyStore) {
     const column = document.querySelector('.print-column');
     if (!column || column.classList.contains('is-hidden')) return;
-    
+
     const container = document.getElementById('print-view-container');
     if (!container) return;
 

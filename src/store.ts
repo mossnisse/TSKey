@@ -1,5 +1,5 @@
 // store.ts
-import { isValidCoupletArray } from './utils.ts';
+import { isValidCoupletArray, isValidFigureArray } from './utils.ts';
 
 export const APP_NAME = 'TSKey';
 export const APP_VERSION = '0.0.1';
@@ -548,8 +548,8 @@ export class KeyStore {
         const srcIdx = arr.findIndex(c => c.id === srcId);
         const targetIdx = arr.findIndex(c => c.id === targetId);
 
-        if (srcIdx === -1 || targetIdx === -1) {
-            console.warn(`Aborted reordering: srcIdx (${srcIdx}) or targetIdx (${targetIdx}) was invalid.`);
+        if (srcIdx === -1 ) {
+            console.warn(`Aborted reordering: srcIdx (${srcIdx}) was invalid.`);
             return false;
         }
         if (targetIdx === -1) {
@@ -914,25 +914,52 @@ export class KeyStore {
 
     public importJsonData(rawData: unknown): ImportResult {
         try {
-            let targetKeyData: unknown = null;
+            let importedKey: Couplet[] | null = null;
+            let importedFigures: Figure[] = [];
 
-            // Sniff payload topology to extract data payload safely  
-            if (rawData && typeof rawData === 'object' && 'data' in rawData && 'metadata' in rawData) {
-                targetKeyData = (rawData as { data: unknown }).data;
-            } else {
-                targetKeyData = rawData;
+            if (
+                rawData &&
+                typeof rawData === 'object' &&
+                'data' in rawData &&
+                (rawData as any).data &&
+                typeof (rawData as any).data === 'object'
+            ) {
+                const payload = (rawData as any).data;
+
+                if (
+                    'key' in payload &&
+                    isValidCoupletArray(payload.key)
+                ) {
+                    importedKey = payload.key;
+
+                    if (
+                        'figures' in payload &&
+                        isValidFigureArray(payload.figures)
+                    ) {
+                        importedFigures = payload.figures;
+                    }
+                }
             }
 
-            // Run our shared strict schema validation check against targeted data records
-            if (!isValidCoupletArray(targetKeyData)) {
+            // Legacy format
+            if (!importedKey && isValidCoupletArray(rawData)) {
+                importedKey = rawData;
+            }
+
+            if (!importedKey) {
                 return {
                     success: false,
-                    errors: ["The uploaded file does not match the required schema structure (missing properties or incorrect types)."]
+                    errors: [
+                        'The uploaded file does not match the required schema structure.'
+                    ]
                 };
             }
 
             this.saveCheckpoint();
-            this.state.dichotomousKey = targetKeyData;
+
+            this.state.dichotomousKey = importedKey;
+            this.state.figures = importedFigures;
+
             this.clearSelection();
             this.activeCoupletId = null;
             this.hasUncommittedChanges = true;
@@ -945,7 +972,11 @@ export class KeyStore {
         } catch (e) {
             return {
                 success: false,
-                errors: [e instanceof Error ? e.message : "Unknown engine exception during parsing the json file."]
+                errors: [
+                    e instanceof Error
+                        ? e.message
+                        : 'Unknown engine exception during parsing the json file.'
+                ]
             };
         }
     }

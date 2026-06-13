@@ -1,5 +1,5 @@
 // utils.ts
-import type { Couplet } from './store.ts';
+import type { Couplet, Figure } from './store.ts';
 
 const HTML_ESCAPE_MAP: Record<string, string> = {
     '&': '&amp;',
@@ -114,6 +114,33 @@ export function isValidCoupletArray(data: any): data is Couplet[] {
         if (!hasValidShape) return false;
 
         // If we've already encountered this ID, the array is invalid
+        if (seenIds.has(item.id)) return false;
+
+        seenIds.add(item.id);
+        return true;
+    });
+}
+
+/**
+ * Checks if the json is a valid array of Figures.
+ */
+export function isValidFigureArray(data: any): data is Figure[] {
+    if (!Array.isArray(data)) return false;
+
+    const seenIds = new Set<number>();
+
+    return data.every(item => {
+        const hasValidShape =
+            item &&
+            typeof item === 'object' &&
+            typeof item.id === 'number' &&
+            item.id > 0 &&
+            typeof item.filename === 'string' &&
+            typeof item.caption === 'string';
+
+        if (!hasValidShape) return false;
+
+        // Prevent duplicate figure references
         if (seenIds.has(item.id)) return false;
 
         seenIds.add(item.id);
