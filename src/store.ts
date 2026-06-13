@@ -159,7 +159,7 @@ export class KeyStore {
 
         this.redoStack.push({
             dichotomousKey: this.state.dichotomousKey.map(c => ({ ...c })),
-            figures: this.state.figures.map(f => ({ ...f }))
+            figures: (this.state.figures || []).map(f => ({ ...f }))
         });
 
         if (this.redoStack.length > this.maxHistoryLimit) {
@@ -185,7 +185,7 @@ export class KeyStore {
 
         this.undoStack.push({
             dichotomousKey: this.state.dichotomousKey.map(c => ({ ...c })),
-            figures: this.state.figures.map(f => ({ ...f }))
+            figures: (this.state.figures || []).map(f => ({ ...f }))
         });
 
         if (this.undoStack.length > this.maxHistoryLimit) {
@@ -1184,7 +1184,7 @@ export class KeyStore {
      *   [fig: value]  — legacy format (numeric value treated as old ID, text as filename)
      */
     public resolveTextReferences(text: string): string {
-        if (!text || !this.state.figures || this.state.figures.length === 0) return text;
+        if (!text) return text;
 
         const idToDisplayNum = new Map<number, number>();
         const filenameToDisplayNum = new Map<string, number>();
@@ -1233,8 +1233,6 @@ export class KeyStore {
      */
     public encodeFigureTokens(text: string): string {
         const figures = this.state.figures;
-        if (!text || !figures || figures.length === 0) return text;
-
         const displayNumToId = new Map<number, number>();
         const filenameToId = new Map<string, number>();
 
@@ -1270,7 +1268,6 @@ export class KeyStore {
      */
     public decodeTextReferencesForEditor(text: string): string {
         const figures = this.state.figures;
-        if (!text || !figures || figures.length === 0) return text;
 
         const idToDisplayNum = new Map<number, number>();
         figures.forEach((fig, index) => {

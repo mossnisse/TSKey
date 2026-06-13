@@ -146,8 +146,8 @@
 /* Application Menu Bar Base Grid */
 .app-menu-bar {
   display: flex;
-  background-color: #f3f3f3;
-  border-bottom: 1px solid #cccccc;
+  background-color: var(--color-bg-muted);
+  border-bottom: 1px solid var(--color-border);
   padding: 2px 8px;
   position: sticky;
   top: 0;
@@ -173,7 +173,7 @@
 
 .menu-trigger:hover,
 .menu-item:hover .menu-trigger {
-  background-color: #e5e5e5;
+  background-color: var(--color-border-light);
   border-radius: 4px;
 }
 
@@ -183,8 +183,8 @@
   position: absolute;
   top: 100%;
   left: 0;
-  background-color: #ffffff;
-  border: 1px solid #bce0fd;
+  background-color: var(--color-bg);
+  border: 1px solid var(--color-border);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   min-width: 260px;
   border-radius: 4px;
@@ -223,8 +223,8 @@
 
 .dropdown-action:hover,
 .dropdown-action:focus {
-  background-color: var(--color-primary, #2196f3);
-  color: #ffffff;
+  background-color: var(--color-primary);
+  color: var(--color-bg);
   outline: none; /* Safely remove browser ring since we provide full row background coloring */
 }
 

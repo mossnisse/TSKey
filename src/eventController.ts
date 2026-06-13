@@ -1,5 +1,6 @@
 // eventController.ts
 import type { KeyStore, Couplet } from './store.ts';
+import type { UIStateStore } from './uiState.ts';
 import { showToast } from './uiRenderer.ts';
 import { IS_MAC, resolveDestination, parseDestinationInput, buildIdToIndexMap } from './utils.ts';
 import { exportKeyToHTML } from './exporters/htmlExporter.ts';
@@ -26,13 +27,10 @@ function batchedRefresh(refreshFn: () => void) {
     });
 }
 
-export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
+export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, refreshAll: () => void) {
     const keyContainer = document.querySelector('#editor-container') as HTMLElement;
     if (!keyContainer) return () => { };
 
-    let typingSessionActive = false;
-    let currentEditingFieldKey: string | null = null; // Tracks exactly which card + field is active
-    let typingTimeoutId: number | null = null;        // Holds the debounce timer reference
     let activeDropCard: HTMLElement | null = null;
     let activeDropClass: 'drag-drop-above' | 'drag-drop-below' | null = null;
     let activeDropRect: DOMRect | null = null;        // Cached bounding metrics to prevent layout thrashing
@@ -85,17 +83,10 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         const fieldKey = `${id}-${field}`;
         store.setActiveCouplet(id);
 
-        // Undo History Checkpoint Manager
-        if (!typingSessionActive || currentEditingFieldKey !== fieldKey) {
+        // Undo History Checkpoint Manager (Couplets Context)
+        uiState.typing.couplets.start(fieldKey, () => {
             store.endTypingSession();
-            typingSessionActive = true;
-            currentEditingFieldKey = fieldKey;
-        }
-
-        // Clear previous timer to extend the active typing chunk
-        if (typingTimeoutId !== null) {
-            clearTimeout(typingTimeoutId);
-        }
+        });
 
         // Synchronize the text change immediately to the store without waiting
         let updatePayload: Partial<Omit<Couplet, 'id'>> = {};
@@ -116,12 +107,8 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         store.updateCouplet(id, updatePayload);
 
         // If user stops typing for 800ms, trigger heavy map lookups & structural warnings
-        typingTimeoutId = window.setTimeout(() => {
-            typingSessionActive = false;
-            typingTimeoutId = null;
-
+        uiState.typing.couplets.extendTimeout(DEBOUNCE_TYPING_MS, () => {
             // Encode any complete [fig: N] or [fig: filename] tokens to stable [figID: N] format.
-            // This runs outside the keystroke hot path so it never interferes with the cursor.
             if (field !== 'dest1' && field !== 'dest2') {
                 const currentCouplet = store.getKey().find(c => c.id === id);
                 if (currentCouplet) {
@@ -142,7 +129,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
                     const link = field === 'dest1' ? currentCouplet.link1 : currentCouplet.link2;
                     const taxa = field === 'dest1' ? currentCouplet.taxa1 : currentCouplet.taxa2;
 
-                    // Heavy operation moved completely outside the high-frequency keystroke pipeline
                     const idToIndexMap = buildIdToIndexMap(updatedKey);
                     const resolution = resolveDestination(link, taxa, idToIndexMap);
 
@@ -151,7 +137,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             }
 
             batchedRefresh(refreshAll);
-        }, DEBOUNCE_TYPING_MS);
+        });
     }, { signal });
 
     // --- Figures bindings ---
@@ -171,16 +157,10 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             const field = target.getAttribute('data-field') as 'filename' | 'caption';
             const fieldKey = `fig-${figId}-${field}`;
 
-            // Manage debounce typing timelines
-            if (!typingSessionActive || currentEditingFieldKey !== fieldKey) {
+            // Manage debounce typing timelines (Figures Context)
+            uiState.typing.figures.start(fieldKey, () => {
                 store.endTypingSession(); // commit any lingering state frame
-                typingSessionActive = true;
-                currentEditingFieldKey = fieldKey;
-            }
-
-            if (typingTimeoutId !== null) {
-                clearTimeout(typingTimeoutId);
-            }
+            });
 
             // Construct the partial Figure update object dynamically
             const fields = { [field]: target.value };
@@ -189,12 +169,10 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             store.updateFigure(figId, fields);
 
             // Debounce structural refreshes to avoid dropping the typing caret position
-            typingTimeoutId = window.setTimeout(() => {
-                typingSessionActive = false;
-                typingTimeoutId = null;
+            uiState.typing.figures.extendTimeout(DEBOUNCE_TYPING_MS, () => {
                 batchedRefresh(refreshAll); // Batch updates safely via requestAnimationFrame
-            }, DEBOUNCE_TYPING_MS);
-        }, { signal }); // Inherits abort tracking from the parent listener lifecycle
+            });
+        }, { signal });
 
         figureContainer.addEventListener('click', (e: MouseEvent) => {
             const target = e.target as HTMLElement;
@@ -216,15 +194,12 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             const isTextInput = target.closest('input, textarea');
 
             if (isTextInput) {
-                // UX UPGRADE: If they click an input box, check if the card is already highlighted.
-                // If it isn't, select it immediately. If it is, do NOT toggle it off (deselect it)
-                // so they can freely reposition their cursor or highlight text without flashing states.
                 const isAlreadySelected = figureCard.classList.contains('is-selected');
                 if (!isAlreadySelected) {
                     store.toggleFigureSelection(id, multiSelect);
                     batchedRefresh(refreshAll);
                 }
-                return; // Gracefully exit and let the native text focus/caret placement occur
+                return;
             }
 
             store.toggleFigureSelection(id, multiSelect);
@@ -243,18 +218,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
                 const fieldKey = figId && field ? `fig-${figId}-${field}` : null;
 
                 // Verify if focus is genuinely leaving this active figure field session
-                const isActualSessionEnd = currentEditingFieldKey !== null && currentEditingFieldKey === fieldKey;
-
-                if (isActualSessionEnd) {
-                    typingSessionActive = false;
-                    currentEditingFieldKey = null;
-
-                    // Clear any pending debounce timers immediately on blur
-                    if (typingTimeoutId !== null) {
-                        clearTimeout(typingTimeoutId);
-                        typingTimeoutId = null;
-                    }
-
+                uiState.typing.figures.end(fieldKey, () => {
                     // Evaluate next focus target context defensively
                     const destination = e.relatedTarget as HTMLElement | null;
                     const isClickingControl = destination instanceof Element && (
@@ -269,10 +233,9 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
                     if (!isClickingControl) {
                         batchedRefresh(refreshAll);
                     }
-                }
+                });
             }
         }, { signal });
-
     }
 
     // Centralized Drag and Form Text Highlight Mitigation
@@ -308,23 +271,10 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             const fieldKey = id && field ? `${id}-${field}` : null;
 
             // Verify if focus is genuinely leaving the active field session.
-            const isActualSessionEnd = currentEditingFieldKey !== null && currentEditingFieldKey === fieldKey;
-
-            // Only run side-effects and teardowns if this is a genuine session end
-            if (isActualSessionEnd) {
-                typingSessionActive = false;
-                currentEditingFieldKey = null;
-
-                // Clear any pending debounce timers
-                if (typingTimeoutId !== null) {
-                    clearTimeout(typingTimeoutId);
-                    typingTimeoutId = null;
-                }
-
+            uiState.typing.couplets.end(fieldKey, () => {
                 store.clearActiveCouplet();
 
                 // Encode any [fig: N] tokens that the debounce may not have reached
-                // (covers the case where the user typed and blurred before 800ms elapsed)
                 if (field && field !== 'dest1' && field !== 'dest2' && id !== null) {
                     const currentCouplet = store.getKey().find(c => c.id === id);
                     if (currentCouplet) {
@@ -347,15 +297,14 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
                 const isClickingControl = destination instanceof Element && (
                     destination.closest('.key-card') ||
                     destination.closest('.app-menu-bar') ||
-                    destination.closest('#add-couplet-btn') || // Safe lookup for children/spans inside the button
+                    destination.closest('#add-couplet-btn') || 
                     destination.closest('#control-panel-modal')
                 );
 
-                // Defer layout updates only if the user isn't interacting with app controls
                 if (!isClickingControl) {
                     batchedRefresh(refreshAll);
                 }
-            }
+            });
         }
     }, { signal });
 
@@ -405,7 +354,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             activeDropCard.classList.remove('drag-drop-above', 'drag-drop-below');
             activeDropCard = null;
             activeDropClass = null;
-            activeDropRect = null; // Purge layout metric cache
+            activeDropRect = null;
         }
     };
 
@@ -422,12 +371,9 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     keyContainer.addEventListener('dragover', (e: DragEvent) => {
         e.preventDefault();
 
-        // --- EDGE AUTO-SCROLL LOGIC ---
         if (e.clientY < AUTO_SCROLL_THRESHOLD_PX) {
-            // Cursor is near the top of the viewport
             window.scrollBy(0, -AUTO_SCROLL_SPEED_PX);
         } else if (window.innerHeight - e.clientY < AUTO_SCROLL_THRESHOLD_PX) {
-            // Cursor is near the bottom of the viewport
             window.scrollBy(0, AUTO_SCROLL_SPEED_PX);
         }
         updateTargetTrackers(e.clientY, e.target as HTMLElement);
@@ -448,7 +394,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         const coupletId = Number(card.getAttribute('data-id'));
         if (store.draggedCoupletId === null || store.draggedCoupletId === coupletId) return;
 
-        // Unified source of truth: Read directly from the target card's layout classes
         const position: 'above' | 'below' = card.classList.contains('drag-drop-above') ? 'above' : 'below';
 
         store.reorderCouplets(store.draggedCoupletId, coupletId, position);
@@ -465,7 +410,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
         const currentScrollY = window.scrollY;
 
-        // Invalidate cache if switching cards, missing rect, OR if the page scrolled
         if (activeDropCard !== actualCard || !activeDropRect || cachedScrollY !== currentScrollY) {
             activeDropRect = actualCard.getBoundingClientRect();
             cachedScrollY = currentScrollY;
@@ -474,7 +418,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         const relativeMouseY = clientY - activeDropRect.top;
         const currentClass = relativeMouseY < activeDropRect.height / 2 ? 'drag-drop-above' : 'drag-drop-below';
 
-        // Only update the DOM if the target layout or position state actually altered
         if (activeDropCard !== actualCard || activeDropClass !== currentClass) {
             const rectToPreserve = activeDropRect;
 
@@ -487,15 +430,9 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         }
     };
 
-
-    // ==========================================
-    // MENU BAR ACTION DISPATCHERS
-    // ==========================================
-
     // --- FILE MENU ACTION BINDINGS ---
     document.querySelector('#cmd-save')?.addEventListener('click', () => {
         try {
-            // Simple, clean state instruction
             store.saveToStorage();
             showToast("💾 Changes saved to Browser Local Storage!", "success");
             batchedRefresh(refreshAll);
@@ -618,13 +555,13 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         }
     }, { signal });
 
-    // Handles both the application layout button and Edit Menu item mappings safely
     const triggerAppendAction = () => createNewCoupletWithFocus(store, refreshAll);
     document.querySelector('#cmd-add')?.addEventListener('click', triggerAppendAction, { signal });
     document.querySelector('#add-couplet-btn')?.addEventListener('click', triggerAppendAction, { signal });
 
     document.querySelector('#cmd-clear')?.addEventListener('click', () => {
         store.clearSelection();
+        store.clearFigureSelection();
         batchedRefresh(refreshAll);
     }, { signal });
 
@@ -635,16 +572,12 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
     // --- View Menu action bindings ---
     document.querySelector('#cmd-toggle-figures')?.addEventListener('click', () => {
-        const figureColumn = document.querySelector('.figure-column');
-        if (!figureColumn) return;
-        figureColumn.classList.toggle('is-hidden');
+        uiState.toggleFigures();
         batchedRefresh(refreshAll);
     }, { signal });
 
     document.querySelector('#cmd-toggle-print')?.addEventListener('click', () => {
-        const printColumn = document.querySelector('.print-column');
-        if (!printColumn) return;
-        printColumn.classList.toggle('is-hidden');
+        uiState.togglePrint();
         batchedRefresh(refreshAll);
     }, { signal });
 
@@ -662,17 +595,13 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     }, { signal });
 
     // menu navigation
-
     const menuBar = document.querySelector('.app-menu-bar') as HTMLElement;
     if (menuBar) {
-        const { signal } = controller; // Uses your environment abort track
-
         const getTriggers = () => Array.from(menuBar.querySelectorAll('.menu-trigger')) as HTMLButtonElement[];
 
         const getDropdownActions = (trigger: HTMLButtonElement) => {
             const dropdown = trigger.nextElementSibling;
             if (!dropdown) return [];
-            // Extract selectable non-disabled items
             return Array.from(dropdown.querySelectorAll('.dropdown-action:not(:disabled)')) as HTMLButtonElement[];
         };
 
@@ -680,7 +609,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             getTriggers().forEach(t => t.setAttribute('aria-expanded', 'false'));
         };
 
-        // 1. Mouse Click Toggle Toggles
         menuBar.addEventListener('click', (e) => {
             const target = e.target as HTMLElement;
             const trigger = target.closest('.menu-trigger') as HTMLButtonElement | null;
@@ -693,10 +621,8 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             }
         }, { signal });
 
-        // Global Click Outside closer
         document.addEventListener('click', () => closeAllMenus(), { signal });
 
-        // 2. Keyboard Navigation Grid
         menuBar.addEventListener('keydown', (e) => {
             const activeEl = document.activeElement as HTMLButtonElement;
             if (!activeEl) return;
@@ -776,7 +702,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     }
 
     return () => {
-        controller.abort(); // Cleans up all secondary global listeners safely
+        controller.abort();
     };
 }
 
@@ -787,14 +713,11 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
     const handleKeyDown = (e: KeyboardEvent) => {
         const activeModal = document.querySelector('.modal-overlay[style*="display: flex"]') as HTMLElement | null;
         if (activeModal) {
-            // If they press Escape, let it fall through or close the modal
             if (e.key === 'Escape') {
                 activeModal.style.display = 'none';
                 e.preventDefault();
                 return;
             }
-
-            // Block the Tab key entirely from leaking into the underlying canvas cards
             if (e.key === 'Tab') {
                 e.preventDefault();
                 return;
@@ -808,14 +731,12 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
             activeElement.hasAttribute('contenteditable')
         );
 
-        // DUAL-CONTEXT CRITICAL COMMANDS
         if (hasModifier && e.key.toLowerCase() === 's') {
             e.preventDefault();
             document.querySelector<HTMLButtonElement>('#cmd-save')?.click();
             return;
         }
 
-        // CANVAS CONTEXT COMMANDS (Only if NOT typing)
         if (!isTyping) {
             if (e.altKey && e.key.toLowerCase() === 'n') {
                 e.preventDefault();
@@ -902,14 +823,10 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
     };
 }
 
-/**
- * Shared helper utility to cleanly insert a couplet and transfer user focus.
- */
 function createNewCoupletWithFocus(store: KeyStore, refreshAll: () => void) {
     const newId = store.addCouplet();
     refreshAll();
 
-    // Query DOM layout context to automatically transfer focus to the new card's first field
     const newCard = document.querySelector(`.key-card[data-id="${newId}"]`);
     const textarea = newCard?.querySelector('textarea[data-field="alt1"]') as HTMLTextAreaElement | null;
 
@@ -927,15 +844,14 @@ function executePaste(store: KeyStore, refreshAll: () => void, position: 'above'
 
     if (visibleSelection.length > 0) {
         targetId = position === 'below'
-            ? visibleSelection[visibleSelection.length - 1].id // Bottom-most visible selected card
-            : visibleSelection[0].id;                          // Top-most visible selected card
+            ? visibleSelection[visibleSelection.length - 1].id
+            : visibleSelection[0].id;
     } else if (key.length > 0) {
         targetId = position === 'above'
             ? key[0].id
             : key[key.length - 1].id;
     }
 
-    // If the key is completely empty,  initialize the first cards normally.
     if (store.pasteCouplets(targetId, position)) {
         const locationText = visibleSelection.length > 0
             ? `${position} selection`
@@ -945,4 +861,3 @@ function executePaste(store: KeyStore, refreshAll: () => void, position: 'above'
         batchedRefresh(refreshAll);
     }
 }
-

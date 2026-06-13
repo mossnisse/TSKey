@@ -1,5 +1,6 @@
 // uiRenderer.ts
 import { KeyStore, APP_NAME, APP_VERSION } from './store.ts';
+import { UIStateStore } from './uiState.ts';
 import { escapeHTML, buildIdToIndexMap, resolveDestination, IS_MAC } from './utils.ts';
 
 // ==========================================
@@ -237,9 +238,18 @@ export function initializeShell(appDiv: HTMLDivElement) {
 }
 
 /**
+ * Syncs DOM panel visibility classes FROM UIStateStore — the single source of truth.
+ * Must be called at the top of every refreshAll() cycle, before any render function.
+ */
+export function applyPanelVisibility(uiState: UIStateStore): void {
+    document.querySelector('.figure-column')?.classList.toggle('is-hidden', uiState.isFiguresHidden);
+    document.querySelector('.print-column')?.classList.toggle('is-hidden', uiState.isPrintHidden);
+}
+
+/**
  * Synchronizes real-time application context for the Menu, disable/enables them.
  */
-export function renderMenu(store: KeyStore) {
+export function renderMenu(store: KeyStore, uiState: UIStateStore) {
     const menuBar = document.querySelector('.app-menu-bar');
     if (!menuBar) return;
 
@@ -303,26 +313,21 @@ export function renderMenu(store: KeyStore) {
 
     if (reorderBtn) reorderBtn.disabled = !hasKeyElements;
 
-    // view menu synchronization - reads panel visibility state and updates button labels accordingly
-    // (the actual toggling of panels is handled by the click event listeners in eventController)
+    // View menu synchronization — read from UIStateStore, not from the DOM
     const toggleFiguresBtn = getBtn('cmd-toggle-figures');
     const togglePrintBtn = getBtn('cmd-toggle-print');
-    const figureColumn = document.querySelector('.figure-column');
-    const printColumn = document.querySelector('.print-column');
 
-    if (toggleFiguresBtn && figureColumn) {
-        const isHidden = figureColumn.classList.contains('is-hidden');
+    if (toggleFiguresBtn) {
         const label = toggleFiguresBtn.querySelector('span');
         if (label) {
-            label.textContent = isHidden ? '🖼️ Show Figures Panel' : '🖼️ Hide Figures Panel';
+            label.textContent = uiState.isFiguresHidden ? '🖼️ Show Figures Panel' : '🖼️ Hide Figures Panel';
         }
     }
 
-    if (togglePrintBtn && printColumn) {
-        const isHidden = printColumn.classList.contains('is-hidden');
+    if (togglePrintBtn) {
         const label = togglePrintBtn.querySelector('span');
         if (label) {
-            label.textContent = isHidden ? '🖨️ Show Print Preview' : '🖨️ Hide Print Preview';
+            label.textContent = uiState.isPrintHidden ? '🖨️ Show Print Preview' : '🖨️ Hide Print Preview';
         }
     }
 }
@@ -444,9 +449,8 @@ export function renderEditorCards(store: KeyStore) {
     existingMap.forEach(card => card.remove());
 }
 
-export function renderFigures(store: KeyStore) {
-    const column = document.querySelector('.figure-column');
-    if (!column || column.classList.contains('is-hidden')) return;
+export function renderFigures(store: KeyStore, uiState: UIStateStore) {
+    if (uiState.isFiguresHidden) return;
 
     const container = document.getElementById('figure-container');
     if (!container) return;
@@ -517,9 +521,8 @@ export function renderFigures(store: KeyStore) {
 /**
  * Renders the passive publication presentation view structure.
  */
-export function renderPrintView(store: KeyStore) {
-    const column = document.querySelector('.print-column');
-    if (!column || column.classList.contains('is-hidden')) return;
+export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
+    if (uiState.isPrintHidden) return;
 
     const container = document.getElementById('print-view-container');
     if (!container) return;
