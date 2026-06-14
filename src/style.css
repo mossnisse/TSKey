@@ -331,7 +331,8 @@ html, body {
     transition: var(--transition-base), transform 0.15s ease;
 }
 
-.key-card { padding: 20px 12px; cursor: grab; }
+/* Adjusted key-card padding to match the 16px layout footprint of the figure-card */
+.key-card { padding: 16px 16px; cursor: grab; }
 .figure-card { padding: 16px 16px; display: flex; flex-direction: column; gap: 8px; cursor: pointer; }
 
 .figure-card:last-of-type { border-bottom: none; }
@@ -359,7 +360,8 @@ html, body {
 /* ==========================================
    KEY NODE CANVAS STRUCTURAL DETAILS
    ========================================== */
-.card-header       { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; user-select: none; }
+/* Changed margin-bottom from 12px to 8px to balance the tighter 16px padding rules */
+.card-header       { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; user-select: none; }
 .card-header-left  { display: flex; align-items: center; gap: 12px; }
 .card-title        { margin: 0; color: var(--color-primary); font-weight: 700; font-size: 18px; font-family: monospace; }
 .drag-handle       { font-size: 16px; color: var(--color-border); opacity: 0; transition: opacity 0.15s ease; cursor: grab; }
@@ -464,6 +466,7 @@ html, body {
 .error-text   { color: var(--color-danger); }
 .warning-text { color: var(--color-warning); }
 
+/* Aligned key-card drag placement lines to match the closer -2px boundaries of figure-cards */
 .key-card.drag-drop-above::before,
 .key-card.drag-drop-below::after,
 .figure-card.drag-drop-above::before,
@@ -478,8 +481,8 @@ html, body {
     z-index: 10;
     pointer-events: none;
 }
-.key-card.drag-drop-above::before { top: -6px; }
-.key-card.drag-drop-below::after { bottom: -6px; }
+.key-card.drag-drop-above::before { top: -2px; }
+.key-card.drag-drop-below::after { bottom: -2px; }
 
 .figure-card.drag-drop-above::before { top: -2px; }
 .figure-card.drag-drop-below::after { bottom: -2px; }
@@ -488,30 +491,39 @@ html, body {
    FIGURE DETAILS & MANAGEMENT PANELS
    ========================================== */
 .figure-card-header { display: flex; justify-content: space-between; align-items: center; user-select: none; margin-bottom: 4px; }
-.figure-card-title  { margin: 0; color: var(--color-primary); font-weight: 700; font-size: 16px; }
+.figure-card-title  { margin: 0; color: var(--color-primary); font-weight: 700; font-size: 18px; font-family: monospace; }
 .figure-field-row   { display: flex; align-items: flex-start; gap: 12px; }
 
 .figure-field-row label {
-    font-size: 13px;
-    color: var(--color-text-muted);
-    min-width: 75px;        
+    font-family: sans-serif;
+    font-size: 14px;
+    color: var(--color-text);
+    min-width: 58px;        /* Reduced from 75px to pull inputs closer to the text */
     flex-shrink: 0;        
     padding-top: 2px;       
     user-select: none;
 }
 
+/* Updated to look identical to the Go-To / Destination input fields */
 .figure-card .figure-input-filename,
 .figure-card .figure-input-caption {
     flex: 1;             
-    font-family: monospace;
-    font-size: 13px;
-    font-weight: 600;
+    font-family: sans-serif;                             
+    font-size: 13px;                                    
+    font-weight: 600;                                   
     border: none;
-    border-bottom: 1px dashed transparent;
+    border-bottom: 1px solid var(--color-border-light); 
     background: transparent;
     color: var(--color-text);
-    padding: 2px 0;
-    transition: border-color 0.15s ease;
+    padding: 2px 0;                                     
+    transition: var(--transition-base);
+}
+
+/* Ensures the focus state transitions exactly like the goto fields */
+.figure-card .figure-input-filename:focus,
+.figure-card .figure-input-caption:focus {
+    outline: none;
+    border-bottom-color: var(--color-primary);
 }
 
 .figure-input-caption {
@@ -552,59 +564,33 @@ html, body {
 .btn-trigger-upload:hover { background: var(--color-primary-hover); }
 
  /* ==========================================
-
    PASSIVE PUBLICATION PRINT VIEW PANELS
-
    ========================================== */
-
 .print-grid {
-
     display: grid;
-
     grid-template-columns: auto 1fr;
-
     gap: 6px 10px;
-
     align-items: end;
-
     color: var(--color-text);
-
     line-height: 1.6;
-
     font-family: serif;
-
     font-size: 15px;
-
 }
 
-
 .print-step-num   { font-weight: bold; align-self: start; color: var(--color-text); }
-
 .print-step-block { display: contents; }
-
 .print-row        { display: flex; justify-content: space-between; align-items: end; width: 100%; }
-
 .print-text       { flex-shrink: 1; text-align: left; white-space: pre-wrap; }
-
 .print-dest       { flex-shrink: 0; white-space: nowrap; }
-
 .print-dest-strong{ font-weight: bold; }
-
 .print-dest-taxon { font-weight: bold; font-style: italic; }
-
 .print-dash       { font-weight: bold; text-align: center; align-self: start; color: var(--color-text); }
-
 .print-spacer     { grid-column: span 2; height: 8px; }
 
-
 .print-dots {
-
     flex-grow: 1;
-
     border-bottom: 1px dotted var(--color-text);
-
     margin: 0 8px 4px 8px;
-
 } 
 
 /* ==========================================
