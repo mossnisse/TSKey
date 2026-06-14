@@ -73,27 +73,32 @@ export function exportKeyToLaTeX(store: KeyStore): void {
                 const figLabels1: string[] = [];
                 const figLabels2: string[] = [];
 
-                // Resolve inline figure reference macros for alternative choice 1
-                alt1Text = alt1Text.replace(/\[figID:\s*(\d+)\s*\]/gi, (match, idStr) => {
-                    const id = parseInt(idStr, 10);
-                    const displayNum = figureIdToDisplayNum.get(id);
-                    if (displayNum !== undefined) {
-                        figLabels1.push(`Fig.~${displayNum}`);
-                        return `(Fig.~${displayNum})`;
-                    }
-                    return match;
-                });
+                // Refactored Matcher regex processing block
+                const figRegex = /\[figID:\s*(\d+)\s*\]/gi;
 
-                // Resolve inline figure reference macros for alternative choice 2
-                alt2Text = alt2Text.replace(/\[figID:\s*(\d+)\s*\]/gi, (match, idStr) => {
-                    const id = parseInt(idStr, 10);
-                    const displayNum = figureIdToDisplayNum.get(id);
-                    if (displayNum !== undefined) {
-                        figLabels2.push(`Fig.~${displayNum}`);
-                        return `(Fig.~${displayNum})`;
-                    }
-                    return match;
-                });
+                if (alt1Text.includes('[figID:')) {
+                    alt1Text = alt1Text.replace(figRegex, (match, idStr) => {
+                        const id = parseInt(idStr, 10);
+                        const displayNum = figureIdToDisplayNum.get(id);
+                        if (displayNum !== undefined) {
+                            figLabels1.push(`Fig.~${displayNum}`);
+                            return `(Fig.~${displayNum})`; // Renders clean LaTeX scientific notation
+                        }
+                        return match;
+                    });
+                }
+
+                if (alt2Text.includes('[figID:')) {
+                    alt2Text = alt2Text.replace(figRegex, (match, idStr) => {
+                        const id = parseInt(idStr, 10);
+                        const displayNum = figureIdToDisplayNum.get(id);
+                        if (displayNum !== undefined) {
+                            figLabels2.push(`Fig.~${displayNum}`);
+                            return `(Fig.~${displayNum})`;
+                        }
+                        return match;
+                    });
+                }
 
                 const figText1 = figLabels1.length > 0 ? figLabels1.join(', ') : '';
                 const figText2 = figLabels2.length > 0 ? figLabels2.join(', ') : '';

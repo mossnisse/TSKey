@@ -74,7 +74,7 @@ html, body {
 .main-layout {
     display: flex;
     gap: 20px;
-    align-items: stretch; /* Stretch columns to have identical full-height layouts */
+    align-items: stretch;
     user-select: none;
     flex: 1;              
     min-height: 0;   
@@ -86,7 +86,7 @@ html, body {
     display: flex;
     flex-direction: column;
     height: 100%;
-    min-height: 0;        /* Protects columns from expanding past layout bounds */
+    min-height: 0;
 }
 
 .editor-column { flex: 1.2; }
@@ -363,7 +363,8 @@ html, body {
 .card-header-left  { display: flex; align-items: center; gap: 12px; }
 .card-title        { margin: 0; color: var(--color-primary); font-weight: 700; font-size: 18px; font-family: monospace; }
 .drag-handle       { font-size: 16px; color: var(--color-border); opacity: 0; transition: opacity 0.15s ease; cursor: grab; }
-.key-card:hover .drag-handle { opacity: 1; }
+.key-card:hover .drag-handle,
+.figure-card:hover .drag-handle { opacity: 1; }
 
 .badge             { font-size: 11px; padding: 2px 6px; border-radius: var(--radius-sm); font-weight: 500; }
 .badge-linked      { background: transparent; color: var(--color-text-muted); }
@@ -455,7 +456,9 @@ html, body {
 .warning-text { color: var(--color-warning); }
 
 .key-card.drag-drop-above::before,
-.key-card.drag-drop-below::after {
+.key-card.drag-drop-below::after,
+.figure-card.drag-drop-above::before,
+.figure-card.drag-drop-below::after {
     content: '';
     position: absolute;
     left: 0;
@@ -468,6 +471,9 @@ html, body {
 }
 .key-card.drag-drop-above::before { top: -6px; }
 .key-card.drag-drop-below::after { bottom: -6px; }
+
+.figure-card.drag-drop-above::before { top: -2px; }
+.figure-card.drag-drop-below::after { bottom: -2px; }
 
 /* ==========================================
    FIGURE DETAILS & MANAGEMENT PANELS

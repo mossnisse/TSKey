@@ -1183,17 +1183,11 @@ export class KeyStore {
      *   [figID: 106]  — new storage format (internal ID, always stable)
      *   [fig: value]  — legacy format (numeric value treated as old ID, text as filename)
      */
-    public resolveTextReferences(text: string): string {
+    public resolveTextReferences(text: string, idToDisplayNum: Map<number, number>): string {
         if (!text) return text;
 
-        const idToDisplayNum = new Map<number, number>();
+        //const idToDisplayNum = new Map<number, number>();
         const filenameToDisplayNum = new Map<string, number>();
-
-        this.state.figures.forEach((fig, index) => {
-            const sequenceNumber = index + 1;
-            idToDisplayNum.set(fig.id, sequenceNumber);
-            filenameToDisplayNum.set(fig.filename.trim().toLowerCase(), sequenceNumber);
-        });
 
         // resolve new storage format [figID: N] — value is always an internal ID
         text = text.replace(/\[figID:\s*(\d+)\s*\]/gi, (_match, value) => {

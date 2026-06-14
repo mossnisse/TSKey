@@ -1,7 +1,7 @@
 // uiRenderer.ts
 import { KeyStore, APP_NAME, APP_VERSION } from './store.ts';
 import { UIStateStore } from './uiState.ts';
-import { escapeHTML, buildIdToIndexMap, resolveDestination, IS_MAC } from './utils.ts';
+import { escapeHTML, buildIdToIndexMap, resolveDestination, IS_MAC, buildFigureIdToDisplayNumMap } from './utils.ts';
 import { figureStorage, activeObjectURLs } from './db.ts';
 
 // ==========================================
@@ -484,6 +484,7 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
             block = document.createElement('div');
             block.className = 'figure-card';
             block.setAttribute('data-id', fig.id.toString());
+            block.draggable = true;
             block.innerHTML = `
                 <div class="figure-card-header">
                     <span class="figure-card-title">${displayNum}.</span>
@@ -571,6 +572,7 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
 
     const key = store.getKey();
     const idToIndexMap = buildIdToIndexMap(key);
+    const figDisplayMap = buildFigureIdToDisplayNumMap(store.getFigures());
 
     const existingBlocks = Array.from(container.querySelectorAll('.print-step-block')) as HTMLElement[];
     const existingMap = new Map<number, HTMLElement>();
@@ -586,8 +588,8 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
         const dest1 = resolveDestination(c.link1, c.taxa1, idToIndexMap);
         const dest2 = resolveDestination(c.link2, c.taxa2, idToIndexMap);
 
-        const val1 = store.resolveTextReferences(c.alt1) || '___';
-        const val2 = store.resolveTextReferences(c.alt2) || '___';
+        const val1 = store.resolveTextReferences(c.alt1, figDisplayMap) || '___';
+        const val2 = store.resolveTextReferences(c.alt2, figDisplayMap) || '___';
 
         let block = existingMap.get(c.id);
 

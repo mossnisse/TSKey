@@ -190,7 +190,6 @@ export function buildFigureIdToDisplayNumMap(figures: readonly Figure[]): Map<nu
 /**
  * functions for handling Destination links
  */
-
 export interface DestinationResolution {
     inputValue: string;    // Raw text to bind inside edit input boxes
     printText: string;     // Formatted layout text for the publication panel

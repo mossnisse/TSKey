@@ -32,8 +32,8 @@ export function exportKeyToPlainText(store: KeyStore): void {
                 : (c.link2 ? getStepNumberById(idToIndexMap, c.link2) : '...');
 
             // Resolve figure shorthand macros (e.g. converting [figID: 101] to [fig: 1])
-            const alt1Text = store.resolveTextReferences(c.alt1) || '___';
-            const alt2Text = store.resolveTextReferences(c.alt2) || '___';
+            const alt1Text = store.resolveTextReferences(c.alt1, idToDisplayNum) || '___';
+            const alt2Text = store.resolveTextReferences(c.alt2, idToDisplayNum) || '___';
 
             // Append lines to document
             content += `${currentDisplayNum}.\t${alt1Text}\t${dest1}\n`;

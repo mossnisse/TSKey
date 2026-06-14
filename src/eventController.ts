@@ -239,49 +239,165 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
         }, { signal });
 
         // Intercept action button clicks and proxy them over to the hidden picker frame
-    figureContainer.addEventListener('click', (e) => {
-        const target = e.target as HTMLElement;
-        if (target.classList.contains('btn-trigger-upload')) {
-            const card = target.closest('.figure-card') as HTMLElement;
-            const truePicker = card?.querySelector('.hidden-file-picker') as HTMLInputElement;
-            truePicker?.click();
-        }
-    });
+        figureContainer.addEventListener('click', (e) => {
+            const target = e.target as HTMLElement;
+            if (target.classList.contains('btn-trigger-upload')) {
+                const card = target.closest('.figure-card') as HTMLElement;
+                const truePicker = card?.querySelector('.hidden-file-picker') as HTMLInputElement;
+                truePicker?.click();
+            }
+        });
 
-    // Intercept binary mutations when the operating system file picker dismisses
-    figureContainer.addEventListener('change', async (e) => {
-        const target = e.target as HTMLInputElement;
-        if (target.classList.contains('hidden-file-picker')) {
-            const file = target.files?.[0];
-            if (!file) return;
+        // Intercept binary mutations when the operating system file picker dismisses
+        figureContainer.addEventListener('change', async (e) => {
+            const target = e.target as HTMLInputElement;
+            if (target.classList.contains('hidden-file-picker')) {
+                const file = target.files?.[0];
+                if (!file) return;
 
-            const card = target.closest('.figure-card') as HTMLElement;
-            const figId = Number(card?.getAttribute('data-id'));
-            if (isNaN(figId)) return;
+                const card = target.closest('.figure-card') as HTMLElement;
+                const figId = Number(card?.getAttribute('data-id'));
+                if (isNaN(figId)) return;
 
-            // Commit binary stream payload directly into client IndexedDB space
-            await figureStorage.saveFigureBinary(figId, file);
+                // Commit binary stream payload directly into client IndexedDB space
+                await figureStorage.saveFigureBinary(figId, file);
 
-            // Evict and clean stale historical URL footprints from browser system memory
-            const oldUrl = activeObjectURLs.get(figId);
-            if (oldUrl) URL.revokeObjectURL(oldUrl);
+                // Evict and clean stale historical URL footprints from browser system memory
+                const oldUrl = activeObjectURLs.get(figId);
+                if (oldUrl) URL.revokeObjectURL(oldUrl);
 
-            // Populate the sync cache directory immediately using raw object bindings
-            const freshUrl = URL.createObjectURL(file);
-            activeObjectURLs.set(figId, freshUrl);
+                // Populate the sync cache directory immediately using raw object bindings
+                const freshUrl = URL.createObjectURL(file);
+                activeObjectURLs.set(figId, freshUrl);
 
-            // Mutate string state properties inside KeyStore structure
-            // Assuming your store engine uses an interface structure similar to your inputs:
-            const filenameInput = card?.querySelector('.figure-input-filename') as HTMLInputElement;
-            if (filenameInput) {
-                filenameInput.value = file.name;
-                // Dispatch input event to notify your existing text synchronization loops
-                filenameInput.dispatchEvent(new Event('input', { bubbles: true }));
+                // Mutate string state properties inside KeyStore structure
+                // Assuming your store engine uses an interface structure similar to your inputs:
+                const filenameInput = card?.querySelector('.figure-input-filename') as HTMLInputElement;
+                if (filenameInput) {
+                    filenameInput.value = file.name;
+                    // Dispatch input event to notify your existing text synchronization loops
+                    filenameInput.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+
+                refreshAll();
+            }
+        });
+
+        // --- FIGURE DRAG AND DROP ENGINE ---
+        let draggedFigId: number | null = null;
+        let activeFigDropCard: HTMLElement | null = null;
+        let activeFigDropClass: 'drag-drop-above' | 'drag-drop-below' | null = null;
+        let activeFigDropRect: DOMRect | null = null;
+        let cachedFigScrollY = 0;
+
+        const clearFigDropMarkers = () => {
+            if (activeFigDropCard) {
+                activeFigDropCard.classList.remove('drag-drop-above', 'drag-drop-below');
+                activeFigDropCard = null;
+                activeFigDropClass = null;
+                activeFigDropRect = null;
+            }
+        };
+
+        const updateFigTargetTrackers = (clientY: number, cardEl: HTMLElement) => {
+            const actualCard = cardEl.closest('.figure-card') as HTMLElement;
+            if (!actualCard) {
+                clearFigDropMarkers();
+                return;
             }
 
-            refreshAll();
-        }
-    });
+            const currentScrollY = figureContainer.scrollTop;
+
+            if (activeFigDropCard !== actualCard || !activeFigDropRect || cachedFigScrollY !== currentScrollY) {
+                activeFigDropRect = actualCard.getBoundingClientRect();
+                cachedFigScrollY = currentScrollY;
+            }
+
+            const relativeMouseY = clientY - activeFigDropRect.top;
+            const currentClass = relativeMouseY < activeFigDropRect.height / 2 ? 'drag-drop-above' : 'drag-drop-below';
+
+            if (activeFigDropCard !== actualCard || activeFigDropClass !== currentClass) {
+                const rectToPreserve = activeFigDropRect;
+                clearFigDropMarkers();
+                actualCard.classList.add(currentClass);
+                activeFigDropCard = actualCard;
+                activeFigDropClass = currentClass;
+                activeFigDropRect = rectToPreserve;
+            }
+        };
+
+        figureContainer.addEventListener('dragstart', (e) => {
+            const target = e.target as HTMLElement;
+            const card = target.closest('.figure-card') as HTMLElement;
+            if (!card) return;
+
+            draggedFigId = Number(card.getAttribute('data-id'));
+            card.classList.remove('is-hovered', 'is-active');
+            requestAnimationFrame(() => {
+                card.style.opacity = '0.4';
+            });
+        }, { signal });
+
+        figureContainer.addEventListener('dragend', (e) => {
+            const target = e.target as HTMLElement;
+            const card = target.closest('.figure-card') as HTMLElement;
+            if (card) card.style.opacity = '1';
+            draggedFigId = null;
+            clearFigDropMarkers();
+        }, { signal });
+
+        figureContainer.addEventListener('dragover', (e: DragEvent) => {
+            e.preventDefault();
+
+            // Edge-scrolling logic targeting the figure container specifically
+            const containerRect = figureContainer.getBoundingClientRect();
+
+            if (e.clientY - containerRect.top < AUTO_SCROLL_THRESHOLD_PX) {
+                figureContainer.scrollBy(0, -AUTO_SCROLL_SPEED_PX);
+            } else if (containerRect.bottom - e.clientY < AUTO_SCROLL_THRESHOLD_PX) {
+                figureContainer.scrollBy(0, AUTO_SCROLL_SPEED_PX);
+            }
+
+            updateFigTargetTrackers(e.clientY, e.target as HTMLElement);
+        }, { signal });
+
+        figureContainer.addEventListener('dragleave', (e: DragEvent) => {
+            const target = e.relatedTarget as HTMLElement;
+            if (!target || !figureContainer.contains(target)) {
+                clearFigDropMarkers();
+            }
+        }, { signal });
+
+        figureContainer.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const target = e.target as HTMLElement;
+            const card = target.closest('.figure-card') as HTMLElement;
+
+            if (!card || draggedFigId === null) return;
+
+            const targetFigId = Number(card.getAttribute('data-id'));
+            if (draggedFigId === targetFigId) return;
+
+            const position = card.classList.contains('drag-drop-above') ? 'above' : 'below';
+
+            const figures = store.getFigures();
+            const srcIdx = figures.findIndex(f => f.id === draggedFigId);
+            let targetIdx = figures.findIndex(f => f.id === targetFigId);
+
+            if (srcIdx === -1 || targetIdx === -1) return;
+
+            // Shift index logic based on array splicing behavior
+            if (position === 'below') {
+                targetIdx = srcIdx < targetIdx ? targetIdx : targetIdx + 1;
+            } else {
+                targetIdx = srcIdx < targetIdx ? targetIdx - 1 : targetIdx;
+            }
+
+            if (srcIdx !== targetIdx) {
+                store.reorderFigures(srcIdx, targetIdx);
+                batchedRefresh(refreshAll);
+            }
+        }, { signal });
     }
 
     // Centralized Drag and Form Text Highlight Mitigation
@@ -343,7 +459,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                 const isClickingControl = destination instanceof Element && (
                     destination.closest('.key-card') ||
                     destination.closest('.app-menu-bar') ||
-                    destination.closest('#add-couplet-btn') || 
+                    destination.closest('#add-couplet-btn') ||
                     destination.closest('#control-panel-modal')
                 );
 
@@ -417,11 +533,14 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
     keyContainer.addEventListener('dragover', (e: DragEvent) => {
         e.preventDefault();
 
-        if (e.clientY < AUTO_SCROLL_THRESHOLD_PX) {
-            window.scrollBy(0, -AUTO_SCROLL_SPEED_PX);
-        } else if (window.innerHeight - e.clientY < AUTO_SCROLL_THRESHOLD_PX) {
-            window.scrollBy(0, AUTO_SCROLL_SPEED_PX);
+        const containerRect = keyContainer.getBoundingClientRect();
+
+        if (e.clientY - containerRect.top < AUTO_SCROLL_THRESHOLD_PX) {
+            keyContainer.scrollBy(0, -AUTO_SCROLL_SPEED_PX);
+        } else if (containerRect.bottom - e.clientY < AUTO_SCROLL_THRESHOLD_PX) {
+            keyContainer.scrollBy(0, AUTO_SCROLL_SPEED_PX);
         }
+
         updateTargetTrackers(e.clientY, e.target as HTMLElement);
     }, { signal });
 
@@ -454,7 +573,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
             return;
         }
 
-        const currentScrollY = window.scrollY;
+        const currentScrollY = keyContainer.scrollTop;
 
         if (activeDropCard !== actualCard || !activeDropRect || cachedScrollY !== currentScrollY) {
             activeDropRect = actualCard.getBoundingClientRect();

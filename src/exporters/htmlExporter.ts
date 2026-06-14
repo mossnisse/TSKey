@@ -62,8 +62,8 @@ export async function exportKeyToHTML(store: KeyStore): Promise<void> {
                     ? `<strong class="print-dest-strong">${step2Dest}</strong>` 
                     : '<span>...</span>');
 
-            const alt1 = store.resolveTextReferences(c.alt1) || '___';
-            const alt2 = store.resolveTextReferences(c.alt2) || '___';
+            const alt1 = store.resolveTextReferences(c.alt1, idToDisplayNum) || '___';
+            const alt2 = store.resolveTextReferences(c.alt2, idToDisplayNum) || '___';
 
             keyColumnMarkup += `
             <div class="print-couplet">
