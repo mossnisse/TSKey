@@ -160,7 +160,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
     
       <div class="main-layout">
         <div class="editor-column">
-          <h2 class="heading-editor">Key Node Canvas</h2>
+          <h2 class="heading-editor">Key Editor</h2>
           <div id="editor-container"></div>
           <button id="add-couplet-btn" class="btn-add-block">+ Add New Step Block (Alt+N)</button>
         </div>
