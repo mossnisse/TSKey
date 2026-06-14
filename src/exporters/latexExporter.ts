@@ -25,8 +25,7 @@ function escapeLaTeX(str: string): string {
 
 /**
  * Compiles the current KeyStore state into a valid standalone LaTeX structure
- * using the Companion Directory Approach for figures, creating a dedicated
- * column on the right for figure references.
+ * using classic inline notation and dot leaders to prevent layout overlap.
  */
 export function exportKeyToLaTeX(store: KeyStore): void {
 
@@ -47,9 +46,9 @@ export function exportKeyToLaTeX(store: KeyStore): void {
         } else {
             let bodyContent = '';
 
-            // --- COLUMN HEADERS ---
-            bodyContent += `\\noindent\\makebox[2.5em][l]{\\textbf{No.}}\\textbf{Description} \\hfill \\makebox[8em][l]{\\textbf{Figures}} \\makebox[12em][r]{\\textbf{Destination}}\\par\n`;
-            bodyContent += `\\rule{\\linewidth}{0.5pt}\\vspace{0.6em}\\par\n\n`;
+            // --- CLEAN CLASSIC HEADERS ---
+            //bodyContent += `\\noindent\\makebox[2.5em][l]{\\textbf{No.}}\\textbf{Description} \\hfill \\textbf{Destination}\\par\n`;
+            //bodyContent += `\\rule{\\linewidth}{0.5pt}\\vspace{0.6em}\\par\n\n`;
 
             // --- KEY COUPLETS LOOP ---
             key.forEach((c, index) => {
@@ -59,54 +58,38 @@ export function exportKeyToLaTeX(store: KeyStore): void {
 
                 // Guard against structural 'INVALID ID' fragments slipping into text fields
                 const end1 = c.taxa1
-                    ? `\\textbf{\\textit{${escapeLaTeX(c.taxa1)}}}`
-                    : (c.link1 && step1Dest !== 'INVALID ID' ? `\\textbf{${step1Dest}}` : `\\dots`);
+                    ? `\\mbox{\\textbf{\\textit{${escapeLaTeX(c.taxa1)}}}}`
+                    : (c.link1 && step1Dest !== 'INVALID ID' ? `\\mbox{\\textbf{${step1Dest}}}` : `\\dots`);
 
                 const end2 = c.taxa2
-                    ? `\\textbf{\\textit{${escapeLaTeX(c.taxa2)}}}`
-                    : (c.link2 && step2Dest !== 'INVALID ID' ? `\\textbf{${step2Dest}}` : `\\dots`);
+                    ? `\\mbox{\\textbf{\\textit{${escapeLaTeX(c.taxa2)}}}}`
+                    : (c.link2 && step2Dest !== 'INVALID ID' ? `\\mbox{\\textbf{${step2Dest}}}` : `\\dots`);
 
                 // Escape text strings first to keep figure macros intact for regex token processing
                 let alt1Text = escapeLaTeX(c.alt1);
                 let alt2Text = escapeLaTeX(c.alt2);
 
-                const figLabels1: string[] = [];
-                const figLabels2: string[] = [];
+                // Regex pattern captures both standard [figID: X] and LaTeX-escaped \[figID: X\] brackets
+                const figRegex = /\\?\[figID:\s*(\d+)\s*\\?\]/gi;
 
-                // Refactored Matcher regex processing block
-                const figRegex = /\[figID:\s*(\d+)\s*\]/gi;
+                // Process alternative choice 1 (Convert to seamless inline parenthetical notation)
+                alt1Text = alt1Text.replace(figRegex, (match, idStr) => {
+                    const id = parseInt(idStr, 10);
+                    const displayNum = figureIdToDisplayNum.get(id);
+                    return displayNum !== undefined ? ` (Fig.~${displayNum})` : match;
+                });
 
-                if (alt1Text.includes('[figID:')) {
-                    alt1Text = alt1Text.replace(figRegex, (match, idStr) => {
-                        const id = parseInt(idStr, 10);
-                        const displayNum = figureIdToDisplayNum.get(id);
-                        if (displayNum !== undefined) {
-                            figLabels1.push(`Fig.~${displayNum}`);
-                            return `(Fig.~${displayNum})`; // Renders clean LaTeX scientific notation
-                        }
-                        return match;
-                    });
-                }
+                // Process alternative choice 2
+                alt2Text = alt2Text.replace(figRegex, (match, idStr) => {
+                    const id = parseInt(idStr, 10);
+                    const displayNum = figureIdToDisplayNum.get(id);
+                    return displayNum !== undefined ? ` (Fig.~${displayNum})` : match;
+                });
 
-                if (alt2Text.includes('[figID:')) {
-                    alt2Text = alt2Text.replace(figRegex, (match, idStr) => {
-                        const id = parseInt(idStr, 10);
-                        const displayNum = figureIdToDisplayNum.get(id);
-                        if (displayNum !== undefined) {
-                            figLabels2.push(`Fig.~${displayNum}`);
-                            return `(Fig.~${displayNum})`;
-                        }
-                        return match;
-                    });
-                }
-
-                const figText1 = figLabels1.length > 0 ? figLabels1.join(', ') : '';
-                const figText2 = figLabels2.length > 0 ? figLabels2.join(', ') : '';
-
-                // Scoped block formatting using structural column macro configurations
+                // Structural formatting utilizing flexible dot-fill constraints to auto-align right boundaries
                 bodyContent += `{\\interlinepenalty=10000\n`;
-                bodyContent += `\\noindent\\hangindent=2.5em\\hangafter=1\\makebox[2.5em][l]{\\textbf{${currentDisplayNum}.}}${alt1Text} \\dotfill \\makebox[8em][l]{${figText1}} \\makebox[12em][r]{${end1}}\\par\\nopagebreak\n`;
-                bodyContent += `\\noindent\\hangindent=2.5em\\hangafter=1\\makebox[2.5em][l]{\\textemdash}${alt2Text} \\dotfill \\makebox[8em][l]{${figText2}} \\makebox[12em][r]{${end2}}\\par}\n`;
+                bodyContent += `\\noindent\\hangindent=2.5em\\hangafter=1\\makebox[2.5em][l]{\\textbf{${currentDisplayNum}.}}${alt1Text}\\nobreak\\dotfill\\allowbreak\\hspace*{0pt}\\dotfill ${end1}\\par\\nopagebreak\n`;
+                bodyContent += `\\noindent\\hangindent=2.5em\\hangafter=1\\makebox[2.5em][l]{\\textemdash}${alt2Text}\\nobreak\\dotfill\\allowbreak\\hspace*{0pt}\\dotfill ${end2}\\par}\n`;
                 bodyContent += `\\vspace{0.6em}\n\n`;
             });
 
@@ -131,11 +114,9 @@ ${bodyContent}
                 figuresAppendix += `\\begin{figure}[htbp]\n`;
                 figuresAppendix += `  \\centering\n`;
 
-                // Check if a filename actually exists to choose between graphic insertion or textual fallback
                 if (fig.filename && fig.filename.trim()) {
                     figuresAppendix += `  \\includegraphics[width=0.7\\linewidth]{figures/${fig.filename.trim()}}\n`;
                 } else {
-                    // Generates a structured layout box placeholder directly avoiding compilation file-missing breaks
                     figuresAppendix += `  \\framebox[0.7\\linewidth]{\\vbox{\\vspace{1.5cm}\\centering\\textbf{[Image Placeholder]}\\par\\vspace{0.5em}\\small No filename provided in data store\\vspace{1.5cm}}}\n`;
                 }
 
