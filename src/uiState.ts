@@ -7,11 +7,13 @@ export const UI_STATE_STORAGE_KEY = 'dichotomous_key_ui';
 export interface UIPanelState {
     isFiguresHidden: boolean;
     isPrintHidden: boolean;
+    isImagesHidden: boolean;
 }
 
 const DEFAULTS: UIPanelState = {
     isFiguresHidden: false,
     isPrintHidden: false,
+    isImagesHidden: false,
 };
 
 /**
@@ -103,6 +105,10 @@ export class UIStateStore {
         return this.state.isFiguresHidden;
     }
 
+    get isImagesHidden(): boolean {
+        return this.state.isImagesHidden;
+    }
+
     get isPrintHidden(): boolean {
         return this.state.isPrintHidden;
     }
@@ -118,6 +124,11 @@ export class UIStateStore {
 
     public togglePrint(): void {
         this.state = { ...this.state, isPrintHidden: !this.state.isPrintHidden };
+        this.persist();
+    }
+
+    public toggleImages(): void {
+        this.state = { ...this.state, isImagesHidden: !this.state.isImagesHidden };
         this.persist();
     }
 

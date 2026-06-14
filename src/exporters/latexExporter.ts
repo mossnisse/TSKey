@@ -46,10 +46,6 @@ export function exportKeyToLaTeX(store: KeyStore): void {
         } else {
             let bodyContent = '';
 
-            // --- CLEAN CLASSIC HEADERS ---
-            //bodyContent += `\\noindent\\makebox[2.5em][l]{\\textbf{No.}}\\textbf{Description} \\hfill \\textbf{Destination}\\par\n`;
-            //bodyContent += `\\rule{\\linewidth}{0.5pt}\\vspace{0.6em}\\par\n\n`;
-
             // --- KEY COUPLETS LOOP ---
             key.forEach((c, index) => {
                 const currentDisplayNum = index + 1;

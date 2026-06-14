@@ -120,10 +120,14 @@ export function initializeShell(appDiv: HTMLDivElement) {
               <span>🖼️ Hide Figures Panel</span>
               <span class="menu-shortcut">Ctrl+Shift+F</span>
             </button>
+            <button id="cmd-toggle-images" class="dropdown-action">
+              <span>🖼️ Hide Images in Figures Panel</span>
+            </button>
             <button id="cmd-toggle-print" class="dropdown-action">
               <span>🖨️ Hide Print Preview</span>
               <span class="menu-shortcut">Ctrl+Shift+P</span>
             </button>
+           
           </div>
         </div>
 
@@ -326,12 +330,20 @@ export function renderMenu(store: KeyStore, uiState: UIStateStore) {
 
     // View menu synchronization — read from UIStateStore, not from the DOM
     const toggleFiguresBtn = getBtn('cmd-toggle-figures');
+    const toggleImagesBtn = getBtn('cmd-toggle-images');
     const togglePrintBtn = getBtn('cmd-toggle-print');
 
     if (toggleFiguresBtn) {
         const label = toggleFiguresBtn.querySelector('span');
         if (label) {
             label.textContent = uiState.isFiguresHidden ? '🖼️ Show Figures Panel' : '🖼️ Hide Figures Panel';
+        }
+    }
+
+    if (toggleImagesBtn) {
+        const label = toggleImagesBtn.querySelector('span');
+        if (label) {
+            label.textContent = uiState.isImagesHidden ? '🖼️ Show Images in Figures Panel' : '🖼️ Hide Images in Figures Panel';
         }
     }
 
@@ -380,7 +392,8 @@ export function renderEditorCards(store: KeyStore) {
         let warningInnerHtml = '';
         cardErrors.forEach(err => {
             const modifierClass = err.severity === 'error' ? 'error-text' : 'warning-text';
-            warningInnerHtml += `<span class="${modifierClass}">⚠️ ${escapeHTML(err.message)}</span>`;
+            // Changed <span> to <div> for block-level stacking
+            warningInnerHtml += `<div class="${modifierClass}">⚠️ ${escapeHTML(err.message)}</div>`;
         });
         const warningBlockHtml = cardErrors.length > 0 ? `<div class="warning-block">${warningInnerHtml}</div>` : '';
 
@@ -519,30 +532,41 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
         }
         block.classList.toggle('is-selected', isSelected);
 
-        // --- ASYNC BINARY PREVIEW SYNCHRONIZATION LOOP ---
+        const previewWrapper = block.querySelector('.figure-preview-wrapper') as HTMLElement;
         const previewImg = block.querySelector('.figure-preview-img') as HTMLImageElement;
-        const cachedUrl = activeObjectURLs.get(fig.id);
 
-        if (cachedUrl) {
-            if (previewImg.src !== cachedUrl) {
-                previewImg.src = cachedUrl;
-                previewImg.style.display = 'block';
-            }
+        // --- ASYNC BINARY PREVIEW SYNCHRONIZATION LOOP ---
+        if (uiState.isImagesHidden) {
+            // Hide the entire preview slot to create a compact, text-only layout view
+            if (previewWrapper) previewWrapper.style.display = 'none';
+            if (previewImg) previewImg.style.display = 'none';
         } else {
-            // If not cached, fetch safely without halting the paint process or looping
-            if (!previewImg.hasAttribute('data-loading-state')) {
-                previewImg.setAttribute('data-loading-state', 'pending');
-                
-                figureStorage.getFigureBinary(fig.id).then(blob => {
-                    previewImg.removeAttribute('data-loading-state');
-                    if (blob) {
-                        const newUrl = URL.createObjectURL(blob);
-                        activeObjectURLs.set(fig.id, newUrl);
-                        refreshAll(); // Safe invocation: will paint via cachedUrl branch next frame
-                    } else {
-                        previewImg.style.display = 'none';
-                    }
-                }).catch(() => previewImg.removeAttribute('data-loading-state'));
+            // Restore default CSS layout when visible
+            if (previewWrapper) previewWrapper.style.display = '';
+
+            const cachedUrl = activeObjectURLs.get(fig.id);
+            if (cachedUrl) {
+                if (previewImg.src !== cachedUrl) {
+                    previewImg.src = cachedUrl;
+                }
+                // FIX: Always ensure image is visible when a valid cache entry exists
+                previewImg.style.display = 'block'; 
+            } else {
+                // If not cached, fetch safely without halting the paint process or looping
+                if (!previewImg.hasAttribute('data-loading-state')) {
+                    previewImg.setAttribute('data-loading-state', 'pending');
+
+                    figureStorage.getFigureBinary(fig.id).then(blob => {
+                        previewImg.removeAttribute('data-loading-state');
+                        if (blob) {
+                            const newUrl = URL.createObjectURL(blob);
+                            activeObjectURLs.set(fig.id, newUrl);
+                            refreshAll(); // Safe invocation: will paint via cachedUrl branch next frame
+                        } else {
+                            previewImg.style.display = 'none';
+                        }
+                    }).catch(() => previewImg.removeAttribute('data-loading-state'));
+                }
             }
         }
 

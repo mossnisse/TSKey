@@ -741,6 +741,11 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
         batchedRefresh(refreshAll);
     }, { signal });
 
+    document.querySelector('#cmd-toggle-images')?.addEventListener('click', () => {
+        uiState.toggleImages();
+        batchedRefresh(refreshAll);
+    }, { signal });
+
     document.querySelector('#cmd-toggle-print')?.addEventListener('click', () => {
         uiState.togglePrint();
         batchedRefresh(refreshAll);

@@ -244,11 +244,11 @@ export class KeyStore {
 
             if (couplet.link1) {
                 if (!map.has(couplet.link1)) map.set(couplet.link1, []);
-                map.get(couplet.link1)!.push(`#${humanLabel}a`);
+                map.get(couplet.link1)!.push(`${humanLabel}a`);
             }
             if (couplet.link2) {
                 if (!map.has(couplet.link2)) map.set(couplet.link2, []);
-                map.get(couplet.link2)!.push(`#${humanLabel}b`);
+                map.get(couplet.link2)!.push(`${humanLabel}b`);
             }
         });
 
@@ -1107,6 +1107,9 @@ export class KeyStore {
         const idToIndexMap = new Map<number, number>();
         const inboundParentMap = new Map<number, Set<number>>();
 
+        // Collect all valid internal figure IDs currently present in the state
+        const figureIds = new Set(this.state.figures.map(f => f.id));
+
         key.forEach((c, index) => {
             idMap.set(c.id, c);
             idToIndexMap.set(c.id, index);
@@ -1143,6 +1146,66 @@ export class KeyStore {
             } else if (!c.taxa2 && !c.link2) {
                 issues.push({ severity: 'warning', message: 'Choice B is incomplete. Assign a Taxa or destination step.' });
             }
+
+            // --- Unresolved Figure Reference Diagnostics ---
+            const FIG_ID_REGEX = /\[figID:\s*(\d+)\s*\]/gi;
+            const FIG_RAW_REGEX = /\[fig:\s*([^\]]+)\s*\]/gi;
+            let match;
+
+            // Check Choice A
+            if (c.alt1) {
+                // Catch previously resolved figures that have now been deleted
+                const missingIds1: number[] = [];
+                while ((match = FIG_ID_REGEX.exec(c.alt1)) !== null) {
+                    const figId = parseInt(match[1], 10);
+                    if (!figureIds.has(figId) && !missingIds1.includes(figId)) {
+                        missingIds1.push(figId);
+                    }
+                }
+                missingIds1.forEach(id => {
+                    issues.push({ severity: 'warning', message: `Choice A references a missing or deleted figure (Internal ID: ${id}).` });
+                });
+
+                // Catch raw [fig: X] tags typed by the user that never resolved to an ID
+                const unresolved1: string[] = [];
+                while ((match = FIG_RAW_REGEX.exec(c.alt1)) !== null) {
+                    const token = match[1].trim();
+                    if (!unresolved1.includes(token)) {
+                        unresolved1.push(token);
+                    }
+                }
+                unresolved1.forEach(token => {
+                    issues.push({ severity: 'warning', message: `Choice A references an unresolved figure reference '[fig: ${token}]'.` });
+                });
+            }
+
+            // Check Choice B
+            if (c.alt2) {
+                // Catch previously resolved figures that have now been deleted
+                const missingIds2: number[] = [];
+                while ((match = FIG_ID_REGEX.exec(c.alt2)) !== null) {
+                    const figId = parseInt(match[1], 10);
+                    if (!figureIds.has(figId) && !missingIds2.includes(figId)) {
+                        missingIds2.push(figId);
+                    }
+                }
+                missingIds2.forEach(id => {
+                    issues.push({ severity: 'warning', message: `Choice B references a missing or deleted figure (Internal ID: ${id}).` });
+                });
+
+                // Catch raw [fig: X] tags typed by the user that never resolved to an ID
+                const unresolved2: string[] = [];
+                while ((match = FIG_RAW_REGEX.exec(c.alt2)) !== null) {
+                    const token = match[1].trim();
+                    if (!unresolved2.includes(token)) {
+                        unresolved2.push(token);
+                    }
+                }
+                unresolved2.forEach(token => {
+                    issues.push({ severity: 'warning', message: `Choice B references an unresolved figure reference '[fig: ${token}]'.` });
+                });
+            }
+            // -----------------------------------------------
 
             if (index > 0 && !reachableNodes.has(c.id)) {
                 issues.push({ severity: 'warning', message: 'Orphaned: This step is unreachable from Step #1.' });
@@ -1223,7 +1286,6 @@ export class KeyStore {
      * Converts user-written [fig: N] (display number) or [fig: filename.jpg] tokens
      * into stable internal storage tokens [figID: N] that survive figure reordering.
      * Incomplete or unresolvable tokens are left unchanged.
-     * Called after the typing debounce and on field blur.
      */
     public encodeFigureTokens(text: string): string {
         const figures = this.state.figures;

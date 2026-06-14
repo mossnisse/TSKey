@@ -444,6 +444,7 @@ html, body {
 /* ==========================================
    DIAGNOSTIC VISUAL MARKERS
    ========================================== */
+
 .warning-block {
     margin-top: 12px;
     margin-left: 16px;
@@ -452,6 +453,14 @@ html, body {
     font-size: 12px;
     color: var(--color-warning);
 }
+
+.warning-block > div {
+    display: block;
+}
+.warning-block > div:not(:last-child) {
+    margin-bottom: 4px;
+}
+
 .error-text   { color: var(--color-danger); }
 .warning-text { color: var(--color-warning); }
 
@@ -542,35 +551,61 @@ html, body {
 }
 .btn-trigger-upload:hover { background: var(--color-primary-hover); }
 
-/* ==========================================
+ /* ==========================================
+
    PASSIVE PUBLICATION PRINT VIEW PANELS
+
    ========================================== */
+
 .print-grid {
+
     display: grid;
+
     grid-template-columns: auto 1fr;
+
     gap: 6px 10px;
+
     align-items: end;
+
     color: var(--color-text);
+
     line-height: 1.6;
+
     font-family: serif;
+
     font-size: 15px;
+
 }
+
 
 .print-step-num   { font-weight: bold; align-self: start; color: var(--color-text); }
+
 .print-step-block { display: contents; }
+
 .print-row        { display: flex; justify-content: space-between; align-items: end; width: 100%; }
+
 .print-text       { flex-shrink: 1; text-align: left; white-space: pre-wrap; }
+
 .print-dest       { flex-shrink: 0; white-space: nowrap; }
+
 .print-dest-strong{ font-weight: bold; }
+
 .print-dest-taxon { font-weight: bold; font-style: italic; }
+
 .print-dash       { font-weight: bold; text-align: center; align-self: start; color: var(--color-text); }
+
 .print-spacer     { grid-column: span 2; height: 8px; }
 
+
 .print-dots {
+
     flex-grow: 1;
+
     border-bottom: 1px dotted var(--color-text);
+
     margin: 0 8px 4px 8px;
-}
+
+} 
 
 /* ==========================================
    TOAST NOTIFICATION ENGINE
