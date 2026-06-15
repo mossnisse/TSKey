@@ -185,6 +185,24 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                 return;
             }
 
+            if (target.classList.contains('btn-remove-image')) {
+                const card = target.closest('.figure-card') as HTMLElement;
+                if (!card) return;
+                const figId = Number(card.getAttribute('data-id'));
+                
+                // Stage the deletion instead of immediate DB mutation
+                figureStorage.pendingDeletes.add(figId);
+                figureStorage.pendingUploads.delete(figId);
+                
+                const oldUrl = activeObjectURLs.get(figId);
+                if (oldUrl) URL.revokeObjectURL(oldUrl);
+                activeObjectURLs.delete(figId);
+                
+                store.updateFigure(figId, { filename: '' });
+                batchedRefresh(refreshAll);
+                return;
+            }
+
             // Clear selection if clicking the background layout area of the figure panel itself
             if (target === figureContainer) {
                 store.clearFigureSelection();
@@ -264,7 +282,8 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                 if (isNaN(figId)) return;
 
                 // Commit binary stream payload directly into client IndexedDB space
-                await figureStorage.saveFigureBinary(figId, file);
+                figureStorage.pendingUploads.set(figId, file);
+                figureStorage.pendingDeletes.delete(figId);
 
                 // Evict and clean stale historical URL footprints from browser system memory
                 const oldUrl = activeObjectURLs.get(figId);
@@ -274,16 +293,9 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                 const freshUrl = URL.createObjectURL(file);
                 activeObjectURLs.set(figId, freshUrl);
 
-                // Mutate string state properties inside KeyStore structure
-                // Assuming your store engine uses an interface structure similar to your inputs:
-                const filenameInput = card?.querySelector('.figure-input-filename') as HTMLInputElement;
-                if (filenameInput) {
-                    filenameInput.value = file.name;
-                    // Dispatch input event to notify your existing text synchronization loops
-                    filenameInput.dispatchEvent(new Event('input', { bubbles: true }));
-                }
-
-                refreshAll();
+                // Update the state directly and explicitly
+                store.updateFigure(figId, { filename: file.name });
+                batchedRefresh(refreshAll);
             }
         });
 
@@ -601,8 +613,10 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
     }, { signal });
 
     // --- FILE MENU ACTION BINDINGS ---
-    document.querySelector('#cmd-save')?.addEventListener('click', () => {
+    document.querySelector('#cmd-save')?.addEventListener('click', async () => {
         try {
+            await figureStorage.commitStagedChanges();
+            
             store.saveToStorage();
             showToast("💾 Changes saved to Browser Local Storage!", "success");
             batchedRefresh(refreshAll);
@@ -645,6 +659,27 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
             if (!importResult.success) {
                 alert(`Failed to import JSON schema:\n• ${importResult.errors.join('\n• ')}`);
                 return;
+            }
+
+            if (importResult.importedFigures) {
+                for (const fig of importResult.importedFigures) {
+                    if (fig.binaryData) {
+                        try {
+                            // Using the browser's native fetch API to elegantly decode base64 strings
+                            const response = await fetch(fig.binaryData);
+                            const blob = await response.blob();
+                            
+                            figureStorage.pendingUploads.set(fig.id, blob);
+                            
+                            const freshUrl = URL.createObjectURL(blob);
+                            activeObjectURLs.set(fig.id, freshUrl);
+                        } catch (err) {
+                            console.error(`Failed to parse binary data for figure ${fig.id}`);
+                        }
+                    }
+                }
+                await figureStorage.commitStagedChanges();
+                store.saveToStorage();
             }
 
             showToast("Key configuration data imported successfully!", "success");
@@ -716,6 +751,10 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                 const figIdsToDelete = new Set(store.getSelectedFigureIds());
                 store.deleteSelectedFigures();
                 figIdsToDelete.forEach(id => {
+                    // Stage the deletion
+                    figureStorage.pendingDeletes.add(id);
+                    figureStorage.pendingUploads.delete(id);
+                    
                     const url = activeObjectURLs.get(id);
                     if (url) URL.revokeObjectURL(url);
                     activeObjectURLs.delete(id);

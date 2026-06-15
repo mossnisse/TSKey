@@ -35,6 +35,7 @@ interface AppState {
 export interface ImportResult {
     success: boolean;
     errors: string[];
+    importedFigures?: any[];
 }
 
 export class KeyStore {
@@ -921,8 +922,6 @@ export class KeyStore {
         this.hasUncommittedChanges = true;
     }
 
-    // save and load functions
-
     public importJsonData(rawData: unknown): ImportResult {
         try {
             let importedKey: Couplet[] | null = null;
@@ -966,8 +965,18 @@ export class KeyStore {
                 };
             }
 
-            this.saveCheckpoint();
+            let extractedFiguresWithBinary: any[] = [];
+            if (importedFigures && importedFigures.length > 0) {
+                extractedFiguresWithBinary = [...importedFigures];
 
+                // Strip the bulky binary data out of the application state timeline
+                importedFigures = importedFigures.map((f: any) => {
+                    const { binaryData, ...cleanFigure } = f;
+                    return cleanFigure as Figure;
+                });
+            }
+
+            this.saveCheckpoint();
             this.state.dichotomousKey = importedKey;
             this.state.figures = importedFigures;
 
@@ -977,7 +986,8 @@ export class KeyStore {
 
             return {
                 success: true,
-                errors: []
+                errors: [],
+                importedFigures: extractedFiguresWithBinary
             };
 
         } catch (e) {

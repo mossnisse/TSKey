@@ -507,8 +507,10 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
                     <img class="figure-preview-img" alt="Figure view" style="display: none;" />
                     <div class="figure-upload-overlay">
                         <button type="button" class="btn-trigger-upload">Choose Image</button>
+                        <button type="button" class="btn-remove-image" style="display: none;">Remove Image</button>
                         <input type="file" class="hidden-file-picker" accept="image/*" style="display: none;" />
                     </div>
+                </div>
                 </div>
                 
                 <div class="figure-field-row">
@@ -545,27 +547,31 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
             if (previewWrapper) previewWrapper.style.display = '';
 
             const cachedUrl = activeObjectURLs.get(fig.id);
+            const removeBtn = block.querySelector('.btn-remove-image') as HTMLButtonElement | null;
+            
             if (cachedUrl) {
                 if (previewImg.src !== cachedUrl) {
                     previewImg.src = cachedUrl;
                 }
-                // FIX: Always ensure image is visible when a valid cache entry exists
                 previewImg.style.display = 'block';
+                if (removeBtn) removeBtn.style.display = 'inline-block';
             } else {
-                // If not cached, fetch safely without halting the paint process or looping
                 if (!previewImg.hasAttribute('data-loading-state')) {
                     previewImg.setAttribute('data-loading-state', 'pending');
-
                     figureStorage.getFigureBinary(fig.id).then(blob => {
                         previewImg.removeAttribute('data-loading-state');
                         if (blob) {
                             const newUrl = URL.createObjectURL(blob);
                             activeObjectURLs.set(fig.id, newUrl);
-                            refreshAll(); // Safe invocation: will paint via cachedUrl branch next frame
+                            refreshAll(); 
                         } else {
                             previewImg.style.display = 'none';
+                            if (removeBtn) removeBtn.style.display = 'none';
                         }
-                    }).catch(() => previewImg.removeAttribute('data-loading-state'));
+                    }).catch(() => {
+                        previewImg.removeAttribute('data-loading-state');
+                        if (removeBtn) removeBtn.style.display = 'none';
+                    });
                 }
             }
         }

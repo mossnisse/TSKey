@@ -3,7 +3,9 @@
 export class FigureStorageEngine {
     private dbName = 'TSKey_Binary_Store';
     private storeName = 'figures';
-    private dbPromise: Promise<IDBDatabase> | null = null; // Caches the connection
+    private dbPromise: Promise<IDBDatabase> | null = null; 
+    public pendingUploads = new Map<number, Blob>();
+    public pendingDeletes = new Set<number>();
 
     private getDB(): Promise<IDBDatabase> {
         if (this.dbPromise) return this.dbPromise;
@@ -20,18 +22,43 @@ export class FigureStorageEngine {
         return this.dbPromise;
     }
 
-    public async saveFigureBinary(id: number, file: File | Blob): Promise<void> {
+    public async commitStagedChanges(): Promise<void> {
+        if (this.pendingUploads.size === 0 && this.pendingDeletes.size === 0) return;
+
         const db = await this.getDB();
         return new Promise((resolve, reject) => {
             const tx = db.transaction(this.storeName, 'readwrite');
             const store = tx.objectStore(this.storeName);
-            store.put(file, id);
-            tx.oncomplete = () => resolve();
+
+            this.pendingUploads.forEach((blob, id) => store.put(blob, id));
+            this.pendingDeletes.forEach(id => store.delete(id));
+
+            tx.oncomplete = () => {
+                this.pendingUploads.clear();
+                this.pendingDeletes.clear();
+                resolve();
+            };
             tx.onerror = () => reject(tx.error);
         });
     }
 
+    
+    public async deleteFigureBinary(id: number): Promise<void> {
+        const db = await this.getDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(this.storeName, 'readwrite');
+            const store = tx.objectStore(this.storeName);
+            const request = store.delete(id);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
     public async getFigureBinary(id: number): Promise<Blob | null> {
+        // Serve from memory if it's staged, bypassing the database
+        if (this.pendingUploads.has(id)) return this.pendingUploads.get(id)!;
+        if (this.pendingDeletes.has(id)) return null;
+
         const db = await this.getDB();
         return new Promise((resolve, reject) => {
             const tx = db.transaction(this.storeName, 'readonly');
