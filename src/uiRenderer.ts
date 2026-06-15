@@ -63,50 +63,50 @@ export function initializeShell(appDiv: HTMLDivElement) {
         </div>
 
         <div class="menu-item" role="none">
-          <button class="menu-trigger">Edit</button>
-          <div class="menu-dropdown">
-            <button id="cmd-undo" class="dropdown-action">
+          <button class="menu-trigger" role="menuitem" aria-haspopup="menu" aria-expanded="false">Edit</button>
+          <div class="menu-dropdown" role="menu">
+            <button id="cmd-undo" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🔄 Undo</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘Z' : 'Ctrl+Z'}</span>
             </button>
-            <button id="cmd-redo" class="dropdown-action">
+            <button id="cmd-redo" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🔁 Redo</span>
-              <span class="menu-shortcut">${IS_MAC ? '⌘Y' : 'Ctrl+Y'}</span>
+              <span class="menu-shortcut">${IS_MAC ? '⌘Y / ⌘⇧Z' : 'Ctrl+Y / Ctrl+Shift+Z'}</span>
             </button>
-            <div class="menu-divider"></div>
-            <button id="cmd-cut" class="dropdown-action">
+            <div class="menu-divider" role="separator"></div>
+            <button id="cmd-cut" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>✂️ Cut Selected Cards</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘X' : 'Ctrl+X'}</span>
             </button>
-            <button id="cmd-copy" class="dropdown-action">
+            <button id="cmd-copy" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>📋 Copy Selected Cards</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘C' : 'Ctrl+C'}</span>
             </button>
-            <button id="cmd-paste-below" class="dropdown-action">
+            <button id="cmd-paste-below" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>📥 Paste steps below selection</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘V' : 'Ctrl+V'}</span>
             </button>
-            <button id="cmd-paste-above" class="dropdown-action">
+            <button id="cmd-paste-above" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>📥 Paste above selections</span>
               <span class="menu-shortcut">${IS_MAC ? 'Shift+⌘V' : 'Shift+Ctrl+V'}</span>
             </button>
-            <button id="cmd-delete" class="dropdown-action">
+            <button id="cmd-delete" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🗑️ Delete Selected Cards</span>
               <span class="menu-shortcut">Delete</span>
             </button>
-            <button id="cmd-swap" class="dropdown-action">
+            <button id="cmd-swap" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🔄 Swap place for Alternatives</span>
               <span class="menu-shortcut">${IS_MAC ? 'Option+S' : 'Alt+S'}</span>
             </button>
-            <button id="cmd-add" class="dropdown-action">
+            <button id="cmd-add" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>➕ Append New Step</span>
               <span class="menu-shortcut">Alt+N</span>
             </button>
-            <button id="cmd-clear" class="dropdown-action">
+            <button id="cmd-clear" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🧼 Clear Selections</span>
               <span class="menu-shortcut">Esc</span>
             </button>
-            <button id="cmd-select-all" class="dropdown-action">
+            <button id="cmd-select-all" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>☑️ Select all steps</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘A' : 'Ctrl+A'}</span>
             </button>
@@ -114,16 +114,16 @@ export function initializeShell(appDiv: HTMLDivElement) {
         </div>
 
         <div class="menu-item" role="none">
-          <button class="menu-trigger">View</button>
-          <div class="menu-dropdown">
-            <button id="cmd-toggle-figures" class="dropdown-action">
+          <button class="menu-trigger" role="menuitem" aria-haspopup="menu" aria-expanded="false">View</button>
+          <div class="menu-dropdown" role="menu">
+            <button id="cmd-toggle-figures" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🖼️ Hide Figures Panel</span>
               <span class="menu-shortcut">Ctrl+Shift+F</span>
             </button>
-            <button id="cmd-toggle-images" class="dropdown-action">
+            <button id="cmd-toggle-images" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🖼️ Hide Images in Figures Panel</span>
             </button>
-            <button id="cmd-toggle-print" class="dropdown-action">
+            <button id="cmd-toggle-print" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🖨️ Hide Print Preview</span>
               <span class="menu-shortcut">Ctrl+Shift+P</span>
             </button>
@@ -132,28 +132,28 @@ export function initializeShell(appDiv: HTMLDivElement) {
         </div>
 
         <div class="menu-item" role="none">
-          <button class="menu-trigger">Tools</button>
-          <div class="menu-dropdown">
-            <button id="cmd-reorder-couplets" class="dropdown-action">
+          <button class="menu-trigger" role="menuitem" aria-haspopup="menu" aria-expanded="false">Tools</button>
+          <div class="menu-dropdown" role="menu">
+            <button id="cmd-reorder-couplets" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🔄 Order Steps</span>
             </button>
-            <button id="cmd-reorder-figures" class="dropdown-action">
+            <button id="cmd-reorder-figures" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🔄 Order Figures</span>
             </button>
           </div>
         </div>
 
         <div class="menu-item" role="none">
-          <button class="menu-trigger">Window</button>
-          <div class="menu-dropdown">
-            <button id="cmd-open-shortcuts" class="dropdown-action">
+          <button class="menu-trigger" role="menuitem" aria-haspopup="menu" aria-expanded="false">Window</button>
+          <div class="menu-dropdown" role="menu">
+            <button id="cmd-open-shortcuts" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>⌨️ Keyboard Shortcuts...</span>
             </button>
-            <button id="cmd-open-options" class="dropdown-action">
+            <button id="cmd-open-options" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🔧 Options & Settings...</span>
             </button>
-            <div class="menu-divider"></div>
-            <button id="cmd-open-about" class="dropdown-action">
+            <div class="menu-divider" role="separator"></div>
+            <button id="cmd-open-about" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>ℹ️ About ${APP_NAME}...</span>
             </button>
           </div>

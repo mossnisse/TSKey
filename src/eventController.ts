@@ -178,6 +178,16 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
         figureContainer.addEventListener('click', (e: MouseEvent) => {
             const target = e.target as HTMLElement;
 
+            // Handle "Choose Image" upload button first — prevent it from also
+            // toggling figure selection, and ensure this handler is covered by
+            // the AbortController (the old duplicate listener at line ~242 was missing {signal}).
+            if (target.classList.contains('btn-trigger-upload')) {
+                const card = target.closest('.figure-card') as HTMLElement;
+                const truePicker = card?.querySelector('.hidden-file-picker') as HTMLInputElement;
+                truePicker?.click();
+                return;
+            }
+
             // Clear selection if clicking the background layout area of the figure panel itself
             if (target === figureContainer) {
                 store.clearFigureSelection();
@@ -238,15 +248,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
             }
         }, { signal });
 
-        // Intercept action button clicks and proxy them over to the hidden picker frame
-        figureContainer.addEventListener('click', (e) => {
-            const target = e.target as HTMLElement;
-            if (target.classList.contains('btn-trigger-upload')) {
-                const card = target.closest('.figure-card') as HTMLElement;
-                const truePicker = card?.querySelector('.hidden-file-picker') as HTMLInputElement;
-                truePicker?.click();
-            }
-        });
+        // (btn-trigger-upload handling merged into the click listener above)
 
         // Intercept binary mutations when the operating system file picker dismisses
         figureContainer.addEventListener('change', async (e) => {
@@ -254,6 +256,13 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
             if (target.classList.contains('hidden-file-picker')) {
                 const file = target.files?.[0];
                 if (!file) return;
+
+                // accept="image/*" can be bypassed — validate MIME type explicitly.
+                if (!file.type.startsWith('image/')) {
+                    showToast('⚠️ Only image files are supported.', 'error');
+                    target.value = '';
+                    return;
+                }
 
                 const card = target.closest('.figure-card') as HTMLElement;
                 const figId = Number(card?.getAttribute('data-id'));
@@ -520,6 +529,37 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
         }
     };
 
+    // Moved before dragover so the reference is declared before the closure that uses it.
+    const updateTargetTrackers = (clientY: number, cardEl: HTMLElement) => {
+        const actualCard = cardEl.classList.contains('key-card') ? cardEl : cardEl.closest('.key-card') as HTMLElement;
+
+        if (!actualCard) {
+            clearDropMarkers();
+            return;
+        }
+
+        const currentScrollY = keyContainer.scrollTop;
+
+        if (activeDropCard !== actualCard || !activeDropRect || cachedScrollY !== currentScrollY) {
+            activeDropRect = actualCard.getBoundingClientRect();
+            cachedScrollY = currentScrollY;
+        }
+
+        const relativeMouseY = clientY - activeDropRect.top;
+        const currentClass = relativeMouseY < activeDropRect.height / 2 ? 'drag-drop-above' : 'drag-drop-below';
+
+        if (activeDropCard !== actualCard || activeDropClass !== currentClass) {
+            const rectToPreserve = activeDropRect;
+
+            clearDropMarkers();
+
+            actualCard.classList.add(currentClass);
+            activeDropCard = actualCard;
+            activeDropClass = currentClass;
+            activeDropRect = rectToPreserve;
+        }
+    };
+
     keyContainer.addEventListener('dragend', (e) => {
         const target = e.target as HTMLElement;
         const card = target.closest('.key-card') as HTMLElement;
@@ -564,36 +604,6 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
         store.reorderCouplets(store.draggedCoupletId, coupletId, position);
         batchedRefresh(refreshAll);
     }, { signal });
-
-    const updateTargetTrackers = (clientY: number, cardEl: HTMLElement) => {
-        const actualCard = cardEl.classList.contains('key-card') ? cardEl : cardEl.closest('.key-card') as HTMLElement;
-
-        if (!actualCard) {
-            clearDropMarkers();
-            return;
-        }
-
-        const currentScrollY = keyContainer.scrollTop;
-
-        if (activeDropCard !== actualCard || !activeDropRect || cachedScrollY !== currentScrollY) {
-            activeDropRect = actualCard.getBoundingClientRect();
-            cachedScrollY = currentScrollY;
-        }
-
-        const relativeMouseY = clientY - activeDropRect.top;
-        const currentClass = relativeMouseY < activeDropRect.height / 2 ? 'drag-drop-above' : 'drag-drop-below';
-
-        if (activeDropCard !== actualCard || activeDropClass !== currentClass) {
-            const rectToPreserve = activeDropRect;
-
-            clearDropMarkers();
-
-            actualCard.classList.add(currentClass);
-            activeDropCard = actualCard;
-            activeDropClass = currentClass;
-            activeDropRect = rectToPreserve;
-        }
-    };
 
     // --- FILE MENU ACTION BINDINGS ---
     document.querySelector('#cmd-save')?.addEventListener('click', () => {
@@ -657,10 +667,17 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
 
     // --- EDIT MENU ACTION BINDINGS ---
     document.querySelector('#cmd-undo')?.addEventListener('click', () => {
+        // Clear any pending debounce timer before rolling back; otherwise the
+        // delayed callback can call updateCouplet() on the already-undone state
+        // and silently create an unintended new checkpoint.
+        uiState.typing.couplets.clearTimer();
+        uiState.typing.figures.clearTimer();
         if (store.undo()) batchedRefresh(refreshAll);
     }, { signal });
 
     document.querySelector('#cmd-redo')?.addEventListener('click', () => {
+        uiState.typing.couplets.clearTimer();
+        uiState.typing.figures.clearTimer();
         if (store.redo()) batchedRefresh(refreshAll);
     }, { signal });
 
@@ -704,7 +721,16 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
         }
         if (selectedFigCount > 0) {
             if (confirm("Confirm removing highlighted figures?")) {
+                // Capture IDs before deletion so we can clean up object URLs.
+                // Failing to revoke these is a memory leak that compounds with
+                // every upload cycle.
+                const figIdsToDelete = new Set(store.getSelectedFigureIds());
                 store.deleteSelectedFigures();
+                figIdsToDelete.forEach(id => {
+                    const url = activeObjectURLs.get(id);
+                    if (url) URL.revokeObjectURL(url);
+                    activeObjectURLs.delete(id);
+                });
                 showToast(`Deleted ${selectedFigCount} figure(s).`, 'success');
                 batchedRefresh(refreshAll);
             }
@@ -889,7 +915,30 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
                 return;
             }
             if (e.key === 'Tab') {
-                e.preventDefault();
+                // Implement a proper focus trap instead of suppressing Tab entirely.
+                // Suppressing Tab leaves keyboard users with no way to navigate modal controls.
+                const focusable = Array.from(
+                    activeModal.querySelectorAll<HTMLElement>(
+                        'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
+                    )
+                ).filter(el => el.offsetParent !== null); // exclude hidden elements
+
+                if (focusable.length === 0) { e.preventDefault(); return; }
+
+                const first = focusable[0];
+                const last = focusable[focusable.length - 1];
+
+                if (e.shiftKey) {
+                    if (document.activeElement === first) {
+                        e.preventDefault();
+                        last.focus();
+                    }
+                } else {
+                    if (document.activeElement === last) {
+                        e.preventDefault();
+                        first.focus();
+                    }
+                }
                 return;
             }
         }

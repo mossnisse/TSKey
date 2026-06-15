@@ -148,6 +148,13 @@ export class KeyStore {
 
         if (this.undoStack.length > this.maxHistoryLimit) {
             this.undoStack.shift();
+            // Each eviction shifts every logical revision back by one.
+            // If the saved revision was the entry just removed, mark it gone with -1.
+            if (this.savedHistoryIndex > 0) {
+                this.savedHistoryIndex--;
+            } else {
+                this.savedHistoryIndex = -1;
+            }
         }
 
         this.currentHistoryIndex++;
@@ -1011,8 +1018,12 @@ export class KeyStore {
             if (localFigures) {
                 try {
                     const parsedFigures = JSON.parse(localFigures);
-                    if (Array.isArray(parsedFigures)) {
+                    // FIX: use the same schema validator applied to couplet data; bare
+                    // Array.isArray() lets corrupted entries (missing id, caption, etc.) slip through.
+                    if (isValidFigureArray(parsedFigures)) {
                         loadedFigures = parsedFigures;
+                    } else {
+                        console.warn('loadFromStorage: figures in localStorage failed schema validation; using fallback.');
                     }
                 } catch (e) {
                     console.error("Error parsing figures data from storage", e);
@@ -1249,8 +1260,17 @@ export class KeyStore {
     public resolveTextReferences(text: string, idToDisplayNum: Map<number, number>): string {
         if (!text) return text;
 
-        //const idToDisplayNum = new Map<number, number>();
+        // Build filename → display-number lookup so legacy [fig: filename.jpg] tokens resolve correctly.
+        // Previously this map was declared but never populated, causing all filename-based references
+        // to fall through to the [Broken Fig: …] fallback.
         const filenameToDisplayNum = new Map<string, number>();
+        this.state.figures.forEach(fig => {
+            if (!fig.filename) return;
+            const displayNum = idToDisplayNum.get(fig.id);
+            if (displayNum !== undefined) {
+                filenameToDisplayNum.set(fig.filename.trim().toLowerCase(), displayNum);
+            }
+        });
 
         // resolve new storage format [figID: N] — value is always an internal ID
         text = text.replace(/\[figID:\s*(\d+)\s*\]/gi, (_match, value) => {

@@ -1,7 +1,28 @@
 import type { KeyStore } from '../store.ts';
-import { escapeHTML, buildIdToIndexMap, buildFigureIdToDisplayNumMap, getStepNumberById, triggerFileDownload } from '../utils.ts';
+import { escapeHTML, buildIdToIndexMap, buildFigureIdToDisplayNumMap, triggerFileDownload, resolveDestination } from '../utils.ts';
+import type { DestinationResolution } from '../utils.ts';
 import { showToast } from '../uiRenderer.ts';
 import { figureStorage, blobToBase64 } from '../db.ts';
+
+/**
+ * Converts a DestinationResolution into the appropriate HTML fragment so the
+ * exported file matches the live print-view exactly (including error styling
+ * for unresolved step references).
+ */
+function destinationToHtml(dest: DestinationResolution): string {
+    const escaped = escapeHTML(dest.printText);
+    if (dest.printClass === 'print-dest-taxon') {
+        return `<strong class="print-dest-taxon">${escaped}</strong>`;
+    }
+    if (dest.printClass === 'print-dest-strong') {
+        return `<strong class="print-dest-strong">${escaped}</strong>`;
+    }
+    if (dest.printClass === 'error-text') {
+        // Unresolved step reference — show in red, same as the live editor.
+        return `<span class="error-text">${escaped}</span>`;
+    }
+    return `<span>${escaped}</span>`;
+}
 
 /**
  * Compiles the current KeyStore state into a single standalone static HTML document.
@@ -47,20 +68,12 @@ export async function exportKeyToHTML(store: KeyStore): Promise<void> {
         for (let index = 0; index < key.length; index++) {
             const c = key[index];
             const currentDisplayNum = index + 1;
-            const step1Dest = getStepNumberById(idToIndexMap, c.link1);
-            const step2Dest = getStepNumberById(idToIndexMap, c.link2);
 
-            const end1 = c.taxa1
-                ? `<strong class="print-dest-taxon">${escapeHTML(c.taxa1)}</strong>`
-                : (c.link1 && step1Dest !== 'INVALID ID' 
-                    ? `<strong class="print-dest-strong">${step1Dest}</strong>` 
-                    : '<span>...</span>');
+            const dest1 = resolveDestination(c.link1, c.taxa1, idToIndexMap);
+            const dest2 = resolveDestination(c.link2, c.taxa2, idToIndexMap);
 
-            const end2 = c.taxa2
-                ? `<strong class="print-dest-taxon">${escapeHTML(c.taxa2)}</strong>`
-                : (c.link2 && step2Dest !== 'INVALID ID' 
-                    ? `<strong class="print-dest-strong">${step2Dest}</strong>` 
-                    : '<span>...</span>');
+            const end1 = destinationToHtml(dest1);
+            const end2 = destinationToHtml(dest2);
 
             const alt1 = store.resolveTextReferences(c.alt1, idToDisplayNum) || '___';
             const alt2 = store.resolveTextReferences(c.alt2, idToDisplayNum) || '___';
@@ -166,6 +179,7 @@ function buildHTMLBoilerplate(keyContent: string, figuresContent: string, layout
     .print-dest { flex-shrink: 0; white-space: nowrap; }
     .print-dest-strong { font-weight: 700; color: #0f172a; }
     .print-dest-taxon { font-weight: 700; font-style: italic; color: #4f46e5; }
+    .error-text { font-weight: 700; color: #dc2626; }
     .print-dash { font-weight: 700; text-align: center; align-self: start; color: #94a3b8; }
     
     .print-fig-card {
