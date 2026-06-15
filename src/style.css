@@ -118,7 +118,7 @@ html, body {
 }
 
 .hr-print {
-    display: none; /* Purged lower duplicate dead decoration rules */
+    display: none;
 }
 
 /* ==========================================
@@ -588,28 +588,24 @@ html, body {
   width: 100%;
   position: relative;
   line-height: 1.6;
-  /* Removed padding-bottom so the container height perfectly matches the text lines */
-  
   background-image: linear-gradient(to right, var(--color-text) 33%, transparent 33%);
   background-repeat: repeat-x;
-  
-  /* FIX: Positions the dots '0.35em' up from the bottom, matching the text baseline */
   background-position: left 0 bottom 0.35em; 
   background-size: 6px 1px;
 }
 
 .print-text {
-  display: inline;                  /* Crucial: lets background follow text shape */
+  display: inline;
   white-space: pre-wrap;
-  background-color: var(--color-bg); /* Matches page background to hide dots under text */
-  padding-right: 6px;                /* Creates a clean gap before dots start */
+  background-color: var(--color-bg);
+  padding-right: 6px;
 }
 
 .print-dest {
-  float: right;                     /* Floats to the right side of the last line */
+  float: right;
   white-space: nowrap;
-  background-color: var(--color-bg); /* Hides dots under the destination identifier */
-  padding-left: 6px;                 /* Creates a clean gap after dots end */
+  background-color: var(--color-bg);
+  padding-left: 6px;
   line-height: inherit;
 }
 

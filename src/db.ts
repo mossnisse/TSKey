@@ -4,8 +4,9 @@ export class FigureStorageEngine {
     private dbName = 'TSKey_Binary_Store';
     private storeName = 'figures';
     private dbPromise: Promise<IDBDatabase> | null = null; 
-    public pendingUploads = new Map<number, Blob>();
-    public pendingDeletes = new Set<number>();
+    private pendingUploads = new Map<number, Blob>();
+    private pendingDeletes = new Set<number>();
+    private isCommitting = false; // Lock flag preventing concurrent database writes
 
     private getDB(): Promise<IDBDatabase> {
         if (this.dbPromise) return this.dbPromise;
@@ -22,10 +23,16 @@ export class FigureStorageEngine {
         return this.dbPromise;
     }
 
+    /**
+     * Persists all memory-staged binary uploads and deletions to IndexedDB.
+     */
     public async commitStagedChanges(): Promise<void> {
+        if (this.isCommitting) return;
         if (this.pendingUploads.size === 0 && this.pendingDeletes.size === 0) return;
 
+        this.isCommitting = true;
         const db = await this.getDB();
+
         return new Promise((resolve, reject) => {
             const tx = db.transaction(this.storeName, 'readwrite');
             const store = tx.objectStore(this.storeName);
@@ -36,26 +43,46 @@ export class FigureStorageEngine {
             tx.oncomplete = () => {
                 this.pendingUploads.clear();
                 this.pendingDeletes.clear();
+                this.isCommitting = false;
                 resolve();
             };
-            tx.onerror = () => reject(tx.error);
+            
+            tx.onerror = () => {
+                this.isCommitting = false;
+                reject(tx.error);
+            };
         });
     }
 
-    
-    public async deleteFigureBinary(id: number): Promise<void> {
-        const db = await this.getDB();
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(this.storeName, 'readwrite');
-            const store = tx.objectStore(this.storeName);
-            const request = store.delete(id);
-            request.onsuccess = () => resolve();
-            request.onerror = () => reject(request.error);
-        });
+    /**
+     * Empties the staging areas without writing anything to the database.
+     * Call this when a user explicitly discards or cancels their unsaved session work.
+     */
+    public clearStagedChanges(): void {
+        this.pendingUploads.clear();
+        this.pendingDeletes.clear();
     }
 
+    /**
+     * Stages a figure deletion in memory until commitStagedChanges() is fired.
+     */
+    public deleteFigureBinary(id: number): void {
+        this.pendingDeletes.add(id);
+        this.pendingUploads.delete(id);
+    }
+
+    /**
+     * Stages a new figure upload or replacement in memory until commitStagedChanges() is fired.
+     */
+    public uploadFigureBinary(id: number, blob: Blob): void {
+        this.pendingUploads.set(id, blob);
+        this.pendingDeletes.delete(id);
+    }
+
+    /**
+     * Retrieves a figure binary blob, prioritizing memory-staged updates before querying IndexedDB.
+     */
     public async getFigureBinary(id: number): Promise<Blob | null> {
-        // Serve from memory if it's staged, bypassing the database
         if (this.pendingUploads.has(id)) return this.pendingUploads.get(id)!;
         if (this.pendingDeletes.has(id)) return null;
 
@@ -64,6 +91,7 @@ export class FigureStorageEngine {
             const tx = db.transaction(this.storeName, 'readonly');
             const store = tx.objectStore(this.storeName);
             const request = store.get(id);
+            
             request.onsuccess = () => resolve(request.result || null);
             request.onerror = () => reject(request.error);
         });

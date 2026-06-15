@@ -4,11 +4,6 @@ import type { DestinationResolution } from '../utils.ts';
 import { showToast } from '../uiRenderer.ts';
 import { figureStorage, blobToBase64 } from '../db.ts';
 
-/**
- * Converts a DestinationResolution into the appropriate HTML fragment so the
- * exported file matches the live print-view exactly (including error styling
- * for unresolved step references).
- */
 function destinationToHtml(dest: DestinationResolution): string {
     const escaped = escapeHTML(dest.printText);
     if (dest.printClass === 'print-dest-taxon') {
@@ -18,7 +13,6 @@ function destinationToHtml(dest: DestinationResolution): string {
         return `<strong class="print-dest-strong">${escaped}</strong>`;
     }
     if (dest.printClass === 'error-text') {
-        // Unresolved step reference — show in red, same as the live editor.
         return `<span class="error-text">${escaped}</span>`;
     }
     return `<span>${escaped}</span>`;
@@ -79,17 +73,15 @@ export async function exportKeyToHTML(store: KeyStore): Promise<void> {
             const alt2 = store.resolveTextReferences(c.alt2, idToDisplayNum) || '___';
 
             keyColumnMarkup += `
-            <div class="print-couplet">
+            <div class="print-couplet" role="group" aria-label="Couplet ${currentDisplayNum}">
                 <div class="print-step-num">${currentDisplayNum}.</div>
                 <div class="print-row">
                   <span class="print-text">${escapeHTML(alt1)}</span>
-                  <span class="print-dots"></span>
                   <span class="print-dest">${end1}</span>
                 </div>
                 <div class="print-dash">—</div>
                 <div class="print-row">
                   <span class="print-text">${escapeHTML(alt2)}</span>
-                  <span class="print-dots"></span>
                   <span class="print-dest">${end2}</span>
                 </div>
             </div>
@@ -101,7 +93,7 @@ export async function exportKeyToHTML(store: KeyStore): Promise<void> {
         const htmlDocument = buildHTMLBoilerplate(keyColumnMarkup, figuresColumnMarkup, hasFiguresClass);
 
         triggerFileDownload(htmlDocument, 'dichotomous_key_publication.html', 'text/html;charset=utf-8;');
-        
+
     } catch (error) {
         console.error('HTML Export layout compilation system failure:', error);
         showToast('❌ An unexpected error disrupted the HTML file compilation pipeline.', 'error');
@@ -118,88 +110,163 @@ function buildHTMLBoilerplate(keyContent: string, figuresContent: string, layout
   <meta charset="utf-8">
   <title>Exported Dichotomous Key with Figures Panel</title>
   <style>
+    :root {
+      --color-bg: #ffffff;
+      --color-bg-muted: #f8fafc;
+      --color-text: #0f172a;
+      --color-text-muted: #475569;
+      --color-border: #cbd5e1;
+      --color-border-light: #e2e8f0;
+      --color-primary: #4f46e5;
+      --radius-md: 6px;
+      --radius-lg: 8px;
+    }
+
+    html, body { 
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+      overflow: auto;
+      box-sizing: border-box;
+    }
+
+    *, *::before, *::after {
+      box-sizing: inherit;
+    }
+
     body { 
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
-      padding: 40px; 
-      color: #0f172a; 
-      line-height: 1.5; 
-      background: #ffffff;
-      margin: 0;
+      color: var(--color-text); 
+      background: var(--color-bg-muted);
     }
-    .print-page-layout { display: block; max-width: 1200px; margin: 0 auto; }
-    .print-key-column { width: 100%; }
-    .print-figures-column { display: none; }
+
+    .print-page-layout { 
+      max-width: 1400px; 
+      margin: 0 auto; 
+      padding: 24px;
+      height: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+    
+    .print-key-column { 
+      width: 100%; 
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .print-figures-column { 
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
 
     @media (min-width: 768px) {
-      .print-page-layout.layout-has-figures {
-        display: grid;
-        grid-template-columns: 1fr 320px;
-        gap: 40px;
-        align-items: start;
+      html, body {
+        height: 100vh;
+        overflow: hidden;
       }
+      .print-page-layout {
+        height: 100vh;
+        display: grid;
+        grid-template-columns: 1.2fr 1fr;
+        align-items: stretch;
+      }
+      .print-key-column,
       .print-figures-column {
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-        position: sticky;
-        top: 40px;
-        max-height: calc(100vh - 80px);
+        height: 100%;
         overflow-y: auto;
-        padding-right: 8px;
       }
     }
     
     .print-key-container { 
+      flex: 1;
       display: flex; 
       flex-direction: column; 
-      gap: 20px; 
-      background: #ffffff;
-      padding: 24px;
-      border-radius: 8px;
-      border: 1px solid #e2e8f0;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      gap: 6px; 
+      background: var(--color-bg);
+      border: 1px solid var(--color-border); 
+      border-radius: var(--radius-lg);
+      padding: 25px;
+      font-family: serif;
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    @media (min-width: 768px) {
+      .print-key-container {
+        overflow-y: auto;
+        min-height: 0;
+      }
     }
     
     .print-couplet { 
       display: grid; 
-      grid-template-columns: 2.5rem 1fr; 
-      gap: 6px 16px; 
-      align-items: end; 
+      grid-template-columns: auto 1fr; 
+      gap: 6px 10px; 
+      align-items: start; 
       break-inside: avoid; 
       page-break-inside: avoid; 
-      border-bottom: 1px solid #f1f5f9;
-      padding-bottom: 16px;
+      padding-bottom: 8px;
     }
-    .print-couplet:last-child { border-bottom: none; padding-bottom: 0; }
+    .print-couplet:last-child { padding-bottom: 0; }
     
-    .print-step-num { font-weight: 700; align-self: start; font-size: 1.1rem; color: #1e293b; }
-    .print-row { display: flex; justify-content: space-between; align-items: end; width: 100%; }
-    .print-text { flex-shrink: 1; text-align: left; white-space: pre-wrap; }
-    .print-dots { flex-grow: 1; border-bottom: 1px dotted #cbd5e1; margin: 0 10px 5px 10px; }
-    .print-dest { flex-shrink: 0; white-space: nowrap; }
-    .print-dest-strong { font-weight: 700; color: #0f172a; }
-    .print-dest-taxon { font-weight: 700; font-style: italic; color: #4f46e5; }
-    .error-text { font-weight: 700; color: #dc2626; }
-    .print-dash { font-weight: 700; text-align: center; align-self: start; color: #94a3b8; }
+    .print-step-num { font-weight: bold; color: var(--color-text); }
+    .print-dash { font-weight: bold; text-align: center; color: var(--color-text); }
     
+    .print-row {
+      display: block; 
+      width: 100%;
+      position: relative;
+      line-height: 1.6;
+      background-image: linear-gradient(to right, var(--color-text) 33%, transparent 33%);
+      background-repeat: repeat-x;
+      background-position: left 0 bottom 0.35em; 
+      background-size: 6px 1px;
+    }
+    
+    .print-text {
+      display: inline;                  
+      white-space: pre-wrap;
+      background-color: var(--color-bg);
+      padding-right: 6px;
+    }
+    
+    .print-dest {
+      float: right;                     
+      white-space: nowrap;
+      background-color: var(--color-bg); 
+      padding-left: 6px;                 
+      line-height: inherit;
+    }
+    
+    .print-dest-strong { font-weight: bold; color: var(--color-text); }
+    .print-dest-taxon { font-weight: bold; font-style: italic; color: var(--color-text); }
+    .error-text { font-weight: bold; color: #ef4444; }
+    
+    /* FIGURES SUB-ELEMENT PANELS */
     .print-fig-card {
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      padding: 12px;
-      background: #ffffff;
+      border: 1px solid var(--color-border-light);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      background: var(--color-bg);
       box-shadow: 0 1px 3px rgba(0,0,0,0.05);
       break-inside: avoid;
       page-break-inside: avoid;
     }
-    .print-fig-img { display: block; max-width: 100%; max-height: 200px; object-fit: contain; border-radius: 6px; margin: 0 auto 10px auto; }
-    .print-fig-caption { font-size: 1rem; color: #0f172a; line-height: 1.4; text-align: left; }
+    .print-fig-img { display: block; max-width: 100%; max-height: 220px; object-fit: contain; border-radius: var(--radius-md); margin: 0 auto 12px auto; }
+    .print-fig-caption { font-family: sans-serif; font-size: 13px; color: var(--color-text); line-height: 1.5; text-align: left; }
     
     @media print {
+      html, body { height: auto; overflow: visible; }
       body { padding: 0; margin: 0; background: transparent; }
-      .print-page-layout.layout-has-figures { display: grid; grid-template-columns: 1fr 260px; gap: 30px; }
-      .print-figures-column { max-height: none; overflow-y: visible; position: relative; top: 0; }
-      .print-key-container { border: none; padding: 0; box-shadow: none; }
-      .print-fig-card { box-shadow: none; border-color: #cbd5e1; }
+      .print-page-layout { height: auto; padding: 0; overflow: visible; display: block; }
+      .print-page-layout.layout-has-figures { display: grid; grid-template-columns: 1fr 260px; gap: 30px; height: auto; }
+      .print-key-column { height: auto; overflow: visible; }
+      .print-figures-column { height: auto; max-height: none; overflow-y: visible; position: relative; top: 0; }
+      .print-key-container { border: none; padding: 0; box-shadow: none; height: auto; overflow: visible; }
+      .print-fig-card { box-shadow: none; border-color: var(--color-border); }
     }
   </style>
 </head>

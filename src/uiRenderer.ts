@@ -511,7 +511,6 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
                         <input type="file" class="hidden-file-picker" accept="image/*" style="display: none;" />
                     </div>
                 </div>
-                </div>
                 
                 <div class="figure-field-row">
                     <label>Filename:</label>
@@ -589,6 +588,14 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
     });
 
     existingMap.forEach(block => block.remove());
+    const currentFigIds = new Set(figures.map(f => f.id));
+
+    for (const [id, url] of activeObjectURLs.entries()) {
+        if (!currentFigIds.has(id)) {
+            URL.revokeObjectURL(url);   
+            activeObjectURLs.delete(id); 
+        }
+    }
 }
 
 /**

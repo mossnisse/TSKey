@@ -189,15 +189,14 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                 const card = target.closest('.figure-card') as HTMLElement;
                 if (!card) return;
                 const figId = Number(card.getAttribute('data-id'));
-                
+
                 // Stage the deletion instead of immediate DB mutation
-                figureStorage.pendingDeletes.add(figId);
-                figureStorage.pendingUploads.delete(figId);
-                
+                figureStorage.deleteFigureBinary(figId);
+
                 const oldUrl = activeObjectURLs.get(figId);
                 if (oldUrl) URL.revokeObjectURL(oldUrl);
                 activeObjectURLs.delete(figId);
-                
+
                 store.updateFigure(figId, { filename: '' });
                 batchedRefresh(refreshAll);
                 return;
@@ -282,8 +281,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                 if (isNaN(figId)) return;
 
                 // Commit binary stream payload directly into client IndexedDB space
-                figureStorage.pendingUploads.set(figId, file);
-                figureStorage.pendingDeletes.delete(figId);
+                figureStorage.uploadFigureBinary(figId, file);
 
                 // Evict and clean stale historical URL footprints from browser system memory
                 const oldUrl = activeObjectURLs.get(figId);
@@ -618,7 +616,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
     document.querySelector('#cmd-save')?.addEventListener('click', async () => {
         try {
             await figureStorage.commitStagedChanges();
-            
+
             store.saveToStorage();
             showToast("💾 Changes saved to Browser Local Storage!", "success");
             batchedRefresh(refreshAll);
@@ -645,7 +643,13 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
 
     const hiddenInput = document.querySelector('#file-import-hidden') as HTMLInputElement;
 
+    let isImporting = false;
+
     document.querySelector('#cmd-trigger-import')?.addEventListener('click', () => {
+        if (isImporting) {
+            showToast("⚠️ An import is currently in progress. Please wait.", "error");
+            return;
+        }
         hiddenInput?.click();
     }, { signal });
 
@@ -654,6 +658,8 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
         if (!file) return;
 
         try {
+            isImporting = true;
+
             const fileText = await file.text();
             const rawData = JSON.parse(fileText);
             const importResult = store.importJsonData(rawData);
@@ -670,9 +676,12 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                             // Using the browser's native fetch API to elegantly decode base64 strings
                             const response = await fetch(fig.binaryData);
                             const blob = await response.blob();
-                            
-                            figureStorage.pendingUploads.set(fig.id, blob);
-                            
+
+                            figureStorage.uploadFigureBinary(fig.id, blob);
+
+                            const oldUrl = activeObjectURLs.get(fig.id);
+                            if (oldUrl) URL.revokeObjectURL(oldUrl);
+
                             const freshUrl = URL.createObjectURL(blob);
                             activeObjectURLs.set(fig.id, freshUrl);
                         } catch (err) {
@@ -680,6 +689,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                         }
                     }
                 }
+
                 await figureStorage.commitStagedChanges();
                 store.saveToStorage();
             }
@@ -689,6 +699,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
         } catch (err) {
             alert("Malformed JSON structure: Unable to parse file stream.");
         } finally {
+            isImporting = false;
             if (hiddenInput) hiddenInput.value = '';
         }
     }, { signal });
@@ -754,9 +765,8 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                 store.deleteSelectedFigures();
                 figIdsToDelete.forEach(id => {
                     // Stage the deletion
-                    figureStorage.pendingDeletes.add(id);
-                    figureStorage.pendingUploads.delete(id);
-                    
+                    figureStorage.deleteFigureBinary(id);
+
                     const url = activeObjectURLs.get(id);
                     if (url) URL.revokeObjectURL(url);
                     activeObjectURLs.delete(id);
