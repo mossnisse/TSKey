@@ -578,49 +578,39 @@ html, body {
     font-size: 15px;
 }
 
-.print-step-num {
-    font-weight: bold;
-    color: var(--color-text);
-}
-
+.print-step-num { font-weight: bold; color: var(--color-text);}
 .print-step-block { display: contents; }
 .print-dash       { font-weight: bold; text-align: center; color: var(--color-text); }
 .print-spacer     { grid-column: span 2; height: 8px; }
 
 .print-row {
-  display: flex;
-  flex-wrap: wrap; 
-  justify-content: space-between;
-  align-items: baseline;
-  position: relative;
+  display: block; 
   width: 100%;
-}
-
-.print-row::after {
-    content: "";
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 0.35em; 
-    border-bottom: 2px dotted var(--color-text);
-    z-index: 1;
+  position: relative;
+  line-height: 1.6;
+  /* Removed padding-bottom so the container height perfectly matches the text lines */
+  
+  background-image: linear-gradient(to right, var(--color-text) 33%, transparent 33%);
+  background-repeat: repeat-x;
+  
+  /* FIX: Positions the dots '0.35em' up from the bottom, matching the text baseline */
+  background-position: left 0 bottom 0.35em; 
+  background-size: 6px 1px;
 }
 
 .print-text {
-  background: var(--color-bg);
-  padding-right: 8px;
-  position: relative;
-  z-index: 2;
+  display: inline;                  /* Crucial: lets background follow text shape */
   white-space: pre-wrap;
+  background-color: var(--color-bg); /* Matches page background to hide dots under text */
+  padding-right: 6px;                /* Creates a clean gap before dots start */
 }
 
 .print-dest {
-  background: var(--color-bg);
-  padding-left: 8px;
-  position: relative;
-  z-index: 2;
+  float: right;                     /* Floats to the right side of the last line */
   white-space: nowrap;
-  margin-left: auto; 
+  background-color: var(--color-bg); /* Hides dots under the destination identifier */
+  padding-left: 6px;                 /* Creates a clean gap after dots end */
+  line-height: inherit;
 }
 
 .print-dest-strong { font-weight: bold; }

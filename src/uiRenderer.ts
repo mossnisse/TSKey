@@ -663,13 +663,11 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
                  <div class="print-step-num"></div>
                 <div class="print-row" data-choice="1">
                   <span class="print-text"></span>
-                  <span class="print-dots"></span>
                   <span class="print-dest"></span>
                 </div>
                 <div class="print-dash">—</div>
                 <div class="print-row" data-choice="2">
                   <span class="print-text"></span>
-                  <span class="print-dots"></span>
                   <span class="print-dest"></span>
                 </div>
                 <div class="print-spacer"></div>

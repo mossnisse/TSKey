@@ -363,6 +363,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
         }, { signal });
 
         figureContainer.addEventListener('dragover', (e: DragEvent) => {
+            if (draggedFigId === null) return;
             e.preventDefault();
 
             // Edge-scrolling logic targeting the figure container specifically
@@ -578,6 +579,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
     }, { signal });
 
     keyContainer.addEventListener('dragover', (e: DragEvent) => {
+        if (store.draggedCoupletId === null) return;
         e.preventDefault();
 
         const containerRect = keyContainer.getBoundingClientRect();
