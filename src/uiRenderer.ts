@@ -176,7 +176,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
         </div>
 
         <div class="print-column">
-          <h2>Live Publication Render</h2>
+          <h2>Live Publication View</h2>
           <hr class="hr-print" />
           <div id="print-view-container" class="print-grid"></div>
         </div>
@@ -550,7 +550,7 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
                     previewImg.src = cachedUrl;
                 }
                 // FIX: Always ensure image is visible when a valid cache entry exists
-                previewImg.style.display = 'block'; 
+                previewImg.style.display = 'block';
             } else {
                 // If not cached, fetch safely without halting the paint process or looping
                 if (!previewImg.hasAttribute('data-loading-state')) {
@@ -654,7 +654,7 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
             block.setAttribute('data-id', c.id.toString());
 
             block.innerHTML = `
-                <div class="print-step-num"></div>
+                 <div class="print-step-num"></div>
                 <div class="print-row" data-choice="1">
                   <span class="print-text"></span>
                   <span class="print-dots"></span>

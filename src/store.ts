@@ -148,8 +148,6 @@ export class KeyStore {
 
         if (this.undoStack.length > this.maxHistoryLimit) {
             this.undoStack.shift();
-            // Each eviction shifts every logical revision back by one.
-            // If the saved revision was the entry just removed, mark it gone with -1.
             if (this.savedHistoryIndex > 0) {
                 this.savedHistoryIndex--;
             } else {
@@ -1018,8 +1016,6 @@ export class KeyStore {
             if (localFigures) {
                 try {
                     const parsedFigures = JSON.parse(localFigures);
-                    // FIX: use the same schema validator applied to couplet data; bare
-                    // Array.isArray() lets corrupted entries (missing id, caption, etc.) slip through.
                     if (isValidFigureArray(parsedFigures)) {
                         loadedFigures = parsedFigures;
                     } else {
@@ -1161,13 +1157,11 @@ export class KeyStore {
             // --- Unresolved Figure Reference Diagnostics ---
             const FIG_ID_REGEX = /\[figID:\s*(\d+)\s*\]/gi;
             const FIG_RAW_REGEX = /\[fig:\s*([^\]]+)\s*\]/gi;
-            let match;
 
             // Check Choice A
             if (c.alt1) {
-                // Catch previously resolved figures that have now been deleted
                 const missingIds1: number[] = [];
-                while ((match = FIG_ID_REGEX.exec(c.alt1)) !== null) {
+                for (const match of c.alt1.matchAll(FIG_ID_REGEX)) {
                     const figId = parseInt(match[1], 10);
                     if (!figureIds.has(figId) && !missingIds1.includes(figId)) {
                         missingIds1.push(figId);
@@ -1177,9 +1171,8 @@ export class KeyStore {
                     issues.push({ severity: 'warning', message: `Choice A references a missing or deleted figure (Internal ID: ${id}).` });
                 });
 
-                // Catch raw [fig: X] tags typed by the user that never resolved to an ID
                 const unresolved1: string[] = [];
-                while ((match = FIG_RAW_REGEX.exec(c.alt1)) !== null) {
+                for (const match of c.alt1.matchAll(FIG_RAW_REGEX)) {
                     const token = match[1].trim();
                     if (!unresolved1.includes(token)) {
                         unresolved1.push(token);
@@ -1192,9 +1185,8 @@ export class KeyStore {
 
             // Check Choice B
             if (c.alt2) {
-                // Catch previously resolved figures that have now been deleted
                 const missingIds2: number[] = [];
-                while ((match = FIG_ID_REGEX.exec(c.alt2)) !== null) {
+                for (const match of c.alt2.matchAll(FIG_ID_REGEX)) {
                     const figId = parseInt(match[1], 10);
                     if (!figureIds.has(figId) && !missingIds2.includes(figId)) {
                         missingIds2.push(figId);
@@ -1204,9 +1196,8 @@ export class KeyStore {
                     issues.push({ severity: 'warning', message: `Choice B references a missing or deleted figure (Internal ID: ${id}).` });
                 });
 
-                // Catch raw [fig: X] tags typed by the user that never resolved to an ID
                 const unresolved2: string[] = [];
-                while ((match = FIG_RAW_REGEX.exec(c.alt2)) !== null) {
+                for (const match of c.alt2.matchAll(FIG_RAW_REGEX)) {
                     const token = match[1].trim();
                     if (!unresolved2.includes(token)) {
                         unresolved2.push(token);
@@ -1216,7 +1207,6 @@ export class KeyStore {
                     issues.push({ severity: 'warning', message: `Choice B references an unresolved figure reference '[fig: ${token}]'.` });
                 });
             }
-            // -----------------------------------------------
 
             if (index > 0 && !reachableNodes.has(c.id)) {
                 issues.push({ severity: 'warning', message: 'Orphaned: This step is unreachable from Step #1.' });
@@ -1260,9 +1250,7 @@ export class KeyStore {
     public resolveTextReferences(text: string, idToDisplayNum: Map<number, number>): string {
         if (!text) return text;
 
-        // Build filename → display-number lookup so legacy [fig: filename.jpg] tokens resolve correctly.
-        // Previously this map was declared but never populated, causing all filename-based references
-        // to fall through to the [Broken Fig: …] fallback.
+
         const filenameToDisplayNum = new Map<string, number>();
         this.state.figures.forEach(fig => {
             if (!fig.filename) return;

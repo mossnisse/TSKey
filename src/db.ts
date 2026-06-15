@@ -1,10 +1,14 @@
 // db.ts - Simple client-side binary storage engine
+
 export class FigureStorageEngine {
     private dbName = 'TSKey_Binary_Store';
     private storeName = 'figures';
+    private dbPromise: Promise<IDBDatabase> | null = null; // Caches the connection
 
     private getDB(): Promise<IDBDatabase> {
-        return new Promise((resolve, reject) => {
+        if (this.dbPromise) return this.dbPromise;
+
+        this.dbPromise = new Promise((resolve, reject) => {
             const request = indexedDB.open(this.dbName, 1);
             request.onupgradeneeded = () => {
                 request.result.createObjectStore(this.storeName);
@@ -12,6 +16,8 @@ export class FigureStorageEngine {
             request.onsuccess = () => resolve(request.result);
             request.onerror = () => reject(request.error);
         });
+
+        return this.dbPromise;
     }
 
     public async saveFigureBinary(id: number, file: File | Blob): Promise<void> {

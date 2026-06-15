@@ -563,35 +563,68 @@ html, body {
 }
 .btn-trigger-upload:hover { background: var(--color-primary-hover); }
 
- /* ==========================================
+/* ==========================================
    PASSIVE PUBLICATION PRINT VIEW PANELS
    ========================================== */
+
 .print-grid {
     display: grid;
     grid-template-columns: auto 1fr;
     gap: 6px 10px;
-    align-items: end;
+    align-items: start;
     color: var(--color-text);
     line-height: 1.6;
     font-family: serif;
     font-size: 15px;
 }
 
-.print-step-num   { font-weight: bold; align-self: start; color: var(--color-text); }
+.print-step-num {
+    font-weight: bold;
+    color: var(--color-text);
+}
+
 .print-step-block { display: contents; }
-.print-row        { display: flex; justify-content: space-between; align-items: end; width: 100%; }
-.print-text       { flex-shrink: 1; text-align: left; white-space: pre-wrap; }
-.print-dest       { flex-shrink: 0; white-space: nowrap; }
-.print-dest-strong{ font-weight: bold; }
-.print-dest-taxon { font-weight: bold; font-style: italic; }
-.print-dash       { font-weight: bold; text-align: center; align-self: start; color: var(--color-text); }
+.print-dash       { font-weight: bold; text-align: center; color: var(--color-text); }
 .print-spacer     { grid-column: span 2; height: 8px; }
 
-.print-dots {
-    flex-grow: 1;
-    border-bottom: 1px dotted var(--color-text);
-    margin: 0 8px 4px 8px;
-} 
+.print-row {
+  display: flex;
+  flex-wrap: wrap; 
+  justify-content: space-between;
+  align-items: baseline;
+  position: relative;
+  width: 100%;
+}
+
+.print-row::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0.35em; 
+    border-bottom: 2px dotted var(--color-text);
+    z-index: 1;
+}
+
+.print-text {
+  background: var(--color-bg);
+  padding-right: 8px;
+  position: relative;
+  z-index: 2;
+  white-space: pre-wrap;
+}
+
+.print-dest {
+  background: var(--color-bg);
+  padding-left: 8px;
+  position: relative;
+  z-index: 2;
+  white-space: nowrap;
+  margin-left: auto; 
+}
+
+.print-dest-strong { font-weight: bold; }
+.print-dest-taxon  { font-weight: bold; font-style: italic; }
 
 /* ==========================================
    TOAST NOTIFICATION ENGINE
