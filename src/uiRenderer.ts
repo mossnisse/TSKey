@@ -2,7 +2,7 @@
 import { KeyStore, APP_NAME, APP_VERSION } from './store.ts';
 import { UIStateStore } from './uiState.ts';
 import { escapeHTML, buildIdToIndexMap, resolveDestination, IS_MAC, buildFigureIdToDisplayNumMap } from './utils.ts';
-import { figureStorage, activeObjectURLs } from './db.ts';
+import { workspaceStorage, activeObjectURLs } from './db.ts';
 
 // ==========================================
 // CORE LAYOUT HELPERS
@@ -428,7 +428,7 @@ export function renderProjectHubList(projects: Array<{ name: string; lastModifie
     container.innerHTML = projects.map(proj => {
         const isCurrent = proj.name === currentProjectName;
         const dateString = new Date(proj.lastModified).toLocaleString();
-        
+
         return `
             <div class="project-hub-item" data-name="${escapeHTML(proj.name)}" 
                  style="display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; 
@@ -642,7 +642,7 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
 
             const cachedUrl = activeObjectURLs.get(fig.id);
             const removeBtn = block.querySelector('.btn-remove-image') as HTMLButtonElement | null;
-            
+
             if (cachedUrl) {
                 if (previewImg.src !== cachedUrl) {
                     previewImg.src = cachedUrl;
@@ -652,17 +652,24 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
             } else {
                 if (!previewImg.hasAttribute('data-loading-state')) {
                     previewImg.setAttribute('data-loading-state', 'pending');
-                    figureStorage.getFigureBinary(fig.id).then(blob => {
+
+                    workspaceStorage.getFigureBinary(fig.id).then(blob => {
                         previewImg.removeAttribute('data-loading-state');
                         if (blob) {
                             const newUrl = URL.createObjectURL(blob);
                             activeObjectURLs.set(fig.id, newUrl);
-                            refreshAll(); 
+                            if (typeof (window as any)._pendingFigureRefresh === 'undefined') {
+                                (window as any)._pendingFigureRefresh = requestAnimationFrame(() => {
+                                    refreshAll();
+                                    delete (window as any)._pendingFigureRefresh;
+                                });
+                            }
                         } else {
                             previewImg.style.display = 'none';
                             if (removeBtn) removeBtn.style.display = 'none';
                         }
-                    }).catch(() => {
+                    }).catch((err) => {
+                        console.error("Failed to load binary thumbnail:", err);
                         previewImg.removeAttribute('data-loading-state');
                         if (removeBtn) removeBtn.style.display = 'none';
                     });
@@ -686,8 +693,8 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
 
     for (const [id, url] of activeObjectURLs.entries()) {
         if (!currentFigIds.has(id)) {
-            URL.revokeObjectURL(url);   
-            activeObjectURLs.delete(id); 
+            URL.revokeObjectURL(url);
+            activeObjectURLs.delete(id);
         }
     }
 }

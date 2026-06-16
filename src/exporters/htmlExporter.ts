@@ -2,7 +2,7 @@ import type { KeyStore } from '../store.ts';
 import { escapeHTML, buildIdToIndexMap, buildFigureIdToDisplayNumMap, triggerFileDownload, resolveDestination } from '../utils.ts';
 import type { DestinationResolution } from '../utils.ts';
 import { showToast } from '../uiRenderer.ts';
-import { figureStorage, blobToBase64 } from '../db.ts';
+import { workspaceStorage, blobToBase64 } from '../db.ts';
 
 function destinationToHtml(dest: DestinationResolution): string {
     const escaped = escapeHTML(dest.printText);
@@ -35,7 +35,7 @@ export async function exportKeyToHTML(store: KeyStore): Promise<void> {
                 let imgTag = '';
 
                 try {
-                    const blob = await figureStorage.getFigureBinary(fig.id);
+                    const blob = await workspaceStorage.getFigureBinary(fig.id);
                     if (blob) {
                         const base64Data = await blobToBase64(blob);
                         imgTag = `<img class="print-fig-img" src="${base64Data}" alt="Figure ${displayNum}" />`;

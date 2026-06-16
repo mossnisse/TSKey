@@ -48,6 +48,15 @@
 .input-destination,
 .print-grid {
     user-select: text;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 6px 10px;
+    align-items: start;
+    align-content: start;
+    color: var(--color-text);
+    line-height: 1.6;
+    font-family: serif;
+    font-size: 15px;
 }
 
 /* ==========================================
@@ -592,6 +601,10 @@ html, body {
   background-repeat: repeat-x;
   background-position: left 0 bottom 0.35em; 
   background-size: 6px 1px;
+  flex-grow: 0;
+    flex-shrink: 0;
+    flex-basis: auto;
+    margin-bottom: 0;
 }
 
 .print-text {

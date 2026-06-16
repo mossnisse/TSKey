@@ -1,13 +1,13 @@
 // exporters/jsonExporter.ts
 import { KeyStore, APP_NAME, APP_VERSION } from '../store.ts';
 import { triggerFileDownload, sanitizeFilename } from '../utils.ts';
-import { blobToBase64, figureStorage } from '../db.ts';
+import { blobToBase64, workspaceStorage } from '../db.ts';
 
 export async function exportKeyToJSON(store: KeyStore): Promise<void> {
     const figures = store.getFigures();
     
     const exportedFigures = await Promise.all(figures.map(async (fig) => {
-        const blob = await figureStorage.getFigureBinary(fig.id);
+        const blob = await workspaceStorage.getFigureBinary(fig.id);
         let binaryData = null;
         if (blob) {
             binaryData = await blobToBase64(blob);

@@ -1,6 +1,6 @@
 // store.ts
 import { isValidCoupletArray, isValidFigureArray } from './utils.ts';
-import { figureStorage } from './db.ts';
+import { workspaceStorage } from './db.ts';
 
 export const APP_NAME = 'TSKey';
 export const APP_VERSION = '0.0.1';
@@ -44,6 +44,7 @@ export interface ImportResult {
 export class KeyStore {
     private state: AppState;
     private hasUncommittedChanges: boolean = false;
+    private persistedTitle: string = '';
 
     private undoStack: AppState[] = [];
     private redoStack: AppState[] = [];
@@ -71,6 +72,7 @@ export class KeyStore {
         };
         this.maxHistoryLimit = maxHistoryLimit;
         this.hasUncommittedChanges = false;
+        this.persistedTitle = initialTitle;
     }
 
     // ==========================================
@@ -1059,52 +1061,66 @@ export class KeyStore {
         this.setTitle(newTitle);
     }
 
-    public async getStoredProjectsList(): Promise<{name: string, lastModified: number}[]> {
-        return await figureStorage.getProjectList();
+    public async getStoredProjectsList(): Promise<{ name: string, lastModified: number }[]> {
+        return await workspaceStorage.getProjectList();
     }
 
     public async createNewProject(title: string): Promise<void> {
         this.state.title = title;
+        this.persistedTitle = title; // Sync the disk tracking name
         this.state.dichotomousKey = [];
         this.state.figures = [];
         this.resetTrackingContext();
-        
-        figureStorage.activeProjectTitle = title;
-        figureStorage.clearStagedChanges();
+
+        workspaceStorage.activeProjectTitle = title;
+        workspaceStorage.clearStagedChanges();
         await this.saveToStorage();
     }
 
     public async loadProject(title: string): Promise<boolean> {
-        const data = await figureStorage.loadProject(title);
+        const data = await workspaceStorage.loadProject(title);
         if (data) {
             this.state.title = data.title;
+            this.persistedTitle = data.title; // Sync the disk tracking name
             this.state.dichotomousKey = data.dichotomousKey;
             this.state.figures = data.figures;
             this.resetTrackingContext();
-            
-            figureStorage.activeProjectTitle = title;
-            figureStorage.clearStagedChanges();
+
+            workspaceStorage.activeProjectTitle = title;
+            workspaceStorage.clearStagedChanges();
             return true;
         }
         return false;
     }
 
     public async deleteProject(title: string): Promise<void> {
-        await figureStorage.deleteProject(title);
-        
-        // If the user deletes the active project, boot them into a new blank state
+        await workspaceStorage.deleteProject(title);
+
         if (this.state.title === title) {
             await this.createNewProject('Untitled Key');
         }
     }
 
     public async saveToStorage(): Promise<void> {
+        if (this.persistedTitle && this.persistedTitle !== this.state.title) {
+            for (const fig of this.state.figures) {
+                workspaceStorage.activeProjectTitle = this.persistedTitle;
+                const blob = await workspaceStorage.getFigureBinary(fig.id);
+                if (blob) {
+                    workspaceStorage.activeProjectTitle = this.state.title;
+                    workspaceStorage.uploadFigureBinary(fig.id, blob);
+                }
+            }
+            await workspaceStorage.deleteProject(this.persistedTitle);
+        }
+
+        workspaceStorage.activeProjectTitle = this.state.title;
         const currentData = this.state.dichotomousKey;
-        figureStorage.activeProjectTitle = this.state.title;
-        
-        await figureStorage.saveProject(this.state.title, currentData, this.state.figures);
-        
-        // Save the last active workspace name locally so it resumes on refresh
+        await workspaceStorage.saveProject(this.state.title, currentData, this.state.figures);
+
+        await workspaceStorage.commitStagedChanges();
+
+        this.persistedTitle = this.state.title; // Update tracking context to match disk state
         localStorage.setItem('TSKey_LastActiveProject', this.state.title);
         this.markSaved();
     }
@@ -1112,14 +1128,16 @@ export class KeyStore {
     public async loadFromStorage(fallbackData: Couplet[] = [], fallbackFigures: Figure[] = [], fallbackTitle = 'Untitled Key'): Promise<boolean> {
         const lastActive = localStorage.getItem('TSKey_LastActiveProject') || fallbackTitle;
         const success = await this.loadProject(lastActive);
-        
+
         if (!success) {
             this.state = {
                 title: lastActive,
                 dichotomousKey: fallbackData,
                 figures: fallbackFigures
             };
-            figureStorage.activeProjectTitle = lastActive;
+            this.persistedTitle = lastActive;
+            workspaceStorage.activeProjectTitle = lastActive;
+            workspaceStorage.clearStagedChanges();
             this.resetTrackingContext();
         }
         return success;

@@ -3,7 +3,7 @@ import type { KeyStore, Couplet } from './store.ts';
 import type { UIStateStore } from './uiState.ts';
 import { showToast, renderProjectHubList } from './uiRenderer.ts';
 import { IS_MAC, resolveDestination, parseDestinationInput, buildIdToIndexMap } from './utils.ts';
-import { figureStorage, activeObjectURLs } from './db.ts';
+import { workspaceStorage, activeObjectURLs } from './db.ts';
 import { exportKeyToHTML } from './exporters/htmlExporter.ts';
 import { exportKeyToLaTeX } from './exporters/latexExporter.ts';
 import { exportKeyToPlainText } from './exporters/plainTextExporter.ts';
@@ -42,31 +42,27 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
 
     // Helper to refresh and populate rows inside the workspace project selector hub
     async function refreshHubView() {
-        const currentTitle = store.getProjectName?.() ?? 'Untitled Key';
-        const projects = store.getStoredProjectsList ? await store.getStoredProjectsList() : [];
+        const currentTitle = store.getProjectName();
+        const projects = await workspaceStorage.getProjectList();
         renderProjectHubList(projects, currentTitle);
     }
 
     const titleInput = document.getElementById('key-title-input') as HTMLInputElement | null;
     if (titleInput) {
-        titleInput.addEventListener('input', () => {
-            // Route through uiState.typing.couplets with a distinct tracking handle
-            uiState.typing.couplets.start('project-title', () => {
-                //store.pushUndoSnapshot(); // Capture snapshot BEFORE changes hit
-            });
-
-            // Push raw value continuously to state for hot-reloading components
-            store.setTitle(titleInput.value);
-
-            // Use your existing batched loop or refresh logic to push layout updates safely
-            batchedRefresh(refreshAll);
-        });
-
         titleInput.addEventListener('blur', () => {
             store.endTypingSession();
-            store.saveToStorage(); // Autosave to IndexedDB via updated store engine on blur
+
+            const newTitle = titleInput.value.trim();
+            if (!newTitle) {
+                titleInput.value = store.getProjectName();
+                return;
+            }
+
+            store.setTitle(newTitle);
+            batchedRefresh(refreshAll);
         });
     }
+
     keyContainer.addEventListener('click', (e: MouseEvent) => {
         const target = e.target as HTMLElement;
 
@@ -218,7 +214,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                 const figId = Number(card.getAttribute('data-id'));
 
                 // Stage the deletion instead of immediate DB mutation
-                figureStorage.deleteFigureBinary(figId);
+                workspaceStorage.deleteFigureBinary(figId);
 
                 const oldUrl = activeObjectURLs.get(figId);
                 if (oldUrl) URL.revokeObjectURL(oldUrl);
@@ -308,7 +304,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                 if (isNaN(figId)) return;
 
                 // Commit binary stream payload directly into client IndexedDB space
-                figureStorage.uploadFigureBinary(figId, file);
+                workspaceStorage.uploadFigureBinary(figId, file);
 
                 // Evict and clean stale historical URL footprints from browser system memory
                 const oldUrl = activeObjectURLs.get(figId);
@@ -556,6 +552,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
         const clickableZone = target.closest('.hub-item-clickable-zone') as HTMLElement | null;
         const deleteBtn = target.closest('.btn-hub-delete') as HTMLElement | null;
 
+        // PATHWAY A: LOAD WORKSPACE
         if (clickableZone) {
             const projectName = clickableZone.getAttribute('data-name');
             if (!projectName) return;
@@ -566,35 +563,57 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                 }
             }
 
-            if ((store as any).loadProject) {
-                // Clear active browser layout file URLs
+            try {
                 for (const url of activeObjectURLs.values()) {
                     URL.revokeObjectURL(url);
                 }
                 activeObjectURLs.clear();
 
-                figureStorage.clearStagedChanges();
+                workspaceStorage.clearStagedChanges();
+                workspaceStorage.activeProjectTitle = projectName;
 
-                await (store as any).loadProject(projectName);
+                await store.loadProject(projectName);
 
                 if (modalProjectHub) modalProjectHub.style.display = 'none';
                 showToast(`📂 Swapped to workspace: "${projectName}"`, "success");
                 batchedRefresh(refreshAll);
+            } catch (error) {
+                console.error("Failed to load workspace safely:", error);
+                showToast("⚠️ Could not open selected project database entries.", "error");
             }
             return;
         }
 
+        // PATHWAY B: DELETE WORKSPACE
         if (deleteBtn) {
             e.stopPropagation();
             const projectName = deleteBtn.getAttribute('data-name');
             if (!projectName) return;
 
-            if (confirm(`Are you sure you want to permanently delete the workspace "${projectName}"?\nThis wipes it from your browser database.`)) {
-                if ((store as any).deleteProject) {
-                    await (store as any).deleteProject(projectName);
+            const confirmMsg = `Are you sure you want to permanently delete the workspace "${projectName}"?\nThis wipes it from your browser database.`;
+            if (confirm(confirmMsg)) {
+                try {
+                    await workspaceStorage.deleteProject(projectName);
                     showToast(`🗑️ Workspace "${projectName}" deleted.`, "success");
+
+                    const currentOpenName = store.getProjectName();
+
+                    if (currentOpenName === projectName) {
+                        for (const url of activeObjectURLs.values()) {
+                            URL.revokeObjectURL(url);
+                        }
+                        activeObjectURLs.clear();
+                        workspaceStorage.clearStagedChanges();
+                        workspaceStorage.activeProjectTitle = 'Untitled Key';
+                        await store.createNewProject('Untitled Key');
+                        await store.saveToStorage(); // Persist baseline
+                    }
+
                     await refreshHubView();
                     batchedRefresh(refreshAll);
+                } catch (error) {
+                    console.error("Failed to execute database deletion sequence:", error);
+                    showToast("⚠️ Failed to delete workspace from database.", "error");
                 }
             }
         }
@@ -706,7 +725,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
     }, { signal });
 
     // --- NEW TRADITIONAL WORKFLOW FILE ACTIONS ---
-    document.querySelector('#cmd-new')?.addEventListener('click', () => {
+    document.querySelector('#cmd-new')?.addEventListener('click', async () => {
         if (store.hasUnsavedChanges()) {
             if (!confirm("You have unsaved workspace changes. Discard and make a brand new project memory space?")) {
                 return;
@@ -714,25 +733,41 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
         }
 
         const titleInput = prompt("Enter name/title for the new key:", "Untitled Key");
-        if (titleInput === null) return;
+        if (titleInput === null) return; // User cancelled prompt
+
         const chosenTitle = titleInput.trim() || "Untitled Key";
 
-        if ((store as any).createNewProject) {
+        try {
+            const projectList = await workspaceStorage.getProjectList();
+            const exists = projectList.some(p => p.name.toLowerCase() === chosenTitle.toLowerCase());
+            if (exists) {
+                const confirmOverwrite = confirm(`A project named "${chosenTitle}" already exists. Do you want to wipe it out and start fresh?`);
+                if (!confirmOverwrite) return;
+            }
+
             for (const url of activeObjectURLs.values()) {
                 URL.revokeObjectURL(url);
             }
             activeObjectURLs.clear();
+            workspaceStorage.clearStagedChanges();
+            workspaceStorage.activeProjectTitle = chosenTitle;
 
-            (store as any).createNewProject(chosenTitle);
-            showToast("📄 New key workspace initiated!", "success");
+            await store.createNewProject(chosenTitle);
+            await store.saveToStorage();
+
+            showToast(`📄 New workspace "${chosenTitle}" initiated!`, "success");
             batchedRefresh(refreshAll);
+        } catch (error) {
+            console.error("Failed to initialize a new project workspace safely: ", error);
+            showToast("⚠️ Could not initialize database workspace entries.", "error");
         }
     }, { signal });
 
     document.querySelector('#cmd-save-as')?.addEventListener('click', async () => {
-        const currentTitle = (store as any).getProjectName ? (store as any).getProjectName() : 'Untitled Key';
+        const currentTitle = store.getProjectName();
         const titleInput = prompt("Save current configuration under a new title:", currentTitle);
-        if (titleInput === null) return;
+        if (titleInput === null) return; // User cancelled
+
         const chosenTitle = titleInput.trim();
         if (!chosenTitle) {
             showToast("⚠️ Invalid project title.", "error");
@@ -740,40 +775,74 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
         }
 
         try {
-            if ((store as any).setProjectName) {
-                (store as any).setProjectName(chosenTitle);
+            const projectList = await workspaceStorage.getProjectList();
+            const exists = projectList.some(p => p.name.toLowerCase() === chosenTitle.toLowerCase());
+            if (exists) {
+                const confirmOverwrite = confirm(`A project named "${chosenTitle}" already exists. Do you want to overwrite it?`);
+                if (!confirmOverwrite) return;
             }
-            await figureStorage.commitStagedChanges();
-            store.saveToStorage();
+
+            const oldTitle = workspaceStorage.activeProjectTitle;
+            store.setProjectName(chosenTitle);
+            workspaceStorage.activeProjectTitle = chosenTitle;
+
+            if (oldTitle && oldTitle !== 'Untitled Key') {
+                await workspaceStorage.cloneProjectFigures(oldTitle, chosenTitle);
+            }
+
+            await workspaceStorage.commitStagedChanges();
+            await store.saveToStorage();
+
             showToast(`💾 Saved workspace as "${chosenTitle}"`, "success");
             batchedRefresh(refreshAll);
         } catch (error) {
-            console.error(error);
+            console.error("Save As Operation Failed:", error);
             showToast("⚠️ Save As operation failed.", "error");
         }
     }, { signal });
 
     document.querySelector('#cmd-save')?.addEventListener('click', async () => {
+        const oldTitle = workspaceStorage.activeProjectTitle;
+        const newTitle = store.getProjectName(); // Extracted from memory state
+
         try {
-            await figureStorage.commitStagedChanges();
-
-            store.saveToStorage();
-            showToast("💾 Changes saved to Browser Local Storage!", "success");
-            batchedRefresh(refreshAll);
-        } catch (error: unknown) {
-            console.error("Save Operation Failed: ", error);
-            let userMessage = "Failed to save data. An unknown error occurred.";
-
-            if (error instanceof Error) {
-                const code = 'code' in error ? (error as { code?: unknown }).code : undefined;
-
-                if (error.name === 'QuotaExceededError' || code === 22) {
-                    userMessage = "⚠️ Save Failed: Browser Local Storage is completely full! Please free up space or export your key as a JSON file.";
-                } else {
-                    userMessage = `⚠️ Save Failed: ${error.message}`;
+            // SCENARIO A: The user renamed the project
+            if (oldTitle !== newTitle) {
+                const projectList = await workspaceStorage.getProjectList();
+                const exists = projectList.some(p => p.name.toLowerCase() === newTitle.toLowerCase());
+                if (exists) {
+                    const overwrite = confirm(`A project named "${newTitle}" already exists. Overwrite it?`);
+                    if (!overwrite) return;
                 }
+
+                workspaceStorage.activeProjectTitle = newTitle;
+
+                if (oldTitle && oldTitle !== 'Untitled Key') {
+                    await workspaceStorage.cloneProjectFigures(oldTitle, newTitle);
+                }
+
+                await workspaceStorage.commitStagedChanges();
+                await store.saveToStorage();
+
+                if (oldTitle && oldTitle !== 'Untitled Key') {
+                    await workspaceStorage.deleteProject(oldTitle);
+                }
+
+                showToast(`💾 Renamed and saved workspace as "${newTitle}"`, "success");
             }
-            alert(userMessage);
+            else {
+                await workspaceStorage.commitStagedChanges();
+                await store.saveToStorage();
+                showToast("💾 Changes saved successfully!", "success");
+            }
+
+            batchedRefresh(refreshAll);
+        } catch (error) {
+            console.error("Atomic save/rename failed:", error);
+            showToast("⚠️ Save failed. Your changes were kept in memory.", "error");
+
+            // Rollback tracking pointer on error so the app state matches disk reality
+            workspaceStorage.activeProjectTitle = oldTitle;
         }
     }, { signal });
 
@@ -795,30 +864,45 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
             const fileText = await file.text();
             const rawData = JSON.parse(fileText);
 
-            // Dynamically synchronize the project workspace name if one exists inside the imported file metadata
-            if (rawData && rawData.title && (store as any).setProjectName) {
-                (store as any).setProjectName(rawData.title);
-            } else if (file.name && (store as any).setProjectName) {
-                const fallbackName = file.name.replace(/\.tskey$/i, '');
-                (store as any).setProjectName(fallbackName);
+            let targetName = 'Untitled Imported Key';
+            if (rawData && typeof rawData.title === 'string' && rawData.title.trim()) {
+                targetName = rawData.title.trim();
+            } else if (file.name) {
+                targetName = file.name.replace(/\.tskey$/i, '').trim();
             }
 
-            const importResult = store.importJsonData(rawData);
+            const projectList = await workspaceStorage.getProjectList();
+            const exists = projectList.some(p => p.name.toLowerCase() === targetName.toLowerCase());
+            if (exists) {
+                const overwrite = confirm(`A local project named "${targetName}" already exists. Do you want to completely overwrite it with this import file?`);
+                if (!overwrite) return;
+            }
 
+            for (const url of activeObjectURLs.values()) {
+                URL.revokeObjectURL(url);
+            }
+            
+            activeObjectURLs.clear();
+            workspaceStorage.clearStagedChanges();
+
+            store.setProjectName(targetName);
+            workspaceStorage.activeProjectTitle = targetName;
+
+            const importResult = store.importJsonData(rawData);
             if (!importResult.success) {
                 alert(`Failed to import JSON schema:\n• ${importResult.errors.join('\n• ')}`);
                 return;
             }
 
-            if (importResult.importedFigures) {
+            const failedFigureIds: number[] = [];
+            if (importResult.importedFigures && importResult.importedFigures.length > 0) {
                 for (const fig of importResult.importedFigures) {
                     if (fig.binaryData) {
                         try {
-                            // Using the browser's native fetch API to elegantly decode base64 strings
                             const response = await fetch(fig.binaryData);
                             const blob = await response.blob();
 
-                            figureStorage.uploadFigureBinary(fig.id, blob);
+                            workspaceStorage.uploadFigureBinary(fig.id, blob);
 
                             const oldUrl = activeObjectURLs.get(fig.id);
                             if (oldUrl) URL.revokeObjectURL(oldUrl);
@@ -826,24 +910,37 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                             const freshUrl = URL.createObjectURL(blob);
                             activeObjectURLs.set(fig.id, freshUrl);
                         } catch (err) {
-                            console.error(`Failed to parse binary data for figure ${fig.id}`);
+                            console.error(`Failed to parse binary data for figure ${fig.id}:`, err);
+                            failedFigureIds.push(fig.id);
                         }
                     }
                 }
-
-                await figureStorage.commitStagedChanges();
-                store.saveToStorage();
             }
 
-            showToast("Key configuration data imported successfully!", "success");
+            await workspaceStorage.commitStagedChanges();
+            await store.saveToStorage(); // Added missing await to prevent data-loss races
 
-            // Re-render project lists if the project workspace switcher happened to be active during selection
+            if (failedFigureIds.length === 0) {
+                showToast(`📥 Imported workspace "${targetName}" successfully!`, "success");
+            } else {
+                showToast(`⚠️ Workspace imported, but ${failedFigureIds.length} image(s) failed.`, "error");
+
+                alert(
+                    `Workspace "${targetName}" was loaded, but the following figure IDs encountered binary errors or corruption and could not be recovered:\n\n` +
+                    `• Figure ID(s): ${failedFigureIds.join(', ')}\n\n` +
+                    `Please try re-uploading these specific images in the editor.`
+                );
+            }
+
             if (modalProjectHub && modalProjectHub.style.display === 'flex') {
-                await refreshHubView();
+                if (typeof refreshHubView === 'function') {
+                    await refreshHubView();
+                }
             }
 
             batchedRefresh(refreshAll);
         } catch (err) {
+            console.error("Import processing error:", err);
             alert("Malformed JSON structure: Unable to parse file stream.");
         } finally {
             isImporting = false;
@@ -920,7 +1017,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                 store.deleteSelectedFigures();
                 figIdsToDelete.forEach(id => {
                     // Stage the deletion
-                    figureStorage.deleteFigureBinary(id);
+                    workspaceStorage.deleteFigureBinary(id);
 
                     const url = activeObjectURLs.get(id);
                     if (url) URL.revokeObjectURL(url);
