@@ -1,7 +1,9 @@
 // eventController.ts
 import type { KeyStore, Couplet } from './store.ts';
+import type { UIStateStore } from './uiState.ts';
 import { showToast } from './uiRenderer.ts';
 import { IS_MAC, resolveDestination, parseDestinationInput, buildIdToIndexMap } from './utils.ts';
+import { figureStorage, activeObjectURLs } from './db.ts';
 import { exportKeyToHTML } from './exporters/htmlExporter.ts';
 import { exportKeyToLaTeX } from './exporters/latexExporter.ts';
 import { exportKeyToPlainText } from './exporters/plainTextExporter.ts';
@@ -26,13 +28,10 @@ function batchedRefresh(refreshFn: () => void) {
     });
 }
 
-export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
-    const container = document.querySelector('#editor-container') as HTMLElement;
-    if (!container) return;
+export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, refreshAll: () => void) {
+    const keyContainer = document.querySelector('#editor-container') as HTMLElement;
+    if (!keyContainer) return () => { };
 
-    let typingSessionActive = false;
-    let currentEditingFieldKey: string | null = null; // Tracks exactly which card + field is active
-    let typingTimeoutId: number | null = null;        // Holds the debounce timer reference
     let activeDropCard: HTMLElement | null = null;
     let activeDropClass: 'drag-drop-above' | 'drag-drop-below' | null = null;
     let activeDropRect: DOMRect | null = null;        // Cached bounding metrics to prevent layout thrashing
@@ -41,11 +40,11 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     const controller = new AbortController();
     const { signal } = controller;
 
-    container.addEventListener('click', (e: MouseEvent) => {
+    keyContainer.addEventListener('click', (e: MouseEvent) => {
         const target = e.target as HTMLElement;
 
         // If the user clicked the editor background layout area itself, drop focus
-        if (target.id === 'editor-container' || target.classList.contains('editor-workspace')) {
+        if (target.id === 'editor-container') {
             store.clearSelection();
             batchedRefresh(refreshAll);
             return;
@@ -65,8 +64,16 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         batchedRefresh(refreshAll);
     }, { signal });
 
+    const addFigureBtn = document.getElementById('add-figure-btn');
+    if (addFigureBtn) {
+        addFigureBtn.addEventListener('click', () => {
+            store.addFigure("", "");
+            batchedRefresh(refreshAll);
+        }, { signal });
+    }
+
     // CONSOLIDATED INPUT ROUTER (Handles Undo Debouncing + Link Validation)
-    container.addEventListener('input', (e) => {
+    keyContainer.addEventListener('input', (e) => {
         const target = e.target as HTMLInputElement | HTMLTextAreaElement;
         if (!target.classList.contains('input-sync')) return;
         const card = target.closest('.key-card') as HTMLElement;
@@ -75,19 +82,12 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         const id = Number(card.getAttribute('data-id'));
         const field = target.getAttribute('data-field')!;
         const fieldKey = `${id}-${field}`;
-        store.setActiveCard(id);
+        store.setActiveCouplet(id);
 
-        // Undo History Checkpoint Manager
-        if (!typingSessionActive || currentEditingFieldKey !== fieldKey) {
+        // Undo History Checkpoint Manager (Couplets Context)
+        uiState.typing.couplets.start(fieldKey, () => {
             store.endTypingSession();
-            typingSessionActive = true;
-            currentEditingFieldKey = fieldKey;
-        }
-
-        // Clear previous timer to extend the active typing chunk
-        if (typingTimeoutId !== null) {
-            clearTimeout(typingTimeoutId);
-        }
+        });
 
         // Synchronize the text change immediately to the store without waiting
         let updatePayload: Partial<Omit<Couplet, 'id'>> = {};
@@ -108,9 +108,18 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         store.updateCouplet(id, updatePayload);
 
         // If user stops typing for 800ms, trigger heavy map lookups & structural warnings
-        typingTimeoutId = window.setTimeout(() => {
-            typingSessionActive = false;
-            typingTimeoutId = null;
+        uiState.typing.couplets.extendTimeout(DEBOUNCE_TYPING_MS, () => {
+            // Encode any complete [fig: N] or [fig: filename] tokens to stable [figID: N] format.
+            if (field !== 'dest1' && field !== 'dest2') {
+                const currentCouplet = store.getKey().find(c => c.id === id);
+                if (currentCouplet) {
+                    const rawValue = currentCouplet[field as keyof Omit<Couplet, 'id'>] as string;
+                    const encodedValue = store.encodeFigureTokens(rawValue);
+                    if (encodedValue !== rawValue) {
+                        store.updateCouplet(id, { [field]: encodedValue } as Partial<Omit<Couplet, 'id'>>);
+                    }
+                }
+            }
 
             // Perform link validation safely inside the debounce window
             if (field === 'dest1' || field === 'dest2') {
@@ -121,7 +130,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
                     const link = field === 'dest1' ? currentCouplet.link1 : currentCouplet.link2;
                     const taxa = field === 'dest1' ? currentCouplet.taxa1 : currentCouplet.taxa2;
 
-                    // Heavy operation moved completely outside the high-frequency keystroke pipeline
                     const idToIndexMap = buildIdToIndexMap(updatedKey);
                     const resolution = resolveDestination(link, taxa, idToIndexMap);
 
@@ -130,12 +138,285 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             }
 
             batchedRefresh(refreshAll);
-        }, DEBOUNCE_TYPING_MS);
-
+        });
     }, { signal });
 
+    // --- Figures bindings ---
+    const figureContainer = document.getElementById('figure-container');
+
+    if (figureContainer) {
+        figureContainer.addEventListener('input', (e) => {
+            const target = e.target as HTMLInputElement | HTMLTextAreaElement;
+
+            // Ensure we are interacting with a bound sync field
+            if (!target.classList.contains('input-sync')) return;
+
+            const figureCard = target.closest('.figure-card') as HTMLElement;
+            if (!figureCard) return;
+
+            const figId = Number(figureCard.getAttribute('data-id'));
+            const field = target.getAttribute('data-field') as 'filename' | 'caption';
+            const fieldKey = `fig-${figId}-${field}`;
+
+            // Manage debounce typing timelines (Figures Context)
+            uiState.typing.figures.start(fieldKey, () => {
+                store.endTypingSession(); // commit any lingering state frame
+            });
+
+            // Construct the partial Figure update object dynamically
+            const fields = { [field]: target.value };
+
+            // Dispatch the update to your KeyStore instance
+            store.updateFigure(figId, fields);
+
+            // Debounce structural refreshes to avoid dropping the typing caret position
+            uiState.typing.figures.extendTimeout(DEBOUNCE_TYPING_MS, () => {
+                batchedRefresh(refreshAll); // Batch updates safely via requestAnimationFrame
+            });
+        }, { signal });
+
+        figureContainer.addEventListener('click', (e: MouseEvent) => {
+            const target = e.target as HTMLElement;
+
+            if (target.classList.contains('btn-trigger-upload')) {
+                const card = target.closest('.figure-card') as HTMLElement;
+                const truePicker = card?.querySelector('.hidden-file-picker') as HTMLInputElement;
+                truePicker?.click();
+                return;
+            }
+
+            if (target.classList.contains('btn-remove-image')) {
+                const card = target.closest('.figure-card') as HTMLElement;
+                if (!card) return;
+                const figId = Number(card.getAttribute('data-id'));
+
+                // Stage the deletion instead of immediate DB mutation
+                figureStorage.deleteFigureBinary(figId);
+
+                const oldUrl = activeObjectURLs.get(figId);
+                if (oldUrl) URL.revokeObjectURL(oldUrl);
+                activeObjectURLs.delete(figId);
+
+                store.updateFigure(figId, { filename: '' });
+                batchedRefresh(refreshAll);
+                return;
+            }
+
+            // Clear selection if clicking the background layout area of the figure panel itself
+            if (target === figureContainer) {
+                store.clearFigureSelection();
+                batchedRefresh(refreshAll);
+                return;
+            }
+
+            const figureCard = target.closest('.figure-card') as HTMLElement;
+            if (!figureCard) return;
+
+            const id = Number(figureCard.getAttribute('data-id'));
+            const multiSelect = e.ctrlKey || e.metaKey || e.shiftKey;
+
+            // Check if the user clicked directly inside a form control
+            const isTextInput = target.closest('input, textarea');
+
+            if (isTextInput) {
+                const isAlreadySelected = figureCard.classList.contains('is-selected');
+                if (!isAlreadySelected) {
+                    store.toggleFigureSelection(id, multiSelect);
+                    batchedRefresh(refreshAll);
+                }
+                return;
+            }
+
+            store.toggleFigureSelection(id, multiSelect);
+            batchedRefresh(refreshAll);
+        }, { signal });
+
+        figureContainer.addEventListener('focusout', (e: FocusEvent) => {
+            const target = e.target as HTMLElement;
+
+            if (target.matches('input, textarea')) {
+                const figureCard = target.closest('.figure-card') as HTMLElement;
+                if (!figureCard) return;
+
+                const figId = Number(figureCard.getAttribute('data-id'));
+                const field = target.getAttribute('data-field');
+                const fieldKey = figId && field ? `fig-${figId}-${field}` : null;
+
+                // Verify if focus is genuinely leaving this active figure field session
+                uiState.typing.figures.end(fieldKey, () => {
+                    // Evaluate next focus target context defensively
+                    const destination = e.relatedTarget as HTMLElement | null;
+                    const isClickingControl = destination instanceof Element && (
+                        destination.closest('.figure-card') ||
+                        destination.closest('.key-card') ||
+                        destination.closest('.app-menu-bar') ||
+                        destination.closest('#add-figure-btn') ||
+                        destination.closest('#control-panel-modal')
+                    );
+
+                    // Force an immediate structural refresh unless clicking an active app controller
+                    if (!isClickingControl) {
+                        batchedRefresh(refreshAll);
+                    }
+                });
+            }
+        }, { signal });
+
+
+        // Intercept binary mutations when the operating system file picker dismisses
+        figureContainer.addEventListener('change', async (e) => {
+            const target = e.target as HTMLInputElement;
+            if (target.classList.contains('hidden-file-picker')) {
+                const file = target.files?.[0];
+                if (!file) return;
+
+                if (!file.type.startsWith('image/')) {
+                    showToast('⚠️ Only image files are supported.', 'error');
+                    target.value = '';
+                    return;
+                }
+
+                const card = target.closest('.figure-card') as HTMLElement;
+                const figId = Number(card?.getAttribute('data-id'));
+                if (isNaN(figId)) return;
+
+                // Commit binary stream payload directly into client IndexedDB space
+                figureStorage.uploadFigureBinary(figId, file);
+
+                // Evict and clean stale historical URL footprints from browser system memory
+                const oldUrl = activeObjectURLs.get(figId);
+                if (oldUrl) URL.revokeObjectURL(oldUrl);
+
+                // Populate the sync cache directory immediately using raw object bindings
+                const freshUrl = URL.createObjectURL(file);
+                activeObjectURLs.set(figId, freshUrl);
+
+                // Update the state directly and explicitly
+                store.updateFigure(figId, { filename: file.name });
+                batchedRefresh(refreshAll);
+            }
+        });
+
+        // --- FIGURE DRAG AND DROP ENGINE ---
+        let draggedFigId: number | null = null;
+        let activeFigDropCard: HTMLElement | null = null;
+        let activeFigDropClass: 'drag-drop-above' | 'drag-drop-below' | null = null;
+        let activeFigDropRect: DOMRect | null = null;
+        let cachedFigScrollY = 0;
+
+        const clearFigDropMarkers = () => {
+            if (activeFigDropCard) {
+                activeFigDropCard.classList.remove('drag-drop-above', 'drag-drop-below');
+                activeFigDropCard = null;
+                activeFigDropClass = null;
+                activeFigDropRect = null;
+            }
+        };
+
+        const updateFigTargetTrackers = (clientY: number, cardEl: HTMLElement) => {
+            const actualCard = cardEl.closest('.figure-card') as HTMLElement;
+            if (!actualCard) {
+                clearFigDropMarkers();
+                return;
+            }
+
+            const currentScrollY = figureContainer.scrollTop;
+
+            if (activeFigDropCard !== actualCard || !activeFigDropRect || cachedFigScrollY !== currentScrollY) {
+                activeFigDropRect = actualCard.getBoundingClientRect();
+                cachedFigScrollY = currentScrollY;
+            }
+
+            const relativeMouseY = clientY - activeFigDropRect.top;
+            const currentClass = relativeMouseY < activeFigDropRect.height / 2 ? 'drag-drop-above' : 'drag-drop-below';
+
+            if (activeFigDropCard !== actualCard || activeFigDropClass !== currentClass) {
+                const rectToPreserve = activeFigDropRect;
+                clearFigDropMarkers();
+                actualCard.classList.add(currentClass);
+                activeFigDropCard = actualCard;
+                activeFigDropClass = currentClass;
+                activeFigDropRect = rectToPreserve;
+            }
+        };
+
+        figureContainer.addEventListener('dragstart', (e) => {
+            const target = e.target as HTMLElement;
+            const card = target.closest('.figure-card') as HTMLElement;
+            if (!card) return;
+
+            draggedFigId = Number(card.getAttribute('data-id'));
+            card.classList.remove('is-hovered', 'is-active');
+            requestAnimationFrame(() => {
+                card.style.opacity = '0.4';
+            });
+        }, { signal });
+
+        figureContainer.addEventListener('dragend', (e) => {
+            const target = e.target as HTMLElement;
+            const card = target.closest('.figure-card') as HTMLElement;
+            if (card) card.style.opacity = '1';
+            draggedFigId = null;
+            clearFigDropMarkers();
+        }, { signal });
+
+        figureContainer.addEventListener('dragover', (e: DragEvent) => {
+            if (draggedFigId === null) return;
+            e.preventDefault();
+
+            // Edge-scrolling logic targeting the figure container specifically
+            const containerRect = figureContainer.getBoundingClientRect();
+
+            if (e.clientY - containerRect.top < AUTO_SCROLL_THRESHOLD_PX) {
+                figureContainer.scrollBy(0, -AUTO_SCROLL_SPEED_PX);
+            } else if (containerRect.bottom - e.clientY < AUTO_SCROLL_THRESHOLD_PX) {
+                figureContainer.scrollBy(0, AUTO_SCROLL_SPEED_PX);
+            }
+
+            updateFigTargetTrackers(e.clientY, e.target as HTMLElement);
+        }, { signal });
+
+        figureContainer.addEventListener('dragleave', (e: DragEvent) => {
+            const target = e.relatedTarget as HTMLElement;
+            if (!target || !figureContainer.contains(target)) {
+                clearFigDropMarkers();
+            }
+        }, { signal });
+
+        figureContainer.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const target = e.target as HTMLElement;
+            const card = target.closest('.figure-card') as HTMLElement;
+
+            if (!card || draggedFigId === null) return;
+
+            const targetFigId = Number(card.getAttribute('data-id'));
+            if (draggedFigId === targetFigId) return;
+
+            const position = card.classList.contains('drag-drop-above') ? 'above' : 'below';
+
+            const figures = store.getFigures();
+            const srcIdx = figures.findIndex(f => f.id === draggedFigId);
+            let targetIdx = figures.findIndex(f => f.id === targetFigId);
+
+            if (srcIdx === -1 || targetIdx === -1) return;
+
+            // Shift index logic based on array splicing behavior
+            if (position === 'below') {
+                targetIdx = srcIdx < targetIdx ? targetIdx : targetIdx + 1;
+            } else {
+                targetIdx = srcIdx < targetIdx ? targetIdx - 1 : targetIdx;
+            }
+
+            if (srcIdx !== targetIdx) {
+                store.reorderFigures(srcIdx, targetIdx);
+                batchedRefresh(refreshAll);
+            }
+        }, { signal });
+    }
+
     // Centralized Drag and Form Text Highlight Mitigation
-    container.addEventListener('focusin', (e) => {
+    keyContainer.addEventListener('focusin', (e) => {
         const target = e.target as HTMLElement;
 
         if (target.matches('input, textarea')) {
@@ -154,7 +435,7 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     }, { signal });
 
     // Centralized Serialization Execution Focusout
-    container.addEventListener('focusout', (e: FocusEvent) => {
+    keyContainer.addEventListener('focusout', (e: FocusEvent) => {
         const target = e.target as HTMLElement;
 
         if (target.matches('input, textarea')) {
@@ -167,20 +448,20 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             const fieldKey = id && field ? `${id}-${field}` : null;
 
             // Verify if focus is genuinely leaving the active field session.
-            const isActualSessionEnd = currentEditingFieldKey !== null && currentEditingFieldKey === fieldKey;
+            uiState.typing.couplets.end(fieldKey, () => {
+                store.clearActiveCouplet();
 
-            // Only run side-effects and teardowns if this is a genuine session end
-            if (isActualSessionEnd) {
-                typingSessionActive = false;
-                currentEditingFieldKey = null;
-
-                // Clear any pending debounce timers
-                if (typingTimeoutId !== null) {
-                    clearTimeout(typingTimeoutId);
-                    typingTimeoutId = null;
+                // Encode any [fig: N] tokens that the debounce may not have reached
+                if (field && field !== 'dest1' && field !== 'dest2' && id !== null) {
+                    const currentCouplet = store.getKey().find(c => c.id === id);
+                    if (currentCouplet) {
+                        const rawValue = currentCouplet[field as keyof Omit<Couplet, 'id'>] as string;
+                        const encodedValue = store.encodeFigureTokens(rawValue);
+                        if (encodedValue !== rawValue) {
+                            store.updateCouplet(id, { [field]: encodedValue } as Partial<Omit<Couplet, 'id'>>);
+                        }
+                    }
                 }
-
-                store.clearActiveCard();
 
                 // Trigger the warning toast if the field has an unresolved destination
                 if (target.classList.contains('input-error') && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) && card) {
@@ -193,15 +474,14 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
                 const isClickingControl = destination instanceof Element && (
                     destination.closest('.key-card') ||
                     destination.closest('.app-menu-bar') ||
-                    destination.closest('#add-couplet-btn') || // Safe lookup for children/spans inside the button
+                    destination.closest('#add-couplet-btn') ||
                     destination.closest('#control-panel-modal')
                 );
 
-                // Defer layout updates only if the user isn't interacting with app controls
                 if (!isClickingControl) {
                     batchedRefresh(refreshAll);
                 }
-            }
+            });
         }
     }, { signal });
 
@@ -233,13 +513,13 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     }, { signal });
 
     // Centralized HTML5 Drag-and-Drop Operations
-    container.addEventListener('dragstart', (e) => {
+    keyContainer.addEventListener('dragstart', (e) => {
         const target = e.target as HTMLElement;
         const card = target.closest('.key-card') as HTMLElement;
         if (!card) return;
 
         const id = Number(card.getAttribute('data-id'));
-        store.startDragging(id);
+        store.startDraggingCouplet(id);
         card.classList.remove('is-hovered', 'is-active');
         requestAnimationFrame(() => {
             card.style.opacity = '0.4';
@@ -251,67 +531,21 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
             activeDropCard.classList.remove('drag-drop-above', 'drag-drop-below');
             activeDropCard = null;
             activeDropClass = null;
-            activeDropRect = null; // Purge layout metric cache
+            activeDropRect = null;
         }
     };
 
-    container.addEventListener('dragend', (e) => {
-        const target = e.target as HTMLElement;
-        const card = target.closest('.key-card') as HTMLElement;
-        if (!card) return;
-
-        card.style.opacity = '1';
-        store.stopDragging();
-        clearDropMarkers();
-    }, { signal });
-
-    container.addEventListener('dragover', (e: DragEvent) => {
-        e.preventDefault();
-
-        // --- EDGE AUTO-SCROLL LOGIC ---
-        if (e.clientY < AUTO_SCROLL_THRESHOLD_PX) {
-            // Cursor is near the top of the viewport
-            window.scrollBy(0, -AUTO_SCROLL_SPEED_PX);
-        } else if (window.innerHeight - e.clientY < AUTO_SCROLL_THRESHOLD_PX) {
-            // Cursor is near the bottom of the viewport
-            window.scrollBy(0, AUTO_SCROLL_SPEED_PX);
-        }
-        updateTargetTrackers(e.clientY, e.target as HTMLElement);
-    }, { signal });
-
-    container.addEventListener('dragleave', (e: DragEvent) => {
-        const target = e.relatedTarget as HTMLElement;
-        if (!target || !container.contains(target)) {
-            clearDropMarkers();
-        }
-    }, { signal });
-
-    container.addEventListener('drop', (e) => {
-        e.preventDefault();
-        const target = e.target as HTMLElement;
-        const card = target.closest('.key-card') as HTMLElement;
-        if (!card) return;
-        const coupletId = Number(card.getAttribute('data-id'));
-        if (store.draggedId === null || store.draggedId === coupletId) return;
-
-        // Unified source of truth: Read directly from the target card's layout classes
-        const position: 'above' | 'below' = card.classList.contains('drag-drop-above') ? 'above' : 'below';
-
-        store.reorderCouplets(store.draggedId, coupletId, position);
-        batchedRefresh(refreshAll);
-    }, { signal });
-
+    // Moved before dragover so the reference is declared before the closure that uses it.
     const updateTargetTrackers = (clientY: number, cardEl: HTMLElement) => {
-        const actualCard = cardEl.classList.contains('key-card') ? cardEl : cardEl.closest('.key-card') as HTMLElement;
+        const actualCard = cardEl.closest('.key-card') as HTMLElement;
 
         if (!actualCard) {
             clearDropMarkers();
             return;
         }
 
-        const currentScrollY = window.scrollY;
+        const currentScrollY = keyContainer.scrollTop;
 
-        // Invalidate cache if switching cards, missing rect, OR if the page scrolled
         if (activeDropCard !== actualCard || !activeDropRect || cachedScrollY !== currentScrollY) {
             activeDropRect = actualCard.getBoundingClientRect();
             cachedScrollY = currentScrollY;
@@ -320,7 +554,6 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         const relativeMouseY = clientY - activeDropRect.top;
         const currentClass = relativeMouseY < activeDropRect.height / 2 ? 'drag-drop-above' : 'drag-drop-below';
 
-        // Only update the DOM if the target layout or position state actually altered
         if (activeDropCard !== actualCard || activeDropClass !== currentClass) {
             const rectToPreserve = activeDropRect;
 
@@ -333,15 +566,57 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         }
     };
 
+    keyContainer.addEventListener('dragend', (e) => {
+        const target = e.target as HTMLElement;
+        const card = target.closest('.key-card') as HTMLElement;
+        if (!card) return;
 
-    // ==========================================
-    // MENU BAR ACTION DISPATCHERS
-    // ==========================================
+        card.style.opacity = '1';
+        store.stopDraggingCouplet();
+        clearDropMarkers();
+    }, { signal });
+
+    keyContainer.addEventListener('dragover', (e: DragEvent) => {
+        if (store.draggedCoupletId === null) return;
+        e.preventDefault();
+
+        const containerRect = keyContainer.getBoundingClientRect();
+
+        if (e.clientY - containerRect.top < AUTO_SCROLL_THRESHOLD_PX) {
+            keyContainer.scrollBy(0, -AUTO_SCROLL_SPEED_PX);
+        } else if (containerRect.bottom - e.clientY < AUTO_SCROLL_THRESHOLD_PX) {
+            keyContainer.scrollBy(0, AUTO_SCROLL_SPEED_PX);
+        }
+
+        updateTargetTrackers(e.clientY, e.target as HTMLElement);
+    }, { signal });
+
+    keyContainer.addEventListener('dragleave', (e: DragEvent) => {
+        const target = e.relatedTarget as HTMLElement;
+        if (!target || !keyContainer.contains(target)) {
+            clearDropMarkers();
+        }
+    }, { signal });
+
+    keyContainer.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const target = e.target as HTMLElement;
+        const card = target.closest('.key-card') as HTMLElement;
+        if (!card) return;
+        const coupletId = Number(card.getAttribute('data-id'));
+        if (store.draggedCoupletId === null || store.draggedCoupletId === coupletId) return;
+
+        const position: 'above' | 'below' = card.classList.contains('drag-drop-above') ? 'above' : 'below';
+
+        store.reorderCouplets(store.draggedCoupletId, coupletId, position);
+        batchedRefresh(refreshAll);
+    }, { signal });
 
     // --- FILE MENU ACTION BINDINGS ---
-    document.querySelector('#cmd-save')?.addEventListener('click', () => {
+    document.querySelector('#cmd-save')?.addEventListener('click', async () => {
         try {
-            // Simple, clean state instruction
+            await figureStorage.commitStagedChanges();
+
             store.saveToStorage();
             showToast("💾 Changes saved to Browser Local Storage!", "success");
             batchedRefresh(refreshAll);
@@ -368,7 +643,13 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
     const hiddenInput = document.querySelector('#file-import-hidden') as HTMLInputElement;
 
+    let isImporting = false;
+
     document.querySelector('#cmd-trigger-import')?.addEventListener('click', () => {
+        if (isImporting) {
+            showToast("⚠️ An import is currently in progress. Please wait.", "error");
+            return;
+        }
         hiddenInput?.click();
     }, { signal });
 
@@ -377,6 +658,8 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         if (!file) return;
 
         try {
+            isImporting = true;
+
             const fileText = await file.text();
             const rawData = JSON.parse(fileText);
             const importResult = store.importJsonData(rawData);
@@ -386,11 +669,37 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
                 return;
             }
 
+            if (importResult.importedFigures) {
+                for (const fig of importResult.importedFigures) {
+                    if (fig.binaryData) {
+                        try {
+                            // Using the browser's native fetch API to elegantly decode base64 strings
+                            const response = await fetch(fig.binaryData);
+                            const blob = await response.blob();
+
+                            figureStorage.uploadFigureBinary(fig.id, blob);
+
+                            const oldUrl = activeObjectURLs.get(fig.id);
+                            if (oldUrl) URL.revokeObjectURL(oldUrl);
+
+                            const freshUrl = URL.createObjectURL(blob);
+                            activeObjectURLs.set(fig.id, freshUrl);
+                        } catch (err) {
+                            console.error(`Failed to parse binary data for figure ${fig.id}`);
+                        }
+                    }
+                }
+
+                await figureStorage.commitStagedChanges();
+                store.saveToStorage();
+            }
+
             showToast("Key configuration data imported successfully!", "success");
             batchedRefresh(refreshAll);
         } catch (err) {
             alert("Malformed JSON structure: Unable to parse file stream.");
         } finally {
+            isImporting = false;
             if (hiddenInput) hiddenInput.value = '';
         }
     }, { signal });
@@ -401,18 +710,22 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
 
     // --- EDIT MENU ACTION BINDINGS ---
     document.querySelector('#cmd-undo')?.addEventListener('click', () => {
+        uiState.typing.couplets.clearTimer();
+        uiState.typing.figures.clearTimer();
         if (store.undo()) batchedRefresh(refreshAll);
     }, { signal });
 
     document.querySelector('#cmd-redo')?.addEventListener('click', () => {
+        uiState.typing.couplets.clearTimer();
+        uiState.typing.figures.clearTimer();
         if (store.redo()) batchedRefresh(refreshAll);
     }, { signal });
 
     document.querySelector('#cmd-cut')?.addEventListener('click', () => {
-        const selectedCount = store.getSelectedIds().size;
+        const selectedCount = store.getSelectedCoupletIds().size;
         if (selectedCount > 0) {
             if (confirm(`Confirm cutting ${selectedCount} highlighted step(s) to clipboard?`)) {
-                store.cutSelectedCards();
+                store.cutSelectedCouplets();
                 showToast(`Cut ${selectedCount} step(s) to clipboard.`, 'success');
                 batchedRefresh(refreshAll);
             }
@@ -420,9 +733,9 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     }, { signal });
 
     document.querySelector('#cmd-copy')?.addEventListener('click', () => {
-        const selectedCount = store.getSelectedIds().size;
+        const selectedCount = store.getSelectedCoupletIds().size;
         if (selectedCount > 0) {
-            store.copySelectedCards();
+            store.copySelectedCouplets();
             showToast(`Copied ${selectedCount} step(s) to clipboard.`, 'success');
             batchedRefresh(refreshAll);
         }
@@ -437,18 +750,35 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
     }, { signal });
 
     document.querySelector('#cmd-delete')?.addEventListener('click', () => {
-        const selectedCount = store.getSelectedIds().size;
-        if (selectedCount > 0) {
+        const selectedKeyCount = store.getSelectedCoupletIds().size;
+        const selectedFigCount = store.getSelectedFigureIds().size;
+        if (selectedKeyCount > 0) {
             if (confirm("Confirm removing highlighted key steps?")) {
-                store.deleteSelected();
-                showToast(`Deleted ${selectedCount} step(s).`, 'success');
+                store.deleteSelectedCouplets();
+                showToast(`Deleted ${selectedKeyCount} step(s).`, 'success');
+                batchedRefresh(refreshAll);
+            }
+        }
+        if (selectedFigCount > 0) {
+            if (confirm("Confirm removing highlighted figures?")) {
+                const figIdsToDelete = new Set(store.getSelectedFigureIds());
+                store.deleteSelectedFigures();
+                figIdsToDelete.forEach(id => {
+                    // Stage the deletion
+                    figureStorage.deleteFigureBinary(id);
+
+                    const url = activeObjectURLs.get(id);
+                    if (url) URL.revokeObjectURL(url);
+                    activeObjectURLs.delete(id);
+                });
+                showToast(`Deleted ${selectedFigCount} figure(s).`, 'success');
                 batchedRefresh(refreshAll);
             }
         }
     }, { signal });
 
     document.querySelector('#cmd-swap')?.addEventListener('click', () => {
-        if (store.getSelectedIds().size > 0) {
+        if (store.getSelectedCoupletIds().size > 0) {
             if (store.swapSelectedCouplets()) {
                 showToast("Swapped choice configurations.", "success");
                 batchedRefresh(refreshAll);
@@ -456,13 +786,13 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         }
     }, { signal });
 
-    // Handles both the application layout button and Edit Menu item mappings safely
     const triggerAppendAction = () => createNewCoupletWithFocus(store, refreshAll);
     document.querySelector('#cmd-add')?.addEventListener('click', triggerAppendAction, { signal });
     document.querySelector('#add-couplet-btn')?.addEventListener('click', triggerAppendAction, { signal });
 
     document.querySelector('#cmd-clear')?.addEventListener('click', () => {
         store.clearSelection();
+        store.clearFigureSelection();
         batchedRefresh(refreshAll);
     }, { signal });
 
@@ -471,16 +801,148 @@ export function setupGlobalListeners(store: KeyStore, refreshAll: () => void) {
         batchedRefresh(refreshAll);
     }, { signal });
 
+    // --- View Menu action bindings ---
+    document.querySelector('#cmd-toggle-figures')?.addEventListener('click', () => {
+        uiState.toggleFigures();
+        batchedRefresh(refreshAll);
+    }, { signal });
+
+    document.querySelector('#cmd-toggle-images')?.addEventListener('click', () => {
+        uiState.toggleImages();
+        batchedRefresh(refreshAll);
+    }, { signal });
+
+    document.querySelector('#cmd-toggle-print')?.addEventListener('click', () => {
+        uiState.togglePrint();
+        batchedRefresh(refreshAll);
+    }, { signal });
 
     // --- TOOLS MENU ACTION BINDINGS ---
-    document.querySelector('#cmd-reorder')?.addEventListener('click', () => {
-        store.autoOrder();
+    document.querySelector('#cmd-reorder-couplets')?.addEventListener('click', () => {
+        store.autoOrderCouplets();
         showToast("Key steps reordered with shorter branches first!", "success");
         batchedRefresh(refreshAll);
     }, { signal });
 
+    document.querySelector('#cmd-reorder-figures')?.addEventListener('click', () => {
+        store.autoOrderFigures();
+        showToast("Figures reordered to match key reference order!", "success");
+        batchedRefresh(refreshAll);
+    }, { signal });
+
+    // menu navigation
+    const menuBar = document.querySelector('.app-menu-bar') as HTMLElement;
+    if (menuBar) {
+        const getTriggers = () => Array.from(menuBar.querySelectorAll('.menu-trigger')) as HTMLButtonElement[];
+
+        const getDropdownActions = (trigger: HTMLButtonElement) => {
+            const dropdown = trigger.nextElementSibling;
+            if (!dropdown) return [];
+            return Array.from(dropdown.querySelectorAll('.dropdown-action:not(:disabled)')) as HTMLButtonElement[];
+        };
+
+        const closeAllMenus = () => {
+            getTriggers().forEach(t => t.setAttribute('aria-expanded', 'false'));
+        };
+
+        menuBar.addEventListener('click', (e) => {
+            const target = e.target as HTMLElement;
+            const trigger = target.closest('.menu-trigger') as HTMLButtonElement | null;
+
+            if (trigger) {
+                e.stopPropagation();
+                const isExpanded = trigger.getAttribute('aria-expanded') === 'true';
+                closeAllMenus();
+                trigger.setAttribute('aria-expanded', isExpanded ? 'false' : 'true');
+            }
+        }, { signal });
+
+        document.addEventListener('click', () => closeAllMenus(), { signal });
+
+        menuBar.addEventListener('keydown', (e) => {
+            const activeEl = document.activeElement as HTMLButtonElement;
+            if (!activeEl) return;
+
+            const isTrigger = activeEl.classList.contains('menu-trigger');
+            const isAction = activeEl.classList.contains('dropdown-action');
+
+            if (!isTrigger && !isAction) return;
+
+            const triggers = getTriggers();
+            const currentTrigger = isTrigger ? activeEl : (activeEl.closest('.menu-item')?.querySelector('.menu-trigger') as HTMLButtonElement);
+            const actions = getDropdownActions(currentTrigger);
+            const triggerIndex = triggers.indexOf(currentTrigger);
+            const actionIndex = actions.indexOf(activeEl);
+
+            // eventController.ts - Inside menuBar.addEventListener('keydown', ...)
+            switch (e.key) {
+                case 'ArrowRight': {
+                    e.preventDefault();
+                    if (triggers.length === 0) return;
+                    const nextTrigger = triggers[(triggerIndex + 1) % triggers.length];
+                    const wasExpandedRight = currentTrigger?.getAttribute('aria-expanded') === 'true';
+                    closeAllMenus();
+                    nextTrigger.focus();
+                    if (wasExpandedRight) {
+                        nextTrigger.setAttribute('aria-expanded', 'true');
+                    }
+                    break;
+                }
+                case 'ArrowLeft': {
+                    e.preventDefault();
+                    if (triggers.length === 0) return;
+                    const prevTrigger = triggers[(triggerIndex - 1 + triggers.length) % triggers.length];
+                    const wasExpandedLeft = currentTrigger?.getAttribute('aria-expanded') === 'true';
+                    closeAllMenus();
+                    prevTrigger.focus();
+                    if (wasExpandedLeft) {
+                        prevTrigger.setAttribute('aria-expanded', 'true');
+                    }
+                    break;
+                }
+                case 'ArrowDown': {
+                    e.preventDefault();
+                    if (isTrigger && currentTrigger) {
+                        currentTrigger.setAttribute('aria-expanded', 'true');
+                        if (actions.length > 0) actions[0].focus();
+                    } else if (isAction && actions.length > 0) {
+                        const nextAction = actions[(actionIndex + 1) % actions.length];
+                        nextAction.focus();
+                    }
+                    break;
+                }
+                case 'ArrowUp': {
+                    e.preventDefault();
+                    if (isAction && actions.length > 0) {
+                        const prevAction = actions[(actionIndex - 1 + actions.length) % actions.length];
+                        prevAction.focus();
+                    }
+                    break;
+                }
+                case 'Escape': {
+                    e.preventDefault();
+                    closeAllMenus();
+                    currentTrigger?.focus(); // Added safety chaining
+                    break;
+                }
+                case 'Enter':
+                case ' ': {
+                    if (isTrigger && currentTrigger) {
+                        e.preventDefault();
+                        const isExpanded = currentTrigger.getAttribute('aria-expanded') === 'true';
+                        currentTrigger.setAttribute('aria-expanded', isExpanded ? 'false' : 'true');
+                        if (!isExpanded && actions.length > 0) {
+                            setTimeout(() => actions[0].focus(), 10);
+                        }
+                    }
+                    break;
+                }
+            }
+        }, { signal });
+    }
+
     return () => {
-        controller.abort(); // Cleans up all secondary global listeners safely
+        controller.abort();
     };
 }
 
@@ -491,10 +953,11 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
     const handleKeyDown = (e: KeyboardEvent) => {
         const activeModal = document.querySelector('.modal-overlay[style*="display: flex"]') as HTMLElement | null;
         if (activeModal) {
-            // If they press Escape, let it fall through or close the modal
-            if (e.key === 'Escape') return;
-
-            // Block the Tab key entirely from leaking into the underlying canvas cards
+            if (e.key === 'Escape') {
+                activeModal.style.display = 'none';
+                e.preventDefault();
+                return;
+            }
             if (e.key === 'Tab') {
                 e.preventDefault();
                 return;
@@ -508,14 +971,12 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
             activeElement.hasAttribute('contenteditable')
         );
 
-        // DUAL-CONTEXT CRITICAL COMMANDS
         if (hasModifier && e.key.toLowerCase() === 's') {
             e.preventDefault();
             document.querySelector<HTMLButtonElement>('#cmd-save')?.click();
             return;
         }
 
-        // CANVAS CONTEXT COMMANDS (Only if NOT typing)
         if (!isTyping) {
             if (e.altKey && e.key.toLowerCase() === 'n') {
                 e.preventDefault();
@@ -559,14 +1020,6 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
 
             if (e.key === 'Escape') {
                 e.preventDefault();
-                const openModal = document.querySelector('.modal-overlay[style*="display: flex"]') as HTMLElement | null;
-
-                // closes dialogs
-                if (openModal) {
-                    openModal.style.display = 'none';
-                    return;
-                }
-
                 document.querySelector<HTMLButtonElement>('#cmd-clear')?.click();
                 return;
             }
@@ -589,6 +1042,18 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
                 executePaste(store, refreshAll, position);
                 return;
             }
+
+            if (hasModifier && e.shiftKey && e.key.toLowerCase() === 'f') {
+                e.preventDefault();
+                document.querySelector<HTMLButtonElement>('#cmd-toggle-figures')?.click();
+                return;
+            }
+
+            if (hasModifier && e.shiftKey && e.key.toLowerCase() === 'p') {
+                e.preventDefault();
+                document.querySelector<HTMLButtonElement>('#cmd-toggle-print')?.click();
+                return;
+            }
         }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -598,14 +1063,10 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
     };
 }
 
-/**
- * Shared helper utility to cleanly insert a couplet and transfer user focus.
- */
 function createNewCoupletWithFocus(store: KeyStore, refreshAll: () => void) {
     const newId = store.addCouplet();
     refreshAll();
 
-    // Query DOM layout context to automatically transfer focus to the new card's first field
     const newCard = document.querySelector(`.key-card[data-id="${newId}"]`);
     const textarea = newCard?.querySelector('textarea[data-field="alt1"]') as HTMLTextAreaElement | null;
 
@@ -616,23 +1077,22 @@ function createNewCoupletWithFocus(store: KeyStore, refreshAll: () => void) {
 
 function executePaste(store: KeyStore, refreshAll: () => void, position: 'above' | 'below') {
     let targetId: number | undefined = undefined;
-    const selectedIds = store.getSelectedIds();
+    const selectedIds = store.getSelectedCoupletIds();
     const key = store.getKey();
 
     const visibleSelection = key.filter(couplet => selectedIds.has(couplet.id));
 
     if (visibleSelection.length > 0) {
         targetId = position === 'below'
-            ? visibleSelection[visibleSelection.length - 1].id // Bottom-most visible selected card
-            : visibleSelection[0].id;                          // Top-most visible selected card
+            ? visibleSelection[visibleSelection.length - 1].id
+            : visibleSelection[0].id;
     } else if (key.length > 0) {
         targetId = position === 'above'
             ? key[0].id
             : key[key.length - 1].id;
     }
 
-    // If the key is completely empty,  initialize the first cards normally.
-    if (store.pasteCards(targetId, position)) {
+    if (store.pasteCouplets(targetId, position)) {
         const locationText = visibleSelection.length > 0
             ? `${position} selection`
             : (position === 'above' ? 'at the beginning' : 'at the end');

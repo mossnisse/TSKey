@@ -1,5 +1,5 @@
 // utils.ts
-import type { Couplet } from './store.ts';
+import type { Couplet, Figure } from './store.ts';
 
 const HTML_ESCAPE_MAP: Record<string, string> = {
     '&': '&amp;',
@@ -27,20 +27,15 @@ export function triggerFileDownload(content: string, filename: string, mimeType:
 
             const binaryBytes = new TextEncoder().encode(content);
 
-            const chunks: string[] = [];
-            const chunkSize = 8192; // 8KB chunks are safe and highly optimized by JS engines
-
+            let binaryString = '';
+            const chunkSize = 8192;
             for (let i = 0; i < binaryBytes.length; i += chunkSize) {
-                let chunkString = '';
-                const end = Math.min(i + chunkSize, binaryBytes.length);
-                for (let j = i; j < end; j++) {
-                    chunkString += String.fromCharCode(binaryBytes[j]);
-                }
-                chunks.push(chunkString);
+                const chunk = binaryBytes.subarray(i, i + chunkSize);
+                // @ts-ignore
+                binaryString += String.fromCharCode.apply(null, chunk);
             }
 
-            const encodedContent = btoa(chunks.join(''));
-
+            const encodedContent = btoa(binaryString);
             const safeMimeType = mimeType.toLowerCase().includes('charset=')
                 ? mimeType
                 : `${mimeType};charset=utf-8`;
@@ -52,22 +47,38 @@ export function triggerFileDownload(content: string, filename: string, mimeType:
         downloadAnchor.href = url;
         downloadAnchor.download = filename;
 
+        downloadAnchor.style.display = 'none';
+        downloadAnchor.style.pointerEvents = 'none';
+
         document.body.appendChild(downloadAnchor);
         downloadAnchor.click();
-    } finally {
+
+        // FIX: Capture local references for the asynchronous macro-task queue
+        const finalAnchor = downloadAnchor;
+        const finalUrl = url;
+
+        // Give the browser's download manager 200ms to process the stream safely
+        setTimeout(() => {
+            if (finalAnchor && document.body.contains(finalAnchor)) {
+                document.body.removeChild(finalAnchor);
+            }
+            if (finalUrl && finalUrl.startsWith('blob:')) {
+                URL.revokeObjectURL(finalUrl);
+            }
+        }, 200);
+
+    } catch (globalError) {
+        console.error("An unhandled exception occurred during file synthesis/download processing:", globalError);
+        
+        // Fallback: If an error occurs BEFORE scheduling the timeout, clean up immediately
         if (downloadAnchor && document.body.contains(downloadAnchor)) {
             document.body.removeChild(downloadAnchor);
         }
-
         if (url && url.startsWith('blob:')) {
-            const urlToRevoke = url;
-            setTimeout(() => {
-                URL.revokeObjectURL(urlToRevoke);
-            }, 250);
+            URL.revokeObjectURL(url);
         }
     }
 }
-
 /**
  * Sniffs client-side agent configurations to check if the target ecosystem
  */
@@ -121,6 +132,33 @@ export function isValidCoupletArray(data: any): data is Couplet[] {
 }
 
 /**
+ * Checks if the json is a valid array of Figures.
+ */
+export function isValidFigureArray(data: any): data is Figure[] {
+    if (!Array.isArray(data)) return false;
+
+    const seenIds = new Set<number>();
+
+    return data.every(item => {
+        const hasValidShape =
+            item &&
+            typeof item === 'object' &&
+            typeof item.id === 'number' &&
+            item.id > 0 &&
+            typeof item.filename === 'string' &&
+            typeof item.caption === 'string';
+
+        if (!hasValidShape) return false;
+
+        // Prevent duplicate figure references
+        if (seenIds.has(item.id)) return false;
+
+        seenIds.add(item.id);
+        return true;
+    });
+}
+
+/**
  * Generates an O(1) hash map connecting unique Couplet record IDs to their current dynamic arrays coordinates.
  */
 export function buildIdToIndexMap(key: readonly Couplet[]): Map<number, number> {
@@ -139,9 +177,19 @@ export function getStepNumberById(idToIndexMap: Map<number, number>, targetId: n
 }
 
 /**
+ * Generates an O(1) hash map connecting unique Figure record IDs to their sequential 1-based display numbers.
+ */
+export function buildFigureIdToDisplayNumMap(figures: readonly Figure[]): Map<number, number> {
+    const map = new Map<number, number>();
+    figures.forEach((fig, index) => {
+        map.set(fig.id, index + 1);
+    });
+    return map;
+}
+
+/**
  * functions for handling Destination links
  */
-
 export interface DestinationResolution {
     inputValue: string;    // Raw text to bind inside edit input boxes
     printText: string;     // Formatted layout text for the publication panel

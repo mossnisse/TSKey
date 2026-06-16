@@ -1,9 +1,10 @@
 // store.ts
-import { isValidCoupletArray } from './utils.ts';
+import { isValidCoupletArray, isValidFigureArray } from './utils.ts';
 
 export const APP_NAME = 'TSKey';
 export const APP_VERSION = '0.0.1';
 export const STORAGE_KEY = 'dichotomous_key';
+export const FIGURES_STORAGE_KEY = 'dichotomous_key_figures';
 
 export interface Couplet {
     id: number;    // Permanent internal unique ID
@@ -15,6 +16,12 @@ export interface Couplet {
     taxa2: string;
 }
 
+export interface Figure {
+    id: number; // Permanent internal unique ID
+    filename: string;
+    caption: string;
+}
+
 export interface KeyValidationError {
     severity: 'warning' | 'error';
     message: string;
@@ -22,11 +29,13 @@ export interface KeyValidationError {
 
 interface AppState {
     dichotomousKey: Couplet[];
+    figures: Figure[];
 }
 
 export interface ImportResult {
     success: boolean;
     errors: string[];
+    importedFigures?: any[];
 }
 
 export class KeyStore {
@@ -39,17 +48,23 @@ export class KeyStore {
     private savedHistoryIndex: number = 0;
     private currentHistoryIndex: number = 0;
 
-    private selectedIds: Set<number> = new Set();
+    private selectedCoupletIds: Set<number> = new Set();
     private _draggedId: number | null = null;
-    private activeEditingCardId: number | null = null;
+    private activeCoupletId: number | null = null;
 
     // Shared clipboard state structure
     private clipboardBuffer: Couplet[] = [];
     private clipboardMode: 'copy' | 'cut' = 'copy';
     private cutIncomingLinksBuffer: Array<{ sourceId: number, field: 'link1' | 'link2', targetOldId: number }> = [];
 
-    constructor(initialKey: Couplet[], maxHistoryLimit = 100) {
-        this.state = { dichotomousKey: initialKey };
+    //Figures
+    private selectedFigureIds: Set<number> = new Set();
+
+    constructor(initialKey: Couplet[], initialFigures: Figure[] = [], maxHistoryLimit = 100) {
+        this.state = {
+            dichotomousKey: initialKey,
+            figures: initialFigures
+        };
         this.maxHistoryLimit = maxHistoryLimit;
         this.hasUncommittedChanges = false;
     }
@@ -62,36 +77,41 @@ export class KeyStore {
         return this.state.dichotomousKey;
     }
 
-    public getSelectedIds(): ReadonlySet<number> {
-        return this.selectedIds;
+    public getFigures(): readonly Figure[] {
+        return this.state.figures || [];
     }
 
-    public setActiveCard(id: number | null) {
-        this.activeEditingCardId = id;
+    public getSelectedCoupletIds(): ReadonlySet<number> {
+        return this.selectedCoupletIds;
     }
 
-    public clearActiveCard() {
-        this.activeEditingCardId = null;
+    public setActiveCouplet(id: number | null) {
+        this.activeCoupletId = id;
     }
 
-    public getActiveCardId(): number | null {
-        return this.activeEditingCardId;
+    public clearActiveCouplet() {
+        this.activeCoupletId = null;
     }
 
-    public get draggedId(): number | null {
+    public getActiveCoupletId(): number | null {
+        return this.activeCoupletId;
+    }
+
+    public get draggedCoupletId(): number | null {
         return this._draggedId;
     }
 
-    public startDragging(id: number) {
+    public startDraggingCouplet(id: number) {
         this._draggedId = id;
     }
 
-    public stopDragging() {
+    public stopDraggingCouplet() {
         this._draggedId = null;
     }
 
     public markSaved() {
         this.savedHistoryIndex = this.currentHistoryIndex;
+        this.hasUncommittedChanges = false;
     }
 
     public hasUnsavedChanges(): boolean {
@@ -107,8 +127,8 @@ export class KeyStore {
         this.currentHistoryIndex = 0;
         this.savedHistoryIndex = 0;
         this.hasUncommittedChanges = false;
-        this.selectedIds.clear();
-        this.activeEditingCardId = null;
+        this.selectedCoupletIds.clear();
+        this.activeCoupletId = null;
         this._draggedId = null;
     }
 
@@ -122,10 +142,18 @@ export class KeyStore {
         }
 
         this.redoStack = [];
-        this.undoStack.push({ dichotomousKey: [...this.state.dichotomousKey] });
+        this.undoStack.push({
+            dichotomousKey: this.state.dichotomousKey.map(c => ({ ...c })),
+            figures: (this.state.figures || []).map(f => ({ ...f }))
+        });
 
         if (this.undoStack.length > this.maxHistoryLimit) {
             this.undoStack.shift();
+            if (this.savedHistoryIndex > 0) {
+                this.savedHistoryIndex--;
+            } else {
+                this.savedHistoryIndex = -1;
+            }
         }
 
         this.currentHistoryIndex++;
@@ -135,7 +163,10 @@ export class KeyStore {
     public undo(): boolean {
         if (this.undoStack.length === 0) return false;
 
-        this.redoStack.push({ dichotomousKey: [...this.state.dichotomousKey] });
+        this.redoStack.push({
+            dichotomousKey: this.state.dichotomousKey.map(c => ({ ...c })),
+            figures: (this.state.figures || []).map(f => ({ ...f }))
+        });
 
         if (this.redoStack.length > this.maxHistoryLimit) {
             this.redoStack.shift();
@@ -158,7 +189,10 @@ export class KeyStore {
     public redo(): boolean {
         if (this.redoStack.length === 0) return false;
 
-        this.undoStack.push({ dichotomousKey: [...this.state.dichotomousKey] });
+        this.undoStack.push({
+            dichotomousKey: this.state.dichotomousKey.map(c => ({ ...c })),
+            figures: (this.state.figures || []).map(f => ({ ...f }))
+        });
 
         if (this.undoStack.length > this.maxHistoryLimit) {
             this.undoStack.shift();
@@ -184,8 +218,8 @@ export class KeyStore {
         return this.redoStack.length > 0;
     }
 
-    public copySelectedCards(): void {
-        const selectedIds = this.getSelectedIds();
+    public copySelectedCouplets(): void {
+        const selectedIds = this.getSelectedCoupletIds();
         if (selectedIds.size === 0) return;
 
         this.clipboardBuffer = this.state.dichotomousKey
@@ -216,11 +250,11 @@ export class KeyStore {
 
             if (couplet.link1) {
                 if (!map.has(couplet.link1)) map.set(couplet.link1, []);
-                map.get(couplet.link1)!.push(`#${humanLabel}a`);
+                map.get(couplet.link1)!.push(`${humanLabel}a`);
             }
             if (couplet.link2) {
                 if (!map.has(couplet.link2)) map.set(couplet.link2, []);
-                map.get(couplet.link2)!.push(`#${humanLabel}b`);
+                map.get(couplet.link2)!.push(`${humanLabel}b`);
             }
         });
 
@@ -350,7 +384,7 @@ export class KeyStore {
     /**
     * Pastes cards from the clipboard buffer.
     */
-    public pasteCards(targetId?: number, position: 'above' | 'below' = 'below'): boolean {
+    public pasteCouplets(targetId?: number, position: 'above' | 'below' = 'below'): boolean {
         if (this.clipboardBuffer.length === 0) return false;
 
         this.saveCheckpoint();
@@ -421,14 +455,14 @@ export class KeyStore {
         return true;
     }
 
-    public cutSelectedCards(): void {
-        const selectedIds = this.getSelectedIds();
+    public cutSelectedCouplets(): void {
+        const selectedIds = this.getSelectedCoupletIds();
         if (selectedIds.size === 0) return;
 
         this.saveCheckpoint();
 
-        if (this.activeEditingCardId !== null && selectedIds.has(this.activeEditingCardId)) {
-            this.activeEditingCardId = null;
+        if (this.activeCoupletId !== null && selectedIds.has(this.activeCoupletId)) {
+            this.activeCoupletId = null;
         }
 
         // Copy selected items to the buffer
@@ -456,18 +490,18 @@ export class KeyStore {
                 return updated;
             });
 
-        this.selectedIds = new Set();
+        this.selectedCoupletIds = new Set();
         this.hasUncommittedChanges = true;
     }
 
-    public deleteSelected() {
-        if (this.selectedIds.size === 0) return;
+    public deleteSelectedCouplets() {
+        if (this.selectedCoupletIds.size === 0) return;
         this.saveCheckpoint();
 
-        const removedIds = this.selectedIds;
+        const removedIds = this.selectedCoupletIds;
 
-        if (this.activeEditingCardId !== null && removedIds.has(this.activeEditingCardId)) {
-            this.activeEditingCardId = null;
+        if (this.activeCoupletId !== null && removedIds.has(this.activeCoupletId)) {
+            this.activeCoupletId = null;
         }
 
         this.state.dichotomousKey = this.state.dichotomousKey
@@ -478,7 +512,7 @@ export class KeyStore {
                 link2: removedIds.has(c.link2) ? 0 : c.link2,
             }));
 
-        this.selectedIds = new Set();
+        this.selectedCoupletIds = new Set();
         this.hasUncommittedChanges = true;
     }
 
@@ -486,13 +520,12 @@ export class KeyStore {
     * Swaps alternative choices, target links, and taxa fields for all selected cards.
     */
     public swapSelectedCouplets(): boolean {
-        if (this.selectedIds.size === 0) return false;
+        if (this.selectedCoupletIds.size === 0) return false;
 
         this.saveCheckpoint();
-
         let modified = false;
         this.state.dichotomousKey = this.state.dichotomousKey.map(couplet => {
-            if (this.selectedIds.has(couplet.id)) {
+            if (this.selectedCoupletIds.has(couplet.id)) {
                 modified = true;
                 return {
                     ...couplet,
@@ -526,10 +559,6 @@ export class KeyStore {
             console.warn(`Aborted reordering: srcIdx (${srcIdx}) or targetIdx (${targetIdx}) was invalid.`);
             return false;
         }
-        if (targetIdx === -1) {
-            console.warn(`Aborted reordering: Target ID (${targetId}) not found.`);
-            return false;
-        }
 
         this.saveCheckpoint();
         const [movedItem] = arr.splice(srcIdx, 1);
@@ -551,7 +580,7 @@ export class KeyStore {
 
     // order they key with shorter branches first. unresolved links are implied to have longer branches the higher number, 
     // empty/broken links are implied to be long. When the branches are the same length they should not be changed.
-    public autoOrder() {
+    public autoOrderCouplets() {
         if (this.state.dichotomousKey.length === 0) return;
 
         this.saveCheckpoint();
@@ -723,40 +752,252 @@ export class KeyStore {
         this.hasUncommittedChanges = true;
     }
 
+    /* figure mutators */
+
+    // ==========================================
+    // FIGURE SELECTION & DELETION STATE
+    // ==========================================
+
+    public getSelectedFigureIds(): ReadonlySet<number> {
+        return this.selectedFigureIds;
+    }
+
+    /**
+     * Toggles a figure's selection state. Supports multi-select via Ctrl/Cmd/Shift modifiers.
+     */
+    public toggleFigureSelection(id: number, multiSelect: boolean) {
+        if (!multiSelect) {
+            const wasSelected = this.selectedFigureIds.has(id);
+            const sizeBefore = this.selectedFigureIds.size;
+            this.selectedFigureIds.clear();
+            if (!wasSelected || sizeBefore > 1) {
+                this.selectedFigureIds.add(id);
+            }
+        } else {
+            if (this.selectedFigureIds.has(id)) {
+                this.selectedFigureIds.delete(id);
+            } else {
+                this.selectedFigureIds.add(id);
+            }
+        }
+    }
+
+    public clearFigureSelection() {
+        this.selectedFigureIds.clear();
+    }
+
+    /**
+     * Deletes all currently selected figures and saves an undo history checkpoint.
+     */
+    public deleteSelectedFigures() {
+        if (this.selectedFigureIds.size === 0) return;
+
+        this.saveCheckpoint(); // Integrates directly with your Undo/Redo engine
+        const removedIds = this.selectedFigureIds;
+
+        // Filter out selected figures
+        this.state.figures = this.state.figures.filter(f => !removedIds.has(f.id));
+
+        // Clear the selection set
+        this.selectedFigureIds = new Set();
+        this.hasUncommittedChanges = true;
+    }
+
+    public addFigure(filename: string, caption: string): number {
+        this.saveCheckpoint();
+
+        const figures = this.state.figures || [];
+        const maxId = figures.reduce((max, f) => Math.max(max, f.id), 0);
+        const nextId = maxId + 1;
+
+        this.state.figures = [
+            ...figures,
+            { id: nextId, filename, caption }
+        ];
+
+        this.hasUncommittedChanges = true;
+        return nextId;
+    }
+
+    /**
+    * Patches mutating attributes inside a targeting unique figure structure.
+    */
+    public updateFigure(id: number, fields: Partial<Omit<Figure, 'id'>>) {
+        if (!this.hasUncommittedChanges) {
+            this.saveCheckpoint();
+        }
+
+        const index = this.state.figures.findIndex(f => f.id === id);
+        if (index === -1) return;
+
+        const updatedFigure = { ...this.state.figures[index], ...fields };
+        const newFigures = [...this.state.figures];
+        newFigures[index] = updatedFigure;
+        this.state.figures = newFigures;
+
+        this.hasUncommittedChanges = true;
+    }
+
+    public reorderFigures(srcIdx: number, targetIdx: number) {
+        if (!this.state.figures || srcIdx === targetIdx) return;
+        this.saveCheckpoint();
+
+        const arr = [...this.state.figures];
+        const [movedItem] = arr.splice(srcIdx, 1);
+        arr.splice(targetIdx, 0, movedItem);
+
+        this.state.figures = arr;
+        this.hasUncommittedChanges = true;
+    }
+
+    public autoOrderFigures(): void {
+        const figures = this.state.figures || [];
+        if (figures.length === 0 || this.state.dichotomousKey.length === 0) return;
+
+        // Create a history checkpoint before mutating state
+        this.saveCheckpoint();
+
+        // Build optimized lookup maps matching how resolveTextReferences functions
+        const idToFig = new Map<number, Figure>(figures.map(f => [f.id, f]));
+        const filenameToFig = new Map<string, Figure>(
+            figures.map(f => [f.filename.trim().toLowerCase(), f])
+        );
+
+        const orderedFigures: Figure[] = [];
+        const seenFigureIds = new Set<number>();
+
+        // Scan couplets sequentially in their current key order
+        for (const couplet of this.state.dichotomousKey) {
+            const fieldsToScan = [couplet.alt1, couplet.alt2, couplet.taxa1, couplet.taxa2];
+
+            for (const text of fieldsToScan) {
+                if (!text) continue;
+
+                let match: RegExpExecArray | null;
+
+                // Primary: match new storage format [figID: N] — value is always an internal ID
+                const idTokenRegex = /\[figID:\s*(\d+)\s*\]/gi;
+                while ((match = idTokenRegex.exec(text)) !== null) {
+                    const id = parseInt(match[1].trim(), 10);
+                    const matchedFig = idToFig.get(id);
+                    if (matchedFig && !seenFigureIds.has(matchedFig.id)) {
+                        seenFigureIds.add(matchedFig.id);
+                        orderedFigures.push(matchedFig);
+                    }
+                }
+
+                // Legacy: match old [fig: VALUE] format — numeric = old ID, text = filename
+                const legacyTokenRegex = /\[fig:\s*(.*?)\s*\]/gi;
+                while ((match = legacyTokenRegex.exec(text)) !== null) {
+                    const trimmedValue = match[1].trim();
+                    let matchedFig: Figure | undefined = undefined;
+
+                    const targetId = Number(trimmedValue);
+                    if (!isNaN(targetId) && idToFig.has(targetId)) {
+                        matchedFig = idToFig.get(targetId);
+                    } else {
+                        const lowercaseFilename = trimmedValue.toLowerCase();
+                        if (filenameToFig.has(lowercaseFilename)) {
+                            matchedFig = filenameToFig.get(lowercaseFilename);
+                        }
+                    }
+
+                    if (matchedFig && !seenFigureIds.has(matchedFig.id)) {
+                        seenFigureIds.add(matchedFig.id);
+                        orderedFigures.push(matchedFig);
+                    }
+                }
+            }
+        }
+
+        // Cleanup Sweep: Append any figures that aren't referenced anywhere to the end
+        for (const fig of figures) {
+            if (!seenFigureIds.has(fig.id)) {
+                orderedFigures.push(fig);
+            }
+        }
+
+        // Commit the reordered array back to state and activate change tracking
+        this.state.figures = orderedFigures;
+        this.hasUncommittedChanges = true;
+    }
+
     public importJsonData(rawData: unknown): ImportResult {
         try {
-            let targetKeyData: unknown = null;
+            let importedKey: Couplet[] | null = null;
+            let importedFigures: Figure[] = [];
 
-            // Sniff payload topology to extract data payload safely  
-            if (rawData && typeof rawData === 'object' && 'data' in rawData && 'metadata' in rawData) {
-                targetKeyData = (rawData as { data: unknown }).data;
-            } else {
-                targetKeyData = rawData;
+            if (
+                rawData &&
+                typeof rawData === 'object' &&
+                'data' in rawData &&
+                (rawData as any).data &&
+                typeof (rawData as any).data === 'object'
+            ) {
+                const payload = (rawData as any).data;
+
+                if (
+                    'key' in payload &&
+                    isValidCoupletArray(payload.key)
+                ) {
+                    importedKey = payload.key;
+
+                    if (
+                        'figures' in payload &&
+                        isValidFigureArray(payload.figures)
+                    ) {
+                        importedFigures = payload.figures;
+                    }
+                }
             }
 
-            // Run our shared strict schema validation check against targeted data records
-            if (!isValidCoupletArray(targetKeyData)) {
+            // Legacy format
+            if (!importedKey && isValidCoupletArray(rawData)) {
+                importedKey = rawData;
+            }
+
+            if (!importedKey) {
                 return {
                     success: false,
-                    errors: ["The uploaded file does not match the required schema structure (missing properties or incorrect types)."]
+                    errors: [
+                        'The uploaded file does not match the required schema structure.'
+                    ]
                 };
             }
 
+            let extractedFiguresWithBinary: any[] = [];
+            if (importedFigures && importedFigures.length > 0) {
+                extractedFiguresWithBinary = [...importedFigures];
+
+                // Strip the bulky binary data out of the application state timeline
+                importedFigures = importedFigures.map((f: any) => {
+                    const { binaryData, ...cleanFigure } = f;
+                    return cleanFigure as Figure;
+                });
+            }
+
             this.saveCheckpoint();
-            this.state.dichotomousKey = targetKeyData;
+            this.state.dichotomousKey = importedKey;
+            this.state.figures = importedFigures;
+
             this.clearSelection();
-            this.activeEditingCardId = null;
+            this.activeCoupletId = null;
             this.hasUncommittedChanges = true;
 
             return {
                 success: true,
-                errors: []
+                errors: [],
+                importedFigures: extractedFiguresWithBinary
             };
 
         } catch (e) {
             return {
                 success: false,
-                errors: [e instanceof Error ? e.message : "Unknown engine exception during parsing the json file."]
+                errors: [
+                    e instanceof Error
+                        ? e.message
+                        : 'Unknown engine exception during parsing the json file.'
+                ]
             };
         }
     }
@@ -764,39 +1005,72 @@ export class KeyStore {
     public saveToStorage(): void {
         const currentData = this.state.dichotomousKey;
 
-        if (!Array.isArray(currentData) || currentData.length === 0) {
-            throw new Error("Cannot save an empty or corrupted data structure.");
+        if (!Array.isArray(currentData)) {
+            throw new Error("Cannot save corrupted data structure.");
         }
 
         localStorage.setItem(STORAGE_KEY, JSON.stringify(currentData));
+        localStorage.setItem(FIGURES_STORAGE_KEY, JSON.stringify(this.state.figures));
         this.markSaved();
     }
 
-    public loadFromStorage(fallbackData: Couplet[] = []): boolean {
+    public loadFromStorage(fallbackData: Couplet[] = [], fallbackFigures: Figure[] = []): boolean {
         try {
-            const rawStorage = localStorage.getItem(STORAGE_KEY);
+            const localKey = localStorage.getItem(STORAGE_KEY);
+            const localFigures = localStorage.getItem(FIGURES_STORAGE_KEY);
 
-            if (!rawStorage) {
-                this.state = { dichotomousKey: fallbackData };
+            // 1. Initialize a local holding variable with our fallback figures parameter
+            let loadedFigures: Figure[] = fallbackFigures;
+
+            // 2. Safely attempt to parse the saved figures if they exist
+            if (localFigures) {
+                try {
+                    const parsedFigures = JSON.parse(localFigures);
+                    if (isValidFigureArray(parsedFigures)) {
+                        loadedFigures = parsedFigures;
+                    } else {
+                        console.warn('loadFromStorage: figures in localStorage failed schema validation; using fallback.');
+                    }
+                } catch (e) {
+                    console.error("Error parsing figures data from storage", e);
+                }
+            }
+
+            // 3. If there is no key structure, apply full defaults and exit
+            if (!localKey) {
+                this.state = {
+                    dichotomousKey: fallbackData,
+                    figures: loadedFigures
+                };
                 this.resetTrackingContext();
                 return false;
             }
 
-            const parsed = JSON.parse(rawStorage);
+            const parsedKey = JSON.parse(localKey);
 
-            if (isValidCoupletArray(parsed)) {
-                this.state = { dichotomousKey: parsed };
+            // 4. Validate the key data structure schema before committing to state
+            if (isValidCoupletArray(parsedKey)) {
+                this.state = {
+                    dichotomousKey: parsedKey,
+                    figures: loadedFigures // Successfully assign loaded figures here
+                };
                 this.resetTrackingContext();
                 return true;
             } else {
                 console.warn('Invalid data schema detected in localStorage. Loading fallbacks.');
-                this.state = { dichotomousKey: fallbackData };
+                this.state = {
+                    dichotomousKey: fallbackData,
+                    figures: fallbackFigures
+                };
                 this.resetTrackingContext();
                 return false;
             }
         } catch (error) {
             console.warn('Corrupted localStorage JSON format. Loading fallbacks.', error);
-            this.state = { dichotomousKey: fallbackData };
+            this.state = {
+                dichotomousKey: fallbackData,
+                figures: fallbackFigures
+            };
             this.resetTrackingContext();
             return false;
         }
@@ -808,32 +1082,32 @@ export class KeyStore {
 
     public toggleSelection(id: number, multiSelect: boolean) {
         if (multiSelect) {
-            if (this.selectedIds.has(id)) {
-                this.selectedIds.delete(id);
+            if (this.selectedCoupletIds.has(id)) {
+                this.selectedCoupletIds.delete(id);
             } else {
-                this.selectedIds.add(id);
+                this.selectedCoupletIds.add(id);
             }
         } else {
-            this.selectedIds = new Set([id]);
+            this.selectedCoupletIds = new Set([id]);
         }
     }
 
     public clearSelection(): void {
-        if (this.selectedIds.size === 0) return; // Optimize: don't trigger updates if already empty
-        this.selectedIds.clear();
+        if (this.selectedCoupletIds.size === 0) return; // Optimize: don't trigger updates if already empty
+        this.selectedCoupletIds.clear();
     }
 
     public setSelectionToSingle(cardId: number): void {
-        this.selectedIds.clear();
-        this.selectedIds.add(cardId);
+        this.selectedCoupletIds.clear();
+        this.selectedCoupletIds.add(cardId);
     }
 
     public setSelectionBatch(cardIds: number[] | Set<number>): void {
-        this.selectedIds = new Set(cardIds);
+        this.selectedCoupletIds = new Set(cardIds);
     }
 
     public selectAll() {
-        this.selectedIds = new Set(this.state.dichotomousKey.map(c => c.id));
+        this.selectedCoupletIds = new Set(this.state.dichotomousKey.map(c => c.id));
     }
 
     // ==========================================
@@ -849,6 +1123,9 @@ export class KeyStore {
         const idMap = new Map<number, Couplet>();
         const idToIndexMap = new Map<number, number>();
         const inboundParentMap = new Map<number, Set<number>>();
+
+        // Collect all valid internal figure IDs currently present in the state
+        const figureIds = new Set(this.state.figures.map(f => f.id));
 
         key.forEach((c, index) => {
             idMap.set(c.id, c);
@@ -887,6 +1164,60 @@ export class KeyStore {
                 issues.push({ severity: 'warning', message: 'Choice B is incomplete. Assign a Taxa or destination step.' });
             }
 
+            // --- Unresolved Figure Reference Diagnostics ---
+            const FIG_ID_REGEX = /\[figID:\s*(\d+)\s*\]/gi;
+            const FIG_RAW_REGEX = /\[fig:\s*([^\]]+)\s*\]/gi;
+
+            // Check Choice A
+            if (c.alt1) {
+                const missingIds1: number[] = [];
+                for (const match of c.alt1.matchAll(FIG_ID_REGEX)) {
+                    const figId = parseInt(match[1], 10);
+                    if (!figureIds.has(figId) && !missingIds1.includes(figId)) {
+                        missingIds1.push(figId);
+                    }
+                }
+                missingIds1.forEach(id => {
+                    issues.push({ severity: 'warning', message: `Choice A references a missing or deleted figure (Internal ID: ${id}).` });
+                });
+
+                const unresolved1: string[] = [];
+                for (const match of c.alt1.matchAll(FIG_RAW_REGEX)) {
+                    const token = match[1].trim();
+                    if (!unresolved1.includes(token)) {
+                        unresolved1.push(token);
+                    }
+                }
+                unresolved1.forEach(token => {
+                    issues.push({ severity: 'warning', message: `Choice A references an unresolved figure reference '[fig: ${token}]'.` });
+                });
+            }
+
+            // Check Choice B
+            if (c.alt2) {
+                const missingIds2: number[] = [];
+                for (const match of c.alt2.matchAll(FIG_ID_REGEX)) {
+                    const figId = parseInt(match[1], 10);
+                    if (!figureIds.has(figId) && !missingIds2.includes(figId)) {
+                        missingIds2.push(figId);
+                    }
+                }
+                missingIds2.forEach(id => {
+                    issues.push({ severity: 'warning', message: `Choice B references a missing or deleted figure (Internal ID: ${id}).` });
+                });
+
+                const unresolved2: string[] = [];
+                for (const match of c.alt2.matchAll(FIG_RAW_REGEX)) {
+                    const token = match[1].trim();
+                    if (!unresolved2.includes(token)) {
+                        unresolved2.push(token);
+                    }
+                }
+                unresolved2.forEach(token => {
+                    issues.push({ severity: 'warning', message: `Choice B references an unresolved figure reference '[fig: ${token}]'.` });
+                });
+            }
+
             if (index > 0 && !reachableNodes.has(c.id)) {
                 issues.push({ severity: 'warning', message: 'Orphaned: This step is unreachable from Step #1.' });
             }
@@ -918,5 +1249,111 @@ export class KeyStore {
         });
 
         return diagnostics;
+    }
+
+    /**
+     * Converts all figure reference tokens in text to rendered print labels like (Fig. 3).
+     * Handles two formats:
+     *   [figID: 106]  — new storage format (internal ID, always stable)
+     *   [fig: value]  — legacy format (numeric value treated as old ID, text as filename)
+     */
+    public resolveTextReferences(text: string, idToDisplayNum: Map<number, number>): string {
+        if (!text) return text;
+
+
+        const filenameToDisplayNum = new Map<string, number>();
+        this.state.figures.forEach(fig => {
+            if (!fig.filename) return;
+            const displayNum = idToDisplayNum.get(fig.id);
+            if (displayNum !== undefined) {
+                filenameToDisplayNum.set(fig.filename.trim().toLowerCase(), displayNum);
+            }
+        });
+
+        // resolve new storage format [figID: N] — value is always an internal ID
+        text = text.replace(/\[figID:\s*(\d+)\s*\]/gi, (_match, value) => {
+            const id = parseInt(value.trim(), 10);
+            const displayNum = idToDisplayNum.get(id);
+            return displayNum !== undefined
+                ? `(Fig. ${displayNum})`
+                : `[Broken Fig: ID ${id}]`;
+        });
+
+        // remove?
+        // resolve legacy format [fig: value] — numeric = old ID, text = filename
+        text = text.replace(/\[fig:\s*(.*?)\s*\]/gi, (_match, value) => {
+            const trimmedValue = value.trim();
+
+            const targetId = Number(trimmedValue);
+            if (!isNaN(targetId) && idToDisplayNum.has(targetId)) {
+                return `(Fig. ${idToDisplayNum.get(targetId)})`;
+            }
+
+            const lowercaseFilename = trimmedValue.toLowerCase();
+            if (filenameToDisplayNum.has(lowercaseFilename)) {
+                return `(Fig. ${filenameToDisplayNum.get(lowercaseFilename)})`;
+            }
+
+            return `[Broken Fig: ${trimmedValue}]`;
+        });
+
+        return text;
+    }
+
+    /**
+     * Converts user-written [fig: N] (display number) or [fig: filename.jpg] tokens
+     * into stable internal storage tokens [figID: N] that survive figure reordering.
+     * Incomplete or unresolvable tokens are left unchanged.
+     */
+    public encodeFigureTokens(text: string): string {
+        const figures = this.state.figures;
+        const displayNumToId = new Map<number, number>();
+        const filenameToId = new Map<string, number>();
+
+        figures.forEach((fig, index) => {
+            displayNumToId.set(index + 1, fig.id);
+            filenameToId.set(fig.filename.trim().toLowerCase(), fig.id);
+        });
+
+        return text.replace(/\[fig:\s*(.*?)\s*\]/gi, (match, value) => {
+            const trimmed = value.trim();
+
+            // Try as a 1-based display number (the primary user-facing format)
+            const displayNum = parseInt(trimmed, 10);
+            if (!isNaN(displayNum) && String(displayNum) === trimmed && displayNumToId.has(displayNum)) {
+                return `[figID: ${displayNumToId.get(displayNum)!}]`;
+            }
+
+            // Try as a filename (case-insensitive)
+            const fig = filenameToId.get(trimmed.toLowerCase());
+            if (fig !== undefined) {
+                return `[figID: ${fig}]`;
+            }
+
+            // Cannot resolve — keep the original token so the user sees the problem
+            return match;
+        });
+    }
+
+    /**
+     * Converts stored [figID: N] tokens back to user-readable [fig: N] display numbers
+     * for rendering inside editor textareas. The display number reflects the figure's
+     * current position and automatically updates when figures are reordered.
+     */
+    public decodeTextReferencesForEditor(text: string): string {
+        const figures = this.state.figures;
+
+        const idToDisplayNum = new Map<number, number>();
+        figures.forEach((fig, index) => {
+            idToDisplayNum.set(fig.id, index + 1);
+        });
+
+        return text.replace(/\[figID:\s*(\d+)\s*\]/gi, (match, value) => {
+            const id = parseInt(value.trim(), 10);
+            const displayNum = idToDisplayNum.get(id);
+            return displayNum !== undefined
+                ? `[fig: ${displayNum}]`
+                : match; // Keep broken token visible so the user knows it needs attention
+        });
     }
 }

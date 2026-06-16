@@ -1,6 +1,8 @@
 // uiRenderer.ts
 import { KeyStore, APP_NAME, APP_VERSION } from './store.ts';
-import { escapeHTML, buildIdToIndexMap, resolveDestination, IS_MAC } from './utils.ts';
+import { UIStateStore } from './uiState.ts';
+import { escapeHTML, buildIdToIndexMap, resolveDestination, IS_MAC, buildFigureIdToDisplayNumMap } from './utils.ts';
+import { figureStorage, activeObjectURLs } from './db.ts';
 
 // ==========================================
 // CORE LAYOUT HELPERS
@@ -27,106 +29,131 @@ function syncField(parent: HTMLElement, selector: string, value: string, forceUp
 export function initializeShell(appDiv: HTMLDivElement) {
     appDiv.innerHTML = `
     <div class="app-shell">
-      <div class="app-menu-bar">
+      <div class="app-menu-bar" role="menubar" aria-label="Application Menu">
         
-        <div class="menu-item">
-          <button class="menu-trigger">File</button>
-          <div class="menu-dropdown">
-            <button id="cmd-save" class="dropdown-action">
+        <div class="menu-item" role="none">
+          <button id="menu-file-trigger" class="menu-trigger" 
+                  role="menuitem" 
+                  aria-haspopup="menu" 
+                  aria-expanded="false">File</button>
+          
+          <div class="menu-dropdown" role="menu" aria-labelledby="menu-file-trigger">
+            <button id="cmd-save" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>💾 Save to local Browser Memory</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘S' : 'Ctrl+S'}</span>
             </button>
-            <div class="menu-divider"></div>
-            <button id="cmd-trigger-import" class="dropdown-action">
+            <div class="menu-divider" role="separator"></div>
+            <button id="cmd-trigger-import" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>📤 Import JSON Dataset...</span>
             </button>
-            <button id="cmd-export-json" class="dropdown-action">
+            <button id="cmd-export-json" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>📥 Export Native JSON File...</span>
             </button>
             <div class="menu-divider"></div>
-            <button id="cmd-export-text" class="dropdown-action">
+            <button id="cmd-export-text" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>📄 Export to Plain Text file(.txt)</span>
             </button>
-            <button id="cmd-export-html" class="dropdown-action">
+            <button id="cmd-export-html" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🌐 Export to Web Page (.html)</span>
             </button>
-            <button id="cmd-export-latex" class="dropdown-action">
+            <button id="cmd-export-latex" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🔏 Export to LaTeX Document (.tex)</span>
             </button>
           </div>
         </div>
 
-        <div class="menu-item">
-          <button class="menu-trigger">Edit</button>
-          <div class="menu-dropdown">
-            <button id="cmd-undo" class="dropdown-action">
+        <div class="menu-item" role="none">
+          <button class="menu-trigger" role="menuitem" aria-haspopup="menu" aria-expanded="false">Edit</button>
+          <div class="menu-dropdown" role="menu">
+            <button id="cmd-undo" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🔄 Undo</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘Z' : 'Ctrl+Z'}</span>
             </button>
-            <button id="cmd-redo" class="dropdown-action">
+            <button id="cmd-redo" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🔁 Redo</span>
-              <span class="menu-shortcut">${IS_MAC ? '⌘Y' : 'Ctrl+Y'}</span>
+              <span class="menu-shortcut">${IS_MAC ? '⌘Y / ⌘⇧Z' : 'Ctrl+Y / Ctrl+Shift+Z'}</span>
             </button>
-            <div class="menu-divider"></div>
-            <button id="cmd-cut" class="dropdown-action">
+            <div class="menu-divider" role="separator"></div>
+            <button id="cmd-cut" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>✂️ Cut Selected Cards</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘X' : 'Ctrl+X'}</span>
             </button>
-            <button id="cmd-copy" class="dropdown-action">
+            <button id="cmd-copy" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>📋 Copy Selected Cards</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘C' : 'Ctrl+C'}</span>
             </button>
-            <button id="cmd-paste-below" class="dropdown-action">
+            <button id="cmd-paste-below" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>📥 Paste steps below selection</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘V' : 'Ctrl+V'}</span>
             </button>
-            <button id="cmd-paste-above" class="dropdown-action">
+            <button id="cmd-paste-above" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>📥 Paste above selections</span>
-              <span class="menu-shortcut">${IS_MAC ? '⌘V' : 'Shift+Ctrl+V'}</span>
+              <span class="menu-shortcut">${IS_MAC ? 'Shift+⌘V' : 'Shift+Ctrl+V'}</span>
             </button>
-            <button id="cmd-delete" class="dropdown-action">
+            <button id="cmd-delete" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🗑️ Delete Selected Cards</span>
               <span class="menu-shortcut">Delete</span>
             </button>
-            <button id="cmd-swap" class="dropdown-action">
+            <button id="cmd-swap" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🔄 Swap place for Alternatives</span>
               <span class="menu-shortcut">${IS_MAC ? 'Option+S' : 'Alt+S'}</span>
             </button>
-            <button id="cmd-add" class="dropdown-action">
+            <button id="cmd-add" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>➕ Append New Step</span>
               <span class="menu-shortcut">Alt+N</span>
             </button>
-            <button id="cmd-clear" class="dropdown-action">
+            <button id="cmd-clear" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🧼 Clear Selections</span>
               <span class="menu-shortcut">Esc</span>
             </button>
-            <button id="cmd-select-all" class="dropdown-action">
+            <button id="cmd-select-all" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>☑️ Select all steps</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘A' : 'Ctrl+A'}</span>
             </button>
           </div>
         </div>
 
-        <div class="menu-item">
-          <button class="menu-trigger">Tools</button>
-          <div class="menu-dropdown">
-            <button id="cmd-reorder" class="dropdown-action">
+        <div class="menu-item" role="none">
+          <button class="menu-trigger" role="menuitem" aria-haspopup="menu" aria-expanded="false">View</button>
+          <div class="menu-dropdown" role="menu">
+            <button id="cmd-toggle-figures" class="dropdown-action" role="menuitem" tabindex="-1">
+              <span>🖼️ Hide Figures Panel</span>
+              <span class="menu-shortcut">Ctrl+Shift+F</span>
+            </button>
+            <button id="cmd-toggle-images" class="dropdown-action" role="menuitem" tabindex="-1">
+              <span>🖼️ Hide Images in Figures Panel</span>
+            </button>
+            <button id="cmd-toggle-print" class="dropdown-action" role="menuitem" tabindex="-1">
+              <span>🖨️ Hide Print Preview</span>
+              <span class="menu-shortcut">Ctrl+Shift+P</span>
+            </button>
+           
+          </div>
+        </div>
+
+        <div class="menu-item" role="none">
+          <button class="menu-trigger" role="menuitem" aria-haspopup="menu" aria-expanded="false">Tools</button>
+          <div class="menu-dropdown" role="menu">
+            <button id="cmd-reorder-couplets" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🔄 Order Steps</span>
+            </button>
+            <button id="cmd-reorder-figures" class="dropdown-action" role="menuitem" tabindex="-1">
+              <span>🔄 Order Figures</span>
             </button>
           </div>
         </div>
 
-        <div class="menu-item">
-          <button class="menu-trigger">Window</button>
-          <div class="menu-dropdown">
-            <button id="cmd-open-shortcuts" class="dropdown-action">
+        <div class="menu-item" role="none">
+          <button class="menu-trigger" role="menuitem" aria-haspopup="menu" aria-expanded="false">Window</button>
+          <div class="menu-dropdown" role="menu">
+            <button id="cmd-open-shortcuts" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>⌨️ Keyboard Shortcuts...</span>
             </button>
-            <button id="cmd-open-options" class="dropdown-action">
+            <button id="cmd-open-options" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🔧 Options & Settings...</span>
             </button>
-            <div class="menu-divider"></div>
-            <button id="cmd-open-about" class="dropdown-action">
+            <div class="menu-divider" role="separator"></div>
+            <button id="cmd-open-about" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>ℹ️ About ${APP_NAME}...</span>
             </button>
           </div>
@@ -137,16 +164,23 @@ export function initializeShell(appDiv: HTMLDivElement) {
     
       <div class="main-layout">
         <div class="editor-column">
-          <h2 class="heading-editor">Key Node Canvas</h2>
+          <h2 class="heading-editor">Key Editor</h2>
           <div id="editor-container"></div>
           <button id="add-couplet-btn" class="btn-add-block">+ Add New Step Block (Alt+N)</button>
         </div>
 
+        <div class="figure-column">
+          <h2>Figure References</h2>
+          <div id="figure-container"></div>
+          <button id="add-figure-btn" class="btn-add-block">+ Add New Figure Attachment</button>
+        </div>
+
         <div class="print-column">
-          <h2>Live Publication Render</h2>
+          <h2>Live Publication View</h2>
           <hr class="hr-print" />
           <div id="print-view-container" class="print-grid"></div>
         </div>
+       
       </div>
     </div>
 
@@ -219,16 +253,27 @@ export function initializeShell(appDiv: HTMLDivElement) {
 }
 
 /**
+ * Syncs DOM panel visibility classes FROM UIStateStore — the single source of truth.
+ * Must be called at the top of every refreshAll() cycle, before any render function.
+ */
+export function applyPanelVisibility(uiState: UIStateStore): void {
+    document.querySelector('.figure-column')?.classList.toggle('is-hidden', uiState.isFiguresHidden);
+    document.querySelector('.print-column')?.classList.toggle('is-hidden', uiState.isPrintHidden);
+}
+
+/**
  * Synchronizes real-time application context for the Menu, disable/enables them.
  */
-export function renderMenu(store: KeyStore) {
+export function renderMenu(store: KeyStore, uiState: UIStateStore) {
     const menuBar = document.querySelector('.app-menu-bar');
     if (!menuBar) return;
 
     const getBtn = (id: string) => document.getElementById(id) as HTMLButtonElement | null;
 
-    const selectedCount = store.getSelectedIds().size;
-    const hasSelection = selectedCount > 0;
+    const selectedCoupletCount = store.getSelectedCoupletIds().size;
+    const selectedFigureCount = store.getSelectedFigureIds().size;
+    const hasSelection = selectedCoupletCount > 0 || selectedFigureCount > 0;
+    const hasCoupletSelection = selectedCoupletCount > 0;
     const hasKeyElements = store.getKey().length > 0;
     const hasClipboard = store.hasClipboardData();
 
@@ -251,7 +296,7 @@ export function renderMenu(store: KeyStore) {
     const clearBtn = getBtn('cmd-clear');
 
     // Tools submenu
-    const reorderBtn = getBtn('cmd-reorder');
+    const reorderBtn = getBtn('cmd-reorder-couplets');
 
     // Mutate UI elements according to live state rules safely
     if (saveBtn) {
@@ -266,13 +311,13 @@ export function renderMenu(store: KeyStore) {
     if (undoBtn) undoBtn.disabled = !store.canUndo;
     if (redoBtn) redoBtn.disabled = !store.canRedo;
 
-    if (cutBtn) cutBtn.disabled = !hasSelection;
-    if (copyBtn) copyBtn.disabled = !hasSelection;
+    if (cutBtn) cutBtn.disabled = !hasCoupletSelection;
+    if (copyBtn) copyBtn.disabled = !hasCoupletSelection;
     if (deleteBtn) {
         deleteBtn.disabled = !hasSelection;
     }
     if (swapBtn) {
-        swapBtn.disabled = !hasSelection;
+        swapBtn.disabled = !hasCoupletSelection;
     }
     if (clearBtn) {
         clearBtn.disabled = !hasSelection;
@@ -282,6 +327,32 @@ export function renderMenu(store: KeyStore) {
     if (pasteBtnAbove) pasteBtnAbove.disabled = !hasClipboard;
 
     if (reorderBtn) reorderBtn.disabled = !hasKeyElements;
+
+    // View menu synchronization — read from UIStateStore, not from the DOM
+    const toggleFiguresBtn = getBtn('cmd-toggle-figures');
+    const toggleImagesBtn = getBtn('cmd-toggle-images');
+    const togglePrintBtn = getBtn('cmd-toggle-print');
+
+    if (toggleFiguresBtn) {
+        const label = toggleFiguresBtn.querySelector('span');
+        if (label) {
+            label.textContent = uiState.isFiguresHidden ? '🖼️ Show Figures Panel' : '🖼️ Hide Figures Panel';
+        }
+    }
+
+    if (toggleImagesBtn) {
+        const label = toggleImagesBtn.querySelector('span');
+        if (label) {
+            label.textContent = uiState.isImagesHidden ? '🖼️ Show Images in Figures Panel' : '🖼️ Hide Images in Figures Panel';
+        }
+    }
+
+    if (togglePrintBtn) {
+        const label = togglePrintBtn.querySelector('span');
+        if (label) {
+            label.textContent = uiState.isPrintHidden ? '🖨️ Show Print Preview' : '🖨️ Hide Print Preview';
+        }
+    }
 }
 
 /**
@@ -293,7 +364,7 @@ export function renderEditorCards(store: KeyStore) {
     if (!container) return;
 
     const key = store.getKey();
-    const selectedIds = store.getSelectedIds();
+    const selectedIds = store.getSelectedCoupletIds();
     const activeDiagnostics = store.runDiagnostics();
 
     const idToIndexMap = buildIdToIndexMap(key);
@@ -301,7 +372,7 @@ export function renderEditorCards(store: KeyStore) {
 
     const existingCards = Array.from(container.querySelectorAll('.key-card')) as HTMLElement[];
     const existingMap = new Map<number, HTMLElement>();
-    
+
     existingCards.forEach(card => {
         const idAttr = card.getAttribute('data-id');
         if (idAttr) existingMap.set(Number(idAttr), card);
@@ -321,7 +392,8 @@ export function renderEditorCards(store: KeyStore) {
         let warningInnerHtml = '';
         cardErrors.forEach(err => {
             const modifierClass = err.severity === 'error' ? 'error-text' : 'warning-text';
-            warningInnerHtml += `<span class="${modifierClass}">⚠️ ${escapeHTML(err.message)}</span>`;
+            // Changed <span> to <div> for block-level stacking
+            warningInnerHtml += `<div class="${modifierClass}">⚠️ ${escapeHTML(err.message)}</div>`;
         });
         const warningBlockHtml = cardErrors.length > 0 ? `<div class="warning-block">${warningInnerHtml}</div>` : '';
 
@@ -339,11 +411,11 @@ export function renderEditorCards(store: KeyStore) {
                 if (badgeEl.textContent !== badgeLabel) badgeEl.textContent = badgeLabel;
             }
 
-            syncField(card, 'textarea[data-field="alt1"]', couplet.alt1);
+            syncField(card, 'textarea[data-field="alt1"]', store.decodeTextReferencesForEditor(couplet.alt1));
             const dest1El = syncField(card, 'input[data-field="dest1"]', dest1.inputValue);
             dest1El?.classList.toggle('input-error', dest1.isUnresolved);
 
-            syncField(card, 'textarea[data-field="alt2"]', couplet.alt2);
+            syncField(card, 'textarea[data-field="alt2"]', store.decodeTextReferencesForEditor(couplet.alt2));
             const dest2El = syncField(card, 'input[data-field="dest2"]', dest2.inputValue);
             dest2El?.classList.toggle('input-error', dest2.isUnresolved);
 
@@ -377,7 +449,7 @@ export function renderEditorCards(store: KeyStore) {
                   <span class="drag-handle">☰</span>
                 </div>
                 <div class="card-row">
-                  <textarea class="input-sync card-textarea" data-field="alt1" placeholder="Enter diagnostic trait details...">${escapeHTML(couplet.alt1)}</textarea>
+                  <textarea class="input-sync card-textarea" data-field="alt1" placeholder="Enter diagnostic trait details...">${escapeHTML(store.decodeTextReferencesForEditor(couplet.alt1))}</textarea>
                   <div class="card-meta-pane">
                     <label class="meta-label">→
                       <input type="text" class="input-sync input-destination ${dest1.isUnresolved ? 'input-error' : ''}" data-field="dest1" placeholder="Taxon or Step #" value="${escapeHTML(dest1.inputValue)}" />
@@ -385,7 +457,7 @@ export function renderEditorCards(store: KeyStore) {
                   </div>
                 </div>
                 <div class="card-row">
-                  <textarea class="input-sync card-textarea" data-field="alt2" placeholder="Enter contrast alternative description...">${escapeHTML(couplet.alt2)}</textarea>
+                  <textarea class="input-sync card-textarea" data-field="alt2" placeholder="Enter contrast alternative description...">${escapeHTML(store.decodeTextReferencesForEditor(couplet.alt2))}</textarea>
                   <div class="card-meta-pane">
                     <label class="meta-label">→
                       <input type="text" class="input-sync input-destination ${dest2.isUnresolved ? 'input-error' : ''}" data-field="dest2" placeholder="Taxon or Step #" value="${escapeHTML(dest2.inputValue)}" />
@@ -401,19 +473,147 @@ export function renderEditorCards(store: KeyStore) {
     existingMap.forEach(card => card.remove());
 }
 
+export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll: () => void) {
+    if (uiState.isFiguresHidden) return;
+
+    const container = document.getElementById('figure-container');
+    if (!container) return;
+
+    const figures = store.getFigures();
+
+    const existingBlocks = Array.from(container.children) as HTMLElement[];
+    const existingMap = new Map<number, HTMLElement>();
+    existingBlocks.forEach(block => {
+        const id = Number(block.getAttribute('data-id'));
+        if (!isNaN(id)) existingMap.set(id, block);
+    });
+
+    figures.forEach((fig, index) => {
+        const displayNum = index + 1;
+        const isSelected = store.getSelectedFigureIds().has(fig.id);
+        let block = existingMap.get(fig.id);
+
+        if (!block) {
+            block = document.createElement('div');
+            block.className = 'figure-card';
+            block.setAttribute('data-id', fig.id.toString());
+            block.draggable = true;
+            block.innerHTML = `
+                <div class="figure-card-header">
+                    <span class="figure-card-title">${displayNum}.</span>
+                </div>
+                
+                <div class="figure-preview-wrapper">
+                    <img class="figure-preview-img" alt="Figure view" style="display: none;" />
+                    <div class="figure-upload-overlay">
+                        <button type="button" class="btn-trigger-upload">Choose Image</button>
+                        <button type="button" class="btn-remove-image" style="display: none;">Remove Image</button>
+                        <input type="file" class="hidden-file-picker" accept="image/*" style="display: none;" />
+                    </div>
+                </div>
+                
+                <div class="figure-field-row">
+                    <label>Filename:</label>
+                    <input type="text" class="input-sync figure-input-filename" data-field="filename" />
+                </div>
+                
+                <div class="figure-field-row">
+                    <label>Caption:</label>
+                    <textarea class="input-sync figure-input-caption" data-field="caption" rows="2"></textarea>
+                </div>
+            `;
+        } else {
+            const labelEl = block.querySelector('.figure-card-title');
+            if (labelEl) labelEl.textContent = `${displayNum}.`;
+            existingMap.delete(fig.id);
+        }
+
+        if (container.children[index] !== block) {
+            container.insertBefore(block, container.children[index] || null);
+        }
+        block.classList.toggle('is-selected', isSelected);
+
+        const previewWrapper = block.querySelector('.figure-preview-wrapper') as HTMLElement;
+        const previewImg = block.querySelector('.figure-preview-img') as HTMLImageElement;
+
+        // --- ASYNC BINARY PREVIEW SYNCHRONIZATION LOOP ---
+        if (uiState.isImagesHidden) {
+            // Hide the entire preview slot to create a compact, text-only layout view
+            if (previewWrapper) previewWrapper.style.display = 'none';
+            if (previewImg) previewImg.style.display = 'none';
+        } else {
+            // Restore default CSS layout when visible
+            if (previewWrapper) previewWrapper.style.display = '';
+
+            const cachedUrl = activeObjectURLs.get(fig.id);
+            const removeBtn = block.querySelector('.btn-remove-image') as HTMLButtonElement | null;
+            
+            if (cachedUrl) {
+                if (previewImg.src !== cachedUrl) {
+                    previewImg.src = cachedUrl;
+                }
+                previewImg.style.display = 'block';
+                if (removeBtn) removeBtn.style.display = 'inline-block';
+            } else {
+                if (!previewImg.hasAttribute('data-loading-state')) {
+                    previewImg.setAttribute('data-loading-state', 'pending');
+                    figureStorage.getFigureBinary(fig.id).then(blob => {
+                        previewImg.removeAttribute('data-loading-state');
+                        if (blob) {
+                            const newUrl = URL.createObjectURL(blob);
+                            activeObjectURLs.set(fig.id, newUrl);
+                            refreshAll(); 
+                        } else {
+                            previewImg.style.display = 'none';
+                            if (removeBtn) removeBtn.style.display = 'none';
+                        }
+                    }).catch(() => {
+                        previewImg.removeAttribute('data-loading-state');
+                        if (removeBtn) removeBtn.style.display = 'none';
+                    });
+                }
+            }
+        }
+
+        // Sync standard form inputs
+        const fileInput = block.querySelector('.figure-input-filename') as HTMLInputElement;
+        if (fileInput && document.activeElement !== fileInput && fileInput.value !== fig.filename) {
+            fileInput.value = fig.filename;
+        }
+
+        const captionInput = block.querySelector('.figure-input-caption') as HTMLTextAreaElement;
+        if (captionInput && document.activeElement !== captionInput && captionInput.value !== fig.caption) {
+            captionInput.value = fig.caption;
+        }
+    });
+
+    existingMap.forEach(block => block.remove());
+    const currentFigIds = new Set(figures.map(f => f.id));
+
+    for (const [id, url] of activeObjectURLs.entries()) {
+        if (!currentFigIds.has(id)) {
+            URL.revokeObjectURL(url);   
+            activeObjectURLs.delete(id); 
+        }
+    }
+}
+
 /**
  * Renders the passive publication presentation view structure.
  */
-export function renderPrintView(store: KeyStore) {
+export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
+    if (uiState.isPrintHidden) return;
+
     const container = document.getElementById('print-view-container');
     if (!container) return;
 
     const key = store.getKey();
     const idToIndexMap = buildIdToIndexMap(key);
+    const figDisplayMap = buildFigureIdToDisplayNumMap(store.getFigures());
 
     const existingBlocks = Array.from(container.querySelectorAll('.print-step-block')) as HTMLElement[];
     const existingMap = new Map<number, HTMLElement>();
-    
+
     existingBlocks.forEach(block => {
         const idAttr = block.getAttribute('data-id');
         if (idAttr) existingMap.set(Number(idAttr), block);
@@ -425,8 +625,8 @@ export function renderPrintView(store: KeyStore) {
         const dest1 = resolveDestination(c.link1, c.taxa1, idToIndexMap);
         const dest2 = resolveDestination(c.link2, c.taxa2, idToIndexMap);
 
-        const val1 = c.alt1 || '___';
-        const val2 = c.alt2 || '___';
+        const val1 = store.resolveTextReferences(c.alt1, figDisplayMap) || '___';
+        const val2 = store.resolveTextReferences(c.alt2, figDisplayMap) || '___';
 
         let block = existingMap.get(c.id);
 
@@ -465,19 +665,16 @@ export function renderPrintView(store: KeyStore) {
             block = document.createElement('div');
             block.className = 'print-step-block';
             block.setAttribute('data-id', c.id.toString());
-            block.style.display = 'contents';
 
             block.innerHTML = `
-                <div class="print-step-num"></div>
+                 <div class="print-step-num"></div>
                 <div class="print-row" data-choice="1">
                   <span class="print-text"></span>
-                  <span class="print-dots"></span>
                   <span class="print-dest"></span>
                 </div>
                 <div class="print-dash">—</div>
                 <div class="print-row" data-choice="2">
                   <span class="print-text"></span>
-                  <span class="print-dots"></span>
                   <span class="print-dest"></span>
                 </div>
                 <div class="print-spacer"></div>
