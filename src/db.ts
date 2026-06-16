@@ -11,12 +11,12 @@ export class WorkspaceDatabase {
     private dbName = 'TSKey_Workspace_DB';
     private projectsStoreName = 'projects';
     private figuresStoreName = 'figures';
-    private dbPromise: Promise<IDBDatabase> | null = null; 
-    
+    private dbPromise: Promise<IDBDatabase> | null = null;
+
     private pendingUploads = new Map<number, Blob>();
     private pendingDeletes = new Set<number>();
     private isCommitting = false;
-    
+
     // Tracks the current contextual workspace to route figure binaries correctly
     public activeProjectTitle = 'Untitled Key';
 
@@ -32,7 +32,7 @@ export class WorkspaceDatabase {
                 }
                 if (!db.objectStoreNames.contains(this.figuresStoreName)) {
                     // Keys for figures will be a composite array: [title, figureId]
-                    db.createObjectStore(this.figuresStoreName); 
+                    db.createObjectStore(this.figuresStoreName);
                 }
             };
             request.onsuccess = () => resolve(request.result);
@@ -46,13 +46,13 @@ export class WorkspaceDatabase {
     // PROJECT WORKSPACE API
     // ==========================================
 
-    public async getProjectList(): Promise<{name: string, lastModified: number}[]> {
+    public async getProjectList(): Promise<{ name: string, lastModified: number }[]> {
         const db = await this.getDB();
         return new Promise((resolve, reject) => {
             const tx = db.transaction(this.projectsStoreName, 'readonly');
             const store = tx.objectStore(this.projectsStoreName);
             const request = store.getAll();
-            
+
             request.onsuccess = () => {
                 const projects = request.result.map(p => ({
                     name: p.title,
@@ -93,13 +93,17 @@ export class WorkspaceDatabase {
     }
 
     public async deleteProject(title: string): Promise<void> {
+        if (title === this.activeProjectTitle) {
+            this.clearStagedChanges();
+        }
+        
         const db = await this.getDB();
         return new Promise((resolve, reject) => {
             const tx = db.transaction([this.projectsStoreName, this.figuresStoreName], 'readwrite');
-            
+
             const pStore = tx.objectStore(this.projectsStoreName);
             pStore.delete(title);
-            
+
             // Sweep and remove all isolated figures attached to this project
             const fStore = tx.objectStore(this.figuresStoreName);
             const cursorReq = fStore.openCursor();
@@ -111,7 +115,7 @@ export class WorkspaceDatabase {
                     cursor.continue();
                 }
             };
-            
+
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
         });
@@ -172,7 +176,7 @@ export class WorkspaceDatabase {
             const tx = db.transaction(this.figuresStoreName, 'readonly');
             const store = tx.objectStore(this.figuresStoreName);
             const request = store.get([this.activeProjectTitle, id]);
-            
+
             request.onsuccess = () => resolve(request.result || null);
             request.onerror = () => reject(request.error);
         });

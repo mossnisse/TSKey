@@ -334,7 +334,6 @@ export function renderMenu(store: KeyStore, uiState: UIStateStore) {
 
     // File Submenu Action items
     const saveBtn = getBtn('cmd-save');
-    const saveAsBtn = getBtn('cmd-save-as');
     const expJsonBtn = getBtn('cmd-export-json');
     const expTextBtn = getBtn('cmd-export-text');
     const expHtmlBtn = getBtn('cmd-export-html');

@@ -42,31 +42,31 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
 
     // Helper to refresh and populate rows inside the workspace project selector hub
     async function refreshHubView() {
-        const currentTitle = (store as any).getProjectName ? (store as any).getProjectName() : 'Untitled Key';
-        const projects = (store as any).getStoredProjectsList ? await (store as any).getStoredProjectsList() : [];
+        const currentTitle = store.getProjectName?.() ?? 'Untitled Key';
+        const projects = store.getStoredProjectsList ? await store.getStoredProjectsList() : [];
         renderProjectHubList(projects, currentTitle);
     }
 
     const titleInput = document.getElementById('key-title-input') as HTMLInputElement | null;
-if (titleInput) {
-    titleInput.addEventListener('input', () => {
-        // Route through uiState.typing.couplets with a distinct tracking handle
-        uiState.typing.couplets.start('project-title', () => {
-            //store.pushUndoSnapshot(); // Capture snapshot BEFORE changes hit
+    if (titleInput) {
+        titleInput.addEventListener('input', () => {
+            // Route through uiState.typing.couplets with a distinct tracking handle
+            uiState.typing.couplets.start('project-title', () => {
+                //store.pushUndoSnapshot(); // Capture snapshot BEFORE changes hit
+            });
+
+            // Push raw value continuously to state for hot-reloading components
+            store.setTitle(titleInput.value);
+
+            // Use your existing batched loop or refresh logic to push layout updates safely
+            batchedRefresh(refreshAll);
         });
 
-        // Push raw value continuously to state for hot-reloading components
-        store.setTitle(titleInput.value);
-
-        // Use your existing batched loop or refresh logic to push layout updates safely
-        batchedRefresh(refreshAll);
-    });
-
-    titleInput.addEventListener('blur', () => {
-        store.endTypingSession();
-        store.saveToStorage(); // Autosave to IndexedDB via updated store engine on blur
-    });
-}
+        titleInput.addEventListener('blur', () => {
+            store.endTypingSession();
+            store.saveToStorage(); // Autosave to IndexedDB via updated store engine on blur
+        });
+    }
     keyContainer.addEventListener('click', (e: MouseEvent) => {
         const target = e.target as HTMLElement;
 
@@ -567,13 +567,16 @@ if (titleInput) {
             }
 
             if ((store as any).loadProject) {
-                // Clear any active browser layout file URLs before swapping workspaces
+                // Clear active browser layout file URLs
                 for (const url of activeObjectURLs.values()) {
                     URL.revokeObjectURL(url);
                 }
                 activeObjectURLs.clear();
 
+                figureStorage.clearStagedChanges();
+
                 await (store as any).loadProject(projectName);
+
                 if (modalProjectHub) modalProjectHub.style.display = 'none';
                 showToast(`📂 Swapped to workspace: "${projectName}"`, "success");
                 batchedRefresh(refreshAll);
