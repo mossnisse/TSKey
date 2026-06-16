@@ -1,12 +1,8 @@
 // exporters/jsonExporter.ts
 import { KeyStore, APP_NAME, APP_VERSION } from '../store.ts';
-import { triggerFileDownload } from '../utils.ts';
+import { triggerFileDownload, sanitizeFilename } from '../utils.ts';
 import { blobToBase64, figureStorage } from '../db.ts';
 
-/**
- * Wraps the current KeyStore data with application metadata and
- * triggers a client-side JSON file download.
- */
 export async function exportKeyToJSON(store: KeyStore): Promise<void> {
     const figures = store.getFigures();
     
@@ -29,16 +25,16 @@ export async function exportKeyToJSON(store: KeyStore): Promise<void> {
             exportedAt: new Date().toISOString()
         },
         data: {
+            title: store.getTitle(), // Embed title into the payload
             key: store.getKey(),
             figures: exportedFigures
         }
     };
 
     const content = JSON.stringify(exportPayload, null, 2);
+    
+    // Dynamically generate the filename using your sanitized utility
+    const filename = sanitizeFilename(store.getTitle(), '.tskey');
 
-    triggerFileDownload(
-        content,
-        'dichotomous_key_export.json',
-        'application/json'
-    );
+    triggerFileDownload(content, filename, 'application/json');
 }

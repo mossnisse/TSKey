@@ -1,10 +1,12 @@
 // store.ts
 import { isValidCoupletArray, isValidFigureArray } from './utils.ts';
+import { figureStorage } from './db.ts';
 
 export const APP_NAME = 'TSKey';
 export const APP_VERSION = '0.0.1';
 export const STORAGE_KEY = 'dichotomous_key';
 export const FIGURES_STORAGE_KEY = 'dichotomous_key_figures';
+export const TITLE_STORAGE_KEY = 'dichotomous_key_title';
 
 export interface Couplet {
     id: number;    // Permanent internal unique ID
@@ -28,6 +30,7 @@ export interface KeyValidationError {
 }
 
 interface AppState {
+    title: string;
     dichotomousKey: Couplet[];
     figures: Figure[];
 }
@@ -57,11 +60,12 @@ export class KeyStore {
     private clipboardMode: 'copy' | 'cut' = 'copy';
     private cutIncomingLinksBuffer: Array<{ sourceId: number, field: 'link1' | 'link2', targetOldId: number }> = [];
 
-    //Figures
+    // Figures
     private selectedFigureIds: Set<number> = new Set();
 
-    constructor(initialKey: Couplet[], initialFigures: Figure[] = [], maxHistoryLimit = 100) {
+    constructor(initialKey: Couplet[], initialFigures: Figure[] = [], initialTitle = 'Untitled Key', maxHistoryLimit = 100) {
         this.state = {
+            title: initialTitle,
             dichotomousKey: initialKey,
             figures: initialFigures
         };
@@ -72,6 +76,19 @@ export class KeyStore {
     // ==========================================
     // GETTERS and Setters
     // ==========================================
+
+    public getTitle(): string {
+        return this.state.title;
+    }
+
+    public setTitle(newTitle: string): void {
+        const trimmed = newTitle.trim();
+        if (this.state.title === trimmed) return;
+
+        this.saveCheckpoint();
+        this.state.title = trimmed || 'Untitled Key';
+        this.hasUncommittedChanges = true;
+    }
 
     public getKey(): readonly Couplet[] {
         return this.state.dichotomousKey;
@@ -143,6 +160,7 @@ export class KeyStore {
 
         this.redoStack = [];
         this.undoStack.push({
+            title: this.state.title,
             dichotomousKey: this.state.dichotomousKey.map(c => ({ ...c })),
             figures: (this.state.figures || []).map(f => ({ ...f }))
         });
@@ -164,6 +182,7 @@ export class KeyStore {
         if (this.undoStack.length === 0) return false;
 
         this.redoStack.push({
+            title: this.state.title,
             dichotomousKey: this.state.dichotomousKey.map(c => ({ ...c })),
             figures: (this.state.figures || []).map(f => ({ ...f }))
         });
@@ -190,6 +209,7 @@ export class KeyStore {
         if (this.redoStack.length === 0) return false;
 
         this.undoStack.push({
+            title: this.state.title,
             dichotomousKey: this.state.dichotomousKey.map(c => ({ ...c })),
             figures: (this.state.figures || []).map(f => ({ ...f }))
         });
@@ -922,10 +942,27 @@ export class KeyStore {
         this.hasUncommittedChanges = true;
     }
 
+    /**
+     * Packages the current core application status state into the unified `.tskey` JSON file format structure.
+     */
+    public exportJsonData() {
+        return {
+            type: APP_NAME,
+            version: APP_VERSION,
+            title: this.state.title,
+            data: {
+                title: this.state.title,
+                key: this.state.dichotomousKey,
+                figures: this.state.figures
+            }
+        };
+    }
+
     public importJsonData(rawData: unknown): ImportResult {
         try {
             let importedKey: Couplet[] | null = null;
             let importedFigures: Figure[] = [];
+            let importedTitle = 'Untitled Key';
 
             if (
                 rawData &&
@@ -949,9 +986,16 @@ export class KeyStore {
                         importedFigures = payload.figures;
                     }
                 }
+
+                // Extract project title if declared inside native file format
+                if ('title' in payload && typeof payload.title === 'string') {
+                    importedTitle = payload.title;
+                } else if ('title' in (rawData as any) && typeof (rawData as any).title === 'string') {
+                    importedTitle = (rawData as any).title;
+                }
             }
 
-            // Legacy format
+            // Legacy format fallback
             if (!importedKey && isValidCoupletArray(rawData)) {
                 importedKey = rawData;
             }
@@ -977,6 +1021,7 @@ export class KeyStore {
             }
 
             this.saveCheckpoint();
+            this.state.title = importedTitle;
             this.state.dichotomousKey = importedKey;
             this.state.figures = importedFigures;
 
@@ -1002,78 +1047,82 @@ export class KeyStore {
         }
     }
 
-    public saveToStorage(): void {
-        const currentData = this.state.dichotomousKey;
+    // ==========================================
+    // WORKSPACE & PROJECT ENGINE
+    // ==========================================
 
-        if (!Array.isArray(currentData)) {
-            throw new Error("Cannot save corrupted data structure.");
+    public getProjectName(): string {
+        return this.state.title;
+    }
+
+    public setProjectName(newTitle: string): void {
+        this.setTitle(newTitle);
+    }
+
+    public async getStoredProjectsList(): Promise<{name: string, lastModified: number}[]> {
+        return await figureStorage.getProjectList();
+    }
+
+    public async createNewProject(title: string): Promise<void> {
+        this.state.title = title;
+        this.state.dichotomousKey = [];
+        this.state.figures = [];
+        this.resetTrackingContext();
+        
+        figureStorage.activeProjectTitle = title;
+        figureStorage.clearStagedChanges();
+        await this.saveToStorage();
+    }
+
+    public async loadProject(title: string): Promise<boolean> {
+        const data = await figureStorage.loadProject(title);
+        if (data) {
+            this.state.title = data.title;
+            this.state.dichotomousKey = data.dichotomousKey;
+            this.state.figures = data.figures;
+            this.resetTrackingContext();
+            
+            figureStorage.activeProjectTitle = title;
+            figureStorage.clearStagedChanges();
+            return true;
         }
+        return false;
+    }
 
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(currentData));
-        localStorage.setItem(FIGURES_STORAGE_KEY, JSON.stringify(this.state.figures));
+    public async deleteProject(title: string): Promise<void> {
+        await figureStorage.deleteProject(title);
+        
+        // If the user deletes the active project, boot them into a new blank state
+        if (this.state.title === title) {
+            await this.createNewProject('Untitled Key');
+        }
+    }
+
+    public async saveToStorage(): Promise<void> {
+        const currentData = this.state.dichotomousKey;
+        figureStorage.activeProjectTitle = this.state.title;
+        
+        await figureStorage.saveProject(this.state.title, currentData, this.state.figures);
+        
+        // Save the last active workspace name locally so it resumes on refresh
+        localStorage.setItem('TSKey_LastActiveProject', this.state.title);
         this.markSaved();
     }
 
-    public loadFromStorage(fallbackData: Couplet[] = [], fallbackFigures: Figure[] = []): boolean {
-        try {
-            const localKey = localStorage.getItem(STORAGE_KEY);
-            const localFigures = localStorage.getItem(FIGURES_STORAGE_KEY);
-
-            // 1. Initialize a local holding variable with our fallback figures parameter
-            let loadedFigures: Figure[] = fallbackFigures;
-
-            // 2. Safely attempt to parse the saved figures if they exist
-            if (localFigures) {
-                try {
-                    const parsedFigures = JSON.parse(localFigures);
-                    if (isValidFigureArray(parsedFigures)) {
-                        loadedFigures = parsedFigures;
-                    } else {
-                        console.warn('loadFromStorage: figures in localStorage failed schema validation; using fallback.');
-                    }
-                } catch (e) {
-                    console.error("Error parsing figures data from storage", e);
-                }
-            }
-
-            // 3. If there is no key structure, apply full defaults and exit
-            if (!localKey) {
-                this.state = {
-                    dichotomousKey: fallbackData,
-                    figures: loadedFigures
-                };
-                this.resetTrackingContext();
-                return false;
-            }
-
-            const parsedKey = JSON.parse(localKey);
-
-            // 4. Validate the key data structure schema before committing to state
-            if (isValidCoupletArray(parsedKey)) {
-                this.state = {
-                    dichotomousKey: parsedKey,
-                    figures: loadedFigures // Successfully assign loaded figures here
-                };
-                this.resetTrackingContext();
-                return true;
-            } else {
-                console.warn('Invalid data schema detected in localStorage. Loading fallbacks.');
-                this.state = {
-                    dichotomousKey: fallbackData,
-                    figures: fallbackFigures
-                };
-                this.resetTrackingContext();
-                return false;
-            }
-        } catch (error) {
-            console.warn('Corrupted localStorage JSON format. Loading fallbacks.', error);
+    public async loadFromStorage(fallbackData: Couplet[] = [], fallbackFigures: Figure[] = [], fallbackTitle = 'Untitled Key'): Promise<boolean> {
+        const lastActive = localStorage.getItem('TSKey_LastActiveProject') || fallbackTitle;
+        const success = await this.loadProject(lastActive);
+        
+        if (!success) {
             this.state = {
+                title: lastActive,
                 dichotomousKey: fallbackData,
                 figures: fallbackFigures
             };
+            figureStorage.activeProjectTitle = lastActive;
             this.resetTrackingContext();
-            return false;
         }
+        return success;
     }
 
     // ==========================================
@@ -1254,8 +1303,8 @@ export class KeyStore {
     /**
      * Converts all figure reference tokens in text to rendered print labels like (Fig. 3).
      * Handles two formats:
-     *   [figID: 106]  — new storage format (internal ID, always stable)
-     *   [fig: value]  — legacy format (numeric value treated as old ID, text as filename)
+     * [figID: 106]  — new storage format (internal ID, always stable)
+     * [fig: value]  — legacy format (numeric value treated as old ID, text as filename)
      */
     public resolveTextReferences(text: string, idToDisplayNum: Map<number, number>): string {
         if (!text) return text;
@@ -1279,7 +1328,6 @@ export class KeyStore {
                 : `[Broken Fig: ID ${id}]`;
         });
 
-        // remove?
         // resolve legacy format [fig: value] — numeric = old ID, text = filename
         text = text.replace(/\[fig:\s*(.*?)\s*\]/gi, (_match, value) => {
             const trimmedValue = value.trim();

@@ -1,7 +1,7 @@
 // eventController.ts
 import type { KeyStore, Couplet } from './store.ts';
 import type { UIStateStore } from './uiState.ts';
-import { showToast } from './uiRenderer.ts';
+import { showToast, renderProjectHubList } from './uiRenderer.ts';
 import { IS_MAC, resolveDestination, parseDestinationInput, buildIdToIndexMap } from './utils.ts';
 import { figureStorage, activeObjectURLs } from './db.ts';
 import { exportKeyToHTML } from './exporters/htmlExporter.ts';
@@ -40,6 +40,33 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
     const controller = new AbortController();
     const { signal } = controller;
 
+    // Helper to refresh and populate rows inside the workspace project selector hub
+    async function refreshHubView() {
+        const currentTitle = (store as any).getProjectName ? (store as any).getProjectName() : 'Untitled Key';
+        const projects = (store as any).getStoredProjectsList ? await (store as any).getStoredProjectsList() : [];
+        renderProjectHubList(projects, currentTitle);
+    }
+
+    const titleInput = document.getElementById('key-title-input') as HTMLInputElement | null;
+if (titleInput) {
+    titleInput.addEventListener('input', () => {
+        // Route through uiState.typing.couplets with a distinct tracking handle
+        uiState.typing.couplets.start('project-title', () => {
+            //store.pushUndoSnapshot(); // Capture snapshot BEFORE changes hit
+        });
+
+        // Push raw value continuously to state for hot-reloading components
+        store.setTitle(titleInput.value);
+
+        // Use your existing batched loop or refresh logic to push layout updates safely
+        batchedRefresh(refreshAll);
+    });
+
+    titleInput.addEventListener('blur', () => {
+        store.endTypingSession();
+        store.saveToStorage(); // Autosave to IndexedDB via updated store engine on blur
+    });
+}
     keyContainer.addEventListener('click', (e: MouseEvent) => {
         const target = e.target as HTMLElement;
 
@@ -489,6 +516,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
     const modalShortcuts = document.getElementById('modal-shortcuts') as HTMLElement;
     const modalOptions = document.getElementById('modal-options') as HTMLElement;
     const modalAbout = document.getElementById('modal-about') as HTMLElement;
+    const modalProjectHub = document.getElementById('modal-open-project') as HTMLElement;
 
     // --- DIALOG MODAL OPEN TRIGGERS ---
     document.getElementById('cmd-open-shortcuts')?.addEventListener('click', () => {
@@ -501,6 +529,13 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
         modalAbout.style.display = 'flex';
     }, { signal });
 
+    document.getElementById('cmd-open-dialog')?.addEventListener('click', async () => {
+        if (modalProjectHub) {
+            modalProjectHub.style.display = 'flex';
+            await refreshHubView();
+        }
+    }, { signal });
+
     // --- DIALOG MODAL CLOSE TRIGGERS ---
     document.getElementById('modal-shortcuts-close')?.addEventListener('click', () => {
         modalShortcuts.style.display = 'none';
@@ -510,6 +545,61 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
     }, { signal });
     document.getElementById('modal-about-close')?.addEventListener('click', () => {
         modalAbout.style.display = 'none';
+    }, { signal });
+    document.getElementById('modal-project-close')?.addEventListener('click', () => {
+        if (modalProjectHub) modalProjectHub.style.display = 'none';
+    }, { signal });
+
+    // --- PROJECT WORKSPACE HUB ROW ACTIONS ---
+    document.getElementById('project-hub-list')?.addEventListener('click', async (e) => {
+        const target = e.target as HTMLElement;
+        const clickableZone = target.closest('.hub-item-clickable-zone') as HTMLElement | null;
+        const deleteBtn = target.closest('.btn-hub-delete') as HTMLElement | null;
+
+        if (clickableZone) {
+            const projectName = clickableZone.getAttribute('data-name');
+            if (!projectName) return;
+
+            if (store.hasUnsavedChanges()) {
+                if (!confirm("Your current key has unsaved tracking changes. Are you sure you want to discard them to switch workspaces?")) {
+                    return;
+                }
+            }
+
+            if ((store as any).loadProject) {
+                // Clear any active browser layout file URLs before swapping workspaces
+                for (const url of activeObjectURLs.values()) {
+                    URL.revokeObjectURL(url);
+                }
+                activeObjectURLs.clear();
+
+                await (store as any).loadProject(projectName);
+                if (modalProjectHub) modalProjectHub.style.display = 'none';
+                showToast(`📂 Swapped to workspace: "${projectName}"`, "success");
+                batchedRefresh(refreshAll);
+            }
+            return;
+        }
+
+        if (deleteBtn) {
+            e.stopPropagation();
+            const projectName = deleteBtn.getAttribute('data-name');
+            if (!projectName) return;
+
+            if (confirm(`Are you sure you want to permanently delete the workspace "${projectName}"?\nThis wipes it from your browser database.`)) {
+                if ((store as any).deleteProject) {
+                    await (store as any).deleteProject(projectName);
+                    showToast(`🗑️ Workspace "${projectName}" deleted.`, "success");
+                    await refreshHubView();
+                    batchedRefresh(refreshAll);
+                }
+            }
+        }
+    }, { signal });
+
+    document.getElementById('btn-hub-import')?.addEventListener('click', () => {
+        const hiddenInput = document.querySelector('#file-import-hidden') as HTMLInputElement;
+        hiddenInput?.click();
     }, { signal });
 
     // Centralized HTML5 Drag-and-Drop Operations
@@ -612,7 +702,54 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
         batchedRefresh(refreshAll);
     }, { signal });
 
-    // --- FILE MENU ACTION BINDINGS ---
+    // --- NEW TRADITIONAL WORKFLOW FILE ACTIONS ---
+    document.querySelector('#cmd-new')?.addEventListener('click', () => {
+        if (store.hasUnsavedChanges()) {
+            if (!confirm("You have unsaved workspace changes. Discard and make a brand new project memory space?")) {
+                return;
+            }
+        }
+
+        const titleInput = prompt("Enter name/title for the new key:", "Untitled Key");
+        if (titleInput === null) return;
+        const chosenTitle = titleInput.trim() || "Untitled Key";
+
+        if ((store as any).createNewProject) {
+            for (const url of activeObjectURLs.values()) {
+                URL.revokeObjectURL(url);
+            }
+            activeObjectURLs.clear();
+
+            (store as any).createNewProject(chosenTitle);
+            showToast("📄 New key workspace initiated!", "success");
+            batchedRefresh(refreshAll);
+        }
+    }, { signal });
+
+    document.querySelector('#cmd-save-as')?.addEventListener('click', async () => {
+        const currentTitle = (store as any).getProjectName ? (store as any).getProjectName() : 'Untitled Key';
+        const titleInput = prompt("Save current configuration under a new title:", currentTitle);
+        if (titleInput === null) return;
+        const chosenTitle = titleInput.trim();
+        if (!chosenTitle) {
+            showToast("⚠️ Invalid project title.", "error");
+            return;
+        }
+
+        try {
+            if ((store as any).setProjectName) {
+                (store as any).setProjectName(chosenTitle);
+            }
+            await figureStorage.commitStagedChanges();
+            store.saveToStorage();
+            showToast(`💾 Saved workspace as "${chosenTitle}"`, "success");
+            batchedRefresh(refreshAll);
+        } catch (error) {
+            console.error(error);
+            showToast("⚠️ Save As operation failed.", "error");
+        }
+    }, { signal });
+
     document.querySelector('#cmd-save')?.addEventListener('click', async () => {
         try {
             await figureStorage.commitStagedChanges();
@@ -645,14 +782,6 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
 
     let isImporting = false;
 
-    document.querySelector('#cmd-trigger-import')?.addEventListener('click', () => {
-        if (isImporting) {
-            showToast("⚠️ An import is currently in progress. Please wait.", "error");
-            return;
-        }
-        hiddenInput?.click();
-    }, { signal });
-
     hiddenInput?.addEventListener('change', async (e) => {
         const file = (e.target as HTMLInputElement).files?.[0];
         if (!file) return;
@@ -662,6 +791,15 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
 
             const fileText = await file.text();
             const rawData = JSON.parse(fileText);
+
+            // Dynamically synchronize the project workspace name if one exists inside the imported file metadata
+            if (rawData && rawData.title && (store as any).setProjectName) {
+                (store as any).setProjectName(rawData.title);
+            } else if (file.name && (store as any).setProjectName) {
+                const fallbackName = file.name.replace(/\.tskey$/i, '');
+                (store as any).setProjectName(fallbackName);
+            }
+
             const importResult = store.importJsonData(rawData);
 
             if (!importResult.success) {
@@ -695,6 +833,12 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
             }
 
             showToast("Key configuration data imported successfully!", "success");
+
+            // Re-render project lists if the project workspace switcher happened to be active during selection
+            if (modalProjectHub && modalProjectHub.style.display === 'flex') {
+                await refreshHubView();
+            }
+
             batchedRefresh(refreshAll);
         } catch (err) {
             alert("Malformed JSON structure: Unable to parse file stream.");
@@ -702,6 +846,14 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
             isImporting = false;
             if (hiddenInput) hiddenInput.value = '';
         }
+    }, { signal });
+
+    document.querySelector('#cmd-trigger-import')?.addEventListener('click', () => {
+        if (isImporting) {
+            showToast("⚠️ An import is currently in progress. Please wait.", "error");
+            return;
+        }
+        hiddenInput?.click();
     }, { signal });
 
     document.querySelector('#cmd-export-text')?.addEventListener('click', () => exportKeyToPlainText(store), { signal });
@@ -874,7 +1026,6 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
             const triggerIndex = triggers.indexOf(currentTrigger);
             const actionIndex = actions.indexOf(activeEl);
 
-            // eventController.ts - Inside menuBar.addEventListener('keydown', ...)
             switch (e.key) {
                 case 'ArrowRight': {
                     e.preventDefault();
@@ -922,7 +1073,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                 case 'Escape': {
                     e.preventDefault();
                     closeAllMenus();
-                    currentTrigger?.focus(); // Added safety chaining
+                    currentTrigger?.focus();
                     break;
                 }
                 case 'Enter':
@@ -971,9 +1122,26 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
             activeElement.hasAttribute('contenteditable')
         );
 
+        // Global lifecycle overrides (Available even when focus sits inside active text fields)
         if (hasModifier && e.key.toLowerCase() === 's') {
             e.preventDefault();
-            document.querySelector<HTMLButtonElement>('#cmd-save')?.click();
+            if (e.shiftKey) {
+                document.querySelector<HTMLButtonElement>('#cmd-save-as')?.click();
+            } else {
+                document.querySelector<HTMLButtonElement>('#cmd-save')?.click();
+            }
+            return;
+        }
+
+        if (hasModifier && e.key.toLowerCase() === 'o') {
+            e.preventDefault();
+            document.querySelector<HTMLButtonElement>('#cmd-open-dialog')?.click();
+            return;
+        }
+
+        if (hasModifier && e.altKey && e.key.toLowerCase() === 'n') {
+            e.preventDefault();
+            document.querySelector<HTMLButtonElement>('#cmd-new')?.click();
             return;
         }
 

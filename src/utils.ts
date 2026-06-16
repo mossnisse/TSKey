@@ -274,3 +274,13 @@ export function parseDestinationInput(input: string, key: readonly Couplet[]): {
     // Is descriptive textual taxon identification
     return { link: 0, taxa: trimmed };
 }
+
+export function sanitizeFilename(title: string, extension = '.tskey'): string {
+    const slug = title
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9_\-]/gi, '_') // Replace spaces and special characters with underscores
+        .replace(/_+/g, '_');           // Collapse consecutive underscores
+    
+    return `${slug || 'untitled_key'}${extension}`;
+}

@@ -19,49 +19,45 @@ const fallbackFigures = [
     { id: 103, filename: "Lizard.jpg", caption: "Lizard scales" }
 ];
 
-// Defensive Shell Target Validation
-const appContainer = document.querySelector<HTMLDivElement>('#app');
-if (!appContainer) {
-    throw new Error("Application bootstrap failed: DOM target element '#app' was not found.");
+async function bootstrapApp() {
+    const appContainer = document.querySelector<HTMLDivElement>('#app');
+    if (!appContainer) {
+        throw new Error("Application bootstrap failed: DOM target element '#app' was not found.");
+    }
+
+    const store = new KeyStore([], []);
+    await store.loadFromStorage([...fallbackData], [...fallbackFigures]);
+
+    const uiState = new UIStateStore();
+
+    const refreshAll = () => {
+        applyPanelVisibility(uiState);
+        renderMenu(store, uiState);
+        renderEditorCards(store);
+        renderPrintView(store, uiState);
+        renderFigures(store, uiState, refreshAll);
+    };
+
+    const cleanups: Array<() => void> = [];
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+        if (store.hasUnsavedChanges()) {
+            event.preventDefault();
+            event.returnValue = '';
+        }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    cleanups.push(() => window.removeEventListener('beforeunload', handleBeforeUnload));
+
+    initializeShell(appContainer);
+
+    const destroyGlobalListeners = setupGlobalListeners(store, uiState, refreshAll);
+    const destroyKeyboardShortcuts = setupKeyboardShortcuts(store, refreshAll);
+
+    cleanups.push(destroyGlobalListeners);
+    cleanups.push(destroyKeyboardShortcuts);
+
+    refreshAll();
 }
 
-// Initialize Core State Tree Engine with initial baseline fallback figures
-const store = new KeyStore([], []);
-store.loadFromStorage([...fallbackData], [...fallbackFigures]);
-
-// Initialize UI Preference State — panel visibility, persisted to localStorage
-const uiState = new UIStateStore();
-
-// Centralized View State Re-evaluation Coordinator Loop
-const refreshAll = () => {
-    applyPanelVisibility(uiState); // Sync DOM classes FROM state — never the other way around
-    renderMenu(store, uiState);
-    renderEditorCards(store);
-    renderPrintView(store, uiState);
-    renderFigures(store, uiState, refreshAll);
-};
-
-// Track all cleanups needed if the app unmounts or reloads via HMR
-const cleanups: Array<() => void> = [];
-
-// Unsaved Progress Page Discard Guard Listener
-const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-    if (store.hasUnsavedChanges()) {
-        event.preventDefault();
-        event.returnValue = '';
-    }
-};
-window.addEventListener('beforeunload', handleBeforeUnload);
-cleanups.push(() => window.removeEventListener('beforeunload', handleBeforeUnload));
-
-// Assemble Interactive Frame Environments Context
-initializeShell(appContainer);
-
-// FIX: Capture and store the cleanup tokens
-const destroyGlobalListeners = setupGlobalListeners(store, uiState, refreshAll);
-const destroyKeyboardShortcuts = setupKeyboardShortcuts(store, refreshAll);
-
-cleanups.push(destroyGlobalListeners);
-cleanups.push(destroyKeyboardShortcuts);
-
-refreshAll();
+bootstrapApp();
