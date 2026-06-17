@@ -653,7 +653,7 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
                 if (!previewImg.hasAttribute('data-loading-state')) {
                     previewImg.setAttribute('data-loading-state', 'pending');
 
-                    workspaceStorage.getFigureBinary(fig.id).then(blob => {
+                    workspaceStorage.getFigureBinary(store.getProjectName(), fig.id).then(blob => {
                         previewImg.removeAttribute('data-loading-state');
                         if (blob) {
                             const newUrl = URL.createObjectURL(blob);

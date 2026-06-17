@@ -38,8 +38,15 @@ class IndexedDBEngine {
         return this.dbPromise;
     }
 
-    private buildFigureKey(projectTitle: string, id: number): string {
+    private getFigureKey(projectTitle: string, id: number): string {
         return `${projectTitle}::${id}`;
+    }
+
+    private getProjectKeyRange(projectTitle: string): IDBKeyRange {
+        const prefix = `${projectTitle}::`;
+        // Strictly bounds the lookup to keys starting precisely with "projectTitle::"
+        const upper = prefix.substring(0, prefix.length - 1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
+        return IDBKeyRange.bound(prefix, upper, false, true);
     }
 
     public async getProjectList(): Promise<{ name: string, lastModified: number }[]> {
@@ -93,21 +100,17 @@ class IndexedDBEngine {
         return new Promise((resolve, reject) => {
             const tx = db.transaction([this.projectsStoreName, this.figuresStoreName], 'readwrite');
 
-            // Delete project descriptor
             const pStore = tx.objectStore(this.projectsStoreName);
             pStore.delete(title);
 
-            //  Cascade delete all matching namespace keys via prefix validation
-
             const fStore = tx.objectStore(this.figuresStoreName);
-            const prefix = `${title}::`;
-            const range = IDBKeyRange.bound(prefix, prefix + '\uffff'); // Restricts cursor to this namespace only
+            const range = this.getProjectKeyRange(title);
             const cursorReq = fStore.openCursor(range);
 
             cursorReq.onsuccess = (e) => {
                 const cursor = (e.target as IDBRequest).result;
                 if (cursor) {
-                    cursor.delete(); // No string check needed; the range guarantees it belongs to this project
+                    cursor.delete();
                     cursor.continue();
                 }
             };
@@ -123,20 +126,42 @@ class IndexedDBEngine {
         return new Promise((resolve, reject) => {
             const tx = db.transaction(this.figuresStoreName, 'readwrite');
             const store = tx.objectStore(this.figuresStoreName);
-            const request = store.put(blob, this.buildFigureKey(projectTitle, id));
+            const request = store.put(blob, this.getFigureKey(projectTitle, id));
             request.onsuccess = () => resolve();
             request.onerror = () => reject(request.error);
         });
     }
 
-    public async deleteFigure(projectTitle: string, id: number): Promise<void> {
+    /**
+     * Garbage Collection Engine: Deletes binary objects from IndexedDB 
+     * whose IDs are no longer tracked in the active project metadata.
+     */
+    public async cleanupOrphanFigures(projectTitle: string, activeIds: Set<number>): Promise<void> {
         const db = await this.getDB();
         return new Promise((resolve, reject) => {
             const tx = db.transaction(this.figuresStoreName, 'readwrite');
             const store = tx.objectStore(this.figuresStoreName);
-            const request = store.delete(this.buildFigureKey(projectTitle, id));
-            request.onsuccess = () => resolve();
-            request.onerror = () => reject(request.error);
+            const range = this.getProjectKeyRange(projectTitle);
+            const cursorReq = store.openCursor(range);
+
+            cursorReq.onsuccess = (e) => {
+                const cursor = (e.target as IDBRequest).result;
+                if (cursor) {
+                    const key = cursor.key as string;
+                    const idParts = key.split('::');
+                    const id = parseInt(idParts[idParts.length - 1], 10);
+
+                    if (!activeIds.has(id)) {
+                        cursor.delete();
+                    }
+                    cursor.continue();
+                } else {
+                    resolve();
+                }
+            };
+            cursorReq.onerror = () => reject(cursorReq.error);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
         });
     }
 
@@ -145,7 +170,7 @@ class IndexedDBEngine {
         return new Promise((resolve, reject) => {
             const tx = db.transaction(this.figuresStoreName, 'readonly');
             const store = tx.objectStore(this.figuresStoreName);
-            const request = store.get(this.buildFigureKey(projectTitle, id));
+            const request = store.get(this.getFigureKey(projectTitle, id));
             request.onsuccess = () => resolve(request.result || null);
             request.onerror = () => reject(request.error);
         });
@@ -156,8 +181,7 @@ class IndexedDBEngine {
         return new Promise((resolve, reject) => {
             const tx = db.transaction(this.figuresStoreName, 'readwrite');
             const store = tx.objectStore(this.figuresStoreName);
-            const prefix = `${oldTitle}::`;
-            const range = IDBKeyRange.bound(prefix, prefix + '\uffff');
+            const range = this.getProjectKeyRange(oldTitle);
             const cursorReq = store.openCursor(range);
 
             cursorReq.onsuccess = (e) => {
@@ -167,7 +191,7 @@ class IndexedDBEngine {
                     const id = key.split('::')[1];
                     const blob = cursor.value as Blob;
 
-                    store.put(blob, `${newTitle}::${id}`);
+                    store.put(blob, this.getFigureKey(newTitle, parseInt(id, 10)));
                     cursor.continue();
                 }
             };
@@ -179,30 +203,33 @@ class IndexedDBEngine {
 
 /**
  * VOLATILE MEMORY LAYER & FACADE (Workspace Manager)
- * Coordinates active session memory staging and exposes unified interfaces to KeyStore.
  */
 export class WorkspaceManager {
     private storage = new IndexedDBEngine();
-
     private pendingUploads = new Map<number, Blob>();
-    private pendingDeletes = new Set<number>();
     private isCommitting = false;
-
-    public activeProjectTitle = 'Untitled Key';
 
     public async getProjectList(): Promise<{ name: string, lastModified: number }[]> {
         return this.storage.getProjectList();
     }
 
     public async saveProject(title: string, key: any[], figures: any[]): Promise<void> {
-        return this.storage.saveProject(title, key, figures);
+        await this.storage.saveProject(title, key, figures);
+        await this.commitStagedChanges(title, figures);
     }
 
     public async loadProject(title: string): Promise<ProjectRecord | null> {
-        return this.storage.loadProject(title);
+        this.clearStagedChanges();
+        
+        const project = await this.storage.loadProject(title);
+        if (project) {
+            await this.storage.cleanupOrphanFigures(title, new Set(project.figures.map(f => f.id)));
+        }
+        return project;
     }
 
     public async deleteProject(title: string): Promise<void> {
+        this.clearStagedChanges();
         return this.storage.deleteProject(title);
     }
 
@@ -212,40 +239,35 @@ export class WorkspaceManager {
 
     public clearStagedChanges(): void {
         this.pendingUploads.clear();
-        this.pendingDeletes.clear();
     }
 
     public deleteFigureBinary(id: number): void {
-        this.pendingDeletes.add(id);
         this.pendingUploads.delete(id);
     }
 
     public uploadFigureBinary(id: number, blob: Blob): void {
         this.pendingUploads.set(id, blob);
-        this.pendingDeletes.delete(id);
     }
 
-    public async getFigureBinary(id: number): Promise<Blob | null> {
+    public async getFigureBinary(projectTitle: string, id: number): Promise<Blob | null> {
         if (this.pendingUploads.has(id)) return this.pendingUploads.get(id)!;
-        if (this.pendingDeletes.has(id)) return null;
-
-        return this.storage.getFigure(this.activeProjectTitle, id);
+        return this.storage.getFigure(projectTitle, id);
     }
 
-    public async commitStagedChanges(): Promise<void> {
+    public async commitStagedChanges(projectTitle: string, activeFigures: any[]): Promise<void> {
         if (this.isCommitting) return;
-        if (this.pendingUploads.size === 0 && this.pendingDeletes.size === 0) return;
-
         this.isCommitting = true;
 
         try {
-            // Sequential await loops prevent transaction overlaps on single object stores
+            const activeIds = new Set<number>(activeFigures.map((f: any) => f.id));
+
             for (const [id, blob] of this.pendingUploads.entries()) {
-                await this.storage.saveFigure(this.activeProjectTitle, id, blob);
+                if (activeIds.has(id)) {
+                    await this.storage.saveFigure(projectTitle, id, blob);
+                }
             }
-            for (const id of this.pendingDeletes) {
-                await this.storage.deleteFigure(this.activeProjectTitle, id);
-            }
+
+            await this.storage.cleanupOrphanFigures(projectTitle, activeIds);   
             this.clearStagedChanges();
         } finally {
             this.isCommitting = false;
@@ -267,4 +289,14 @@ export function blobToBase64(blob: Blob): Promise<string> {
         reader.onerror = reject;
         reader.readAsDataURL(blob);
     });
+}
+
+/**
+ * Cleans up generated memory Object URLs to prevent client-side memory exhaustion.
+ */
+export function revokeStoredObjectURLs(): void {
+    for (const url of activeObjectURLs.values()) {
+        URL.revokeObjectURL(url);
+    }
+    activeObjectURLs.clear();
 }

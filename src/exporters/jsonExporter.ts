@@ -7,7 +7,8 @@ export async function exportKeyToJSON(store: KeyStore): Promise<void> {
     const figures = store.getFigures();
     
     const exportedFigures = await Promise.all(figures.map(async (fig) => {
-        const blob = await workspaceStorage.getFigureBinary(fig.id);
+        const projectTitle = store.getProjectName();
+        const blob = await workspaceStorage.getFigureBinary(projectTitle, fig.id);
         let binaryData = null;
         if (blob) {
             binaryData = await blobToBase64(blob);

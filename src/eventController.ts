@@ -568,9 +568,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                     URL.revokeObjectURL(url);
                 }
                 activeObjectURLs.clear();
-
                 workspaceStorage.clearStagedChanges();
-                workspaceStorage.activeProjectTitle = projectName;
 
                 await store.loadProject(projectName);
 
@@ -604,7 +602,6 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                         }
                         activeObjectURLs.clear();
                         workspaceStorage.clearStagedChanges();
-                        workspaceStorage.activeProjectTitle = 'Untitled Key';
                         await store.createNewProject('Untitled Key');
                         await store.saveToStorage(); // Persist baseline
                     }
@@ -750,7 +747,6 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
             }
             activeObjectURLs.clear();
             workspaceStorage.clearStagedChanges();
-            workspaceStorage.activeProjectTitle = chosenTitle;
 
             await store.createNewProject(chosenTitle);
             await store.saveToStorage();
@@ -764,8 +760,8 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
     }, { signal });
 
     document.querySelector('#cmd-save-as')?.addEventListener('click', async () => {
-        const currentTitle = store.getProjectName();
-        const titleInput = prompt("Save current configuration under a new title:", currentTitle);
+        const originalTitle = store.getProjectName();
+        const titleInput = prompt("Save current configuration under a new title:", originalTitle);
         if (titleInput === null) return; // User cancelled
 
         const chosenTitle = titleInput.trim();
@@ -782,67 +778,59 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                 if (!confirmOverwrite) return;
             }
 
-            const oldTitle = workspaceStorage.activeProjectTitle;
-            store.setProjectName(chosenTitle);
-            workspaceStorage.activeProjectTitle = chosenTitle;
-
-            if (oldTitle && oldTitle !== 'Untitled Key') {
-                await workspaceStorage.cloneProjectFigures(oldTitle, chosenTitle);
+            if (originalTitle && originalTitle !== 'Untitled Key' && originalTitle !== chosenTitle) {
+                await workspaceStorage.cloneProjectFigures(originalTitle, chosenTitle);
             }
 
-            await workspaceStorage.commitStagedChanges();
+            store.setProjectName(chosenTitle);
             await store.saveToStorage();
 
             showToast(`💾 Saved workspace as "${chosenTitle}"`, "success");
             batchedRefresh(refreshAll);
         } catch (error) {
             console.error("Save As Operation Failed:", error);
+            
+            // ROLLBACK: If saving failed, revert the store's in-memory name to prevent state pollution
+            store.setProjectName(originalTitle);
+            
             showToast("⚠️ Save As operation failed.", "error");
         }
     }, { signal });
 
     document.querySelector('#cmd-save')?.addEventListener('click', async () => {
-        const oldTitle = workspaceStorage.activeProjectTitle;
+        const oldTitle = store.getPersistedTitle();
         const newTitle = store.getProjectName(); // Extracted from memory state
 
         try {
-            // SCENARIO A: The user renamed the project
-            if (oldTitle !== newTitle) {
+            // SCENARIO A: The user renamed the project in the UI input before clicking save
+            if (oldTitle && oldTitle !== newTitle) {
                 const projectList = await workspaceStorage.getProjectList();
                 const exists = projectList.some(p => p.name.toLowerCase() === newTitle.toLowerCase());
                 if (exists) {
                     const overwrite = confirm(`A project named "${newTitle}" already exists. Overwrite it?`);
                     if (!overwrite) return;
                 }
-
-                workspaceStorage.activeProjectTitle = newTitle;
-
-                if (oldTitle && oldTitle !== 'Untitled Key') {
-                    await workspaceStorage.cloneProjectFigures(oldTitle, newTitle);
-                }
-
-                await workspaceStorage.commitStagedChanges();
-                await store.saveToStorage();
-
-                if (oldTitle && oldTitle !== 'Untitled Key') {
-                    await workspaceStorage.deleteProject(oldTitle);
-                }
-
-                showToast(`💾 Renamed and saved workspace as "${newTitle}"`, "success");
             }
-            else {
-                await workspaceStorage.commitStagedChanges();
-                await store.saveToStorage();
+
+            await store.saveToStorage();
+
+            if (oldTitle && oldTitle !== newTitle) {
+                showToast(`💾 Renamed and saved workspace as "${newTitle}"`, "success");
+            } else {
                 showToast("💾 Changes saved successfully!", "success");
             }
 
             batchedRefresh(refreshAll);
         } catch (error) {
             console.error("Atomic save/rename failed:", error);
-            showToast("⚠️ Save failed. Your changes were kept in memory.", "error");
+            
+            // Controller Rollback: If store.saveToStorage failed during a rename operation, 
+            // make sure the store is reverted back to its true persisted title name.
+            if (oldTitle && oldTitle !== newTitle) {
+                store.setProjectName(oldTitle);
+            }
 
-            // Rollback tracking pointer on error so the app state matches disk reality
-            workspaceStorage.activeProjectTitle = oldTitle;
+            showToast("⚠️ Save failed. Your changes were kept in memory.", "error");
         }
     }, { signal });
 
@@ -857,6 +845,9 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
     hiddenInput?.addEventListener('change', async (e) => {
         const file = (e.target as HTMLInputElement).files?.[0];
         if (!file) return;
+
+        // Keep track of original title in case we need to roll back on an error
+        const originalTitle = store.getPersistedTitle();
 
         try {
             isImporting = true;
@@ -875,24 +866,26 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
             const exists = projectList.some(p => p.name.toLowerCase() === targetName.toLowerCase());
             if (exists) {
                 const overwrite = confirm(`A local project named "${targetName}" already exists. Do you want to completely overwrite it with this import file?`);
-                if (!overwrite) return;
+                if (!overwrite) {
+                    if (hiddenInput) hiddenInput.value = '';
+                    return;
+                }
+            }
+
+            const importResult = store.importJsonData(rawData);
+            if (!importResult.success) {
+                alert(`Failed to import JSON schema:\n• ${importResult.errors.join('\n• ')}`);
+                if (hiddenInput) hiddenInput.value = '';
+                return;
             }
 
             for (const url of activeObjectURLs.values()) {
                 URL.revokeObjectURL(url);
             }
-            
             activeObjectURLs.clear();
             workspaceStorage.clearStagedChanges();
 
             store.setProjectName(targetName);
-            workspaceStorage.activeProjectTitle = targetName;
-
-            const importResult = store.importJsonData(rawData);
-            if (!importResult.success) {
-                alert(`Failed to import JSON schema:\n• ${importResult.errors.join('\n• ')}`);
-                return;
-            }
 
             const failedFigureIds: number[] = [];
             if (importResult.importedFigures && importResult.importedFigures.length > 0) {
@@ -917,14 +910,12 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                 }
             }
 
-            await workspaceStorage.commitStagedChanges();
-            await store.saveToStorage(); // Added missing await to prevent data-loss races
+            await store.saveToStorage();
 
             if (failedFigureIds.length === 0) {
                 showToast(`📥 Imported workspace "${targetName}" successfully!`, "success");
             } else {
                 showToast(`⚠️ Workspace imported, but ${failedFigureIds.length} image(s) failed.`, "error");
-
                 alert(
                     `Workspace "${targetName}" was loaded, but the following figure IDs encountered binary errors or corruption and could not be recovered:\n\n` +
                     `• Figure ID(s): ${failedFigureIds.join(', ')}\n\n` +
@@ -941,6 +932,13 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
             batchedRefresh(refreshAll);
         } catch (err) {
             console.error("Import processing error:", err);
+            
+            // ROLLBACK: Revert the title state if mutation halfway broke down
+            if (originalTitle) {
+                store.setProjectName(originalTitle);
+            }
+            workspaceStorage.clearStagedChanges();
+
             alert("Malformed JSON structure: Unable to parse file stream.");
         } finally {
             isImporting = false;

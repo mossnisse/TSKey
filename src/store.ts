@@ -83,6 +83,10 @@ export class KeyStore {
         return this.state.title;
     }
 
+    public getPersistedTitle(): string {
+        return this.persistedTitle;
+    }
+
     public setTitle(newTitle: string): void {
         const trimmed = newTitle.trim();
         if (this.state.title === trimmed) return;
@@ -1072,7 +1076,6 @@ export class KeyStore {
         this.state.figures = [];
         this.resetTrackingContext();
 
-        workspaceStorage.activeProjectTitle = title;
         workspaceStorage.clearStagedChanges();
         await this.saveToStorage();
     }
@@ -1086,7 +1089,6 @@ export class KeyStore {
             this.state.figures = data.figures;
             this.resetTrackingContext();
 
-            workspaceStorage.activeProjectTitle = title;
             workspaceStorage.clearStagedChanges();
             return true;
         }
@@ -1102,27 +1104,55 @@ export class KeyStore {
     }
 
     public async saveToStorage(): Promise<void> {
-        if (this.persistedTitle && this.persistedTitle !== this.state.title) {
-            for (const fig of this.state.figures) {
-                workspaceStorage.activeProjectTitle = this.persistedTitle;
-                const blob = await workspaceStorage.getFigureBinary(fig.id);
-                if (blob) {
-                    workspaceStorage.activeProjectTitle = this.state.title;
-                    workspaceStorage.uploadFigureBinary(fig.id, blob);
+        const isRename = this.persistedTitle && this.persistedTitle !== this.state.title;
+        const oldTitle = this.persistedTitle;
+
+        try {
+            if (isRename && oldTitle) {
+                for (const fig of this.state.figures) {
+                    const blob = await workspaceStorage.getFigureBinary(oldTitle, fig.id);
+                    if (blob) {
+                        workspaceStorage.uploadFigureBinary(fig.id, blob);
+                    }
                 }
             }
-            await workspaceStorage.deleteProject(this.persistedTitle);
+
+            const currentData = this.state.dichotomousKey;
+            await workspaceStorage.saveProject(this.state.title, currentData, this.state.figures);
+
+            if (isRename && oldTitle) {
+                await workspaceStorage.deleteProject(oldTitle);
+            }
+
+            this.persistedTitle = this.state.title;
+            localStorage.setItem('TSKey_LastActiveProject', this.state.title);
+            this.markSaved();
+
+        } catch (error) {
+            console.error("Failed to save or rename project workspace:", error);
+            
+            if (isRename && oldTitle) {
+                this.state.title = oldTitle;
+                workspaceStorage.clearStagedChanges(); // Roll back stale in-memory staging
+            }
+            
+            throw error; 
         }
+    }
 
-        workspaceStorage.activeProjectTitle = this.state.title;
-        const currentData = this.state.dichotomousKey;
-        await workspaceStorage.saveProject(this.state.title, currentData, this.state.figures);
+    public addFigureReference(id: number, filename: string, blob: Blob): void {
+        this.state.figures.push({ id, filename, caption: '' });
+        workspaceStorage.uploadFigureBinary(id, blob);
+        this.hasUncommittedChanges = true;
+    }
 
-        await workspaceStorage.commitStagedChanges();
-
-        this.persistedTitle = this.state.title; // Update tracking context to match disk state
-        localStorage.setItem('TSKey_LastActiveProject', this.state.title);
-        this.markSaved();
+    /**
+     * Handles dropping an image from reference map stack tracking
+     */
+    public deleteFigureReference(id: number): void {
+        this.state.figures = this.state.figures.filter(f => f.id !== id);
+        workspaceStorage.deleteFigureBinary(id);
+        this.hasUncommittedChanges = true;
     }
 
     public async loadFromStorage(fallbackData: Couplet[] = [], fallbackFigures: Figure[] = [], fallbackTitle = 'Untitled Key'): Promise<boolean> {
@@ -1136,7 +1166,6 @@ export class KeyStore {
                 figures: fallbackFigures
             };
             this.persistedTitle = lastActive;
-            workspaceStorage.activeProjectTitle = lastActive;
             workspaceStorage.clearStagedChanges();
             this.resetTrackingContext();
         }

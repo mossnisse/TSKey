@@ -23,6 +23,7 @@ function destinationToHtml(dest: DestinationResolution): string {
  */
 export async function exportKeyToHTML(store: KeyStore): Promise<void> {
     try {
+        const projectTitle = store.getProjectName();
         const key = store.getKey();
         const figures = store.getFigures();
         const idToIndexMap = buildIdToIndexMap(key);
@@ -35,7 +36,7 @@ export async function exportKeyToHTML(store: KeyStore): Promise<void> {
                 let imgTag = '';
 
                 try {
-                    const blob = await workspaceStorage.getFigureBinary(fig.id);
+                    const blob = await workspaceStorage.getFigureBinary(projectTitle, fig.id);
                     if (blob) {
                         const base64Data = await blobToBase64(blob);
                         imgTag = `<img class="print-fig-img" src="${base64Data}" alt="Figure ${displayNum}" />`;
