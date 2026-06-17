@@ -1,9 +1,10 @@
 // db.ts - Complete zero-dependency client-side storage engine
+import type { Couplet, Figure } from './store.ts';
 
 export interface ProjectRecord {
     title: string;
-    dichotomousKey: any[];
-    figures: any[];
+    dichotomousKey: Couplet[];
+    figures: Figure[];
     lastModified: number;
 }
 
@@ -44,7 +45,6 @@ class IndexedDBEngine {
 
     private getProjectKeyRange(projectTitle: string): IDBKeyRange {
         const prefix = `${projectTitle}::`;
-        // Strictly bounds the lookup to keys starting precisely with "projectTitle::"
         const upper = prefix.substring(0, prefix.length - 1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
         return IDBKeyRange.bound(prefix, upper, false, true);
     }
@@ -57,7 +57,8 @@ class IndexedDBEngine {
             const request = store.getAll();
 
             request.onsuccess = () => {
-                const projects = request.result.map((p: any) => ({
+                const records = request.result as ProjectRecord[];
+                const projects = records.map((p) => ({
                     name: p.title,
                     lastModified: p.lastModified
                 }));
@@ -68,19 +69,23 @@ class IndexedDBEngine {
         });
     }
 
-    public async saveProject(title: string, key: any[], figures: any[]): Promise<void> {
+    public async saveProject(title: string, key: Couplet[], figures: Figure[]): Promise<void> {
         const db = await this.getDB();
         return new Promise((resolve, reject) => {
             const tx = db.transaction(this.projectsStoreName, 'readwrite');
             const store = tx.objectStore(this.projectsStoreName);
-            const request = store.put({
+            
+            store.put({
                 title,
                 dichotomousKey: key,
                 figures,
                 lastModified: Date.now()
             });
-            request.onsuccess = () => resolve();
-            request.onerror = () => reject(request.error);
+
+            // Resolving on complete ensures that data is successfully committed to disk
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(new Error(`Transaction aborted while saving project: ${title}`));
         });
     }
 
@@ -90,7 +95,8 @@ class IndexedDBEngine {
             const tx = db.transaction(this.projectsStoreName, 'readonly');
             const store = tx.objectStore(this.projectsStoreName);
             const request = store.get(title);
-            request.onsuccess = () => resolve(request.result || null);
+            
+            request.onsuccess = () => resolve((request.result as ProjectRecord) || null);
             request.onerror = () => reject(request.error);
         });
     }
@@ -108,7 +114,7 @@ class IndexedDBEngine {
             const cursorReq = fStore.openCursor(range);
 
             cursorReq.onsuccess = (e) => {
-                const cursor = (e.target as IDBRequest).result;
+                const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
                 if (cursor) {
                     cursor.delete();
                     cursor.continue();
@@ -126,9 +132,12 @@ class IndexedDBEngine {
         return new Promise((resolve, reject) => {
             const tx = db.transaction(this.figuresStoreName, 'readwrite');
             const store = tx.objectStore(this.figuresStoreName);
-            const request = store.put(blob, this.getFigureKey(projectTitle, id));
-            request.onsuccess = () => resolve();
-            request.onerror = () => reject(request.error);
+            
+            store.put(blob, this.getFigureKey(projectTitle, id));
+
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(new Error(`Transaction aborted while saving figure ID ${id}`));
         });
     }
 
@@ -145,7 +154,7 @@ class IndexedDBEngine {
             const cursorReq = store.openCursor(range);
 
             cursorReq.onsuccess = (e) => {
-                const cursor = (e.target as IDBRequest).result;
+                const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
                 if (cursor) {
                     const key = cursor.key as string;
                     const idParts = key.split('::');
@@ -155,13 +164,14 @@ class IndexedDBEngine {
                         cursor.delete();
                     }
                     cursor.continue();
-                } else {
-                    resolve();
                 }
+                // FIXED: Removed the dual-resolving "else" block.
             };
+            
             cursorReq.onerror = () => reject(cursorReq.error);
-            tx.oncomplete = () => resolve();
+            tx.oncomplete = () => resolve(); // Safely single-resolves here
             tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(new Error(`Orphan cleanup transaction aborted for project: ${projectTitle}`));
         });
     }
 
@@ -171,7 +181,8 @@ class IndexedDBEngine {
             const tx = db.transaction(this.figuresStoreName, 'readonly');
             const store = tx.objectStore(this.figuresStoreName);
             const request = store.get(this.getFigureKey(projectTitle, id));
-            request.onsuccess = () => resolve(request.result || null);
+            
+            request.onsuccess = () => resolve((request.result as Blob) || null);
             request.onerror = () => reject(request.error);
         });
     }
@@ -185,7 +196,7 @@ class IndexedDBEngine {
             const cursorReq = store.openCursor(range);
 
             cursorReq.onsuccess = (e) => {
-                const cursor = (e.target as IDBRequest).result;
+                const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
                 if (cursor) {
                     const key = cursor.key as string;
                     const id = key.split('::')[1];
@@ -197,6 +208,7 @@ class IndexedDBEngine {
             };
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(new Error(`Cloning figures transaction aborted from "${oldTitle}" to "${newTitle}"`));
         });
     }
 }
@@ -213,7 +225,7 @@ export class WorkspaceManager {
         return this.storage.getProjectList();
     }
 
-    public async saveProject(title: string, key: any[], figures: any[]): Promise<void> {
+    public async saveProject(title: string, key: Couplet[], figures: Figure[]): Promise<void> {
         await this.storage.saveProject(title, key, figures);
         await this.commitStagedChanges(title, figures);
     }
@@ -254,13 +266,12 @@ export class WorkspaceManager {
         return this.storage.getFigure(projectTitle, id);
     }
 
-    public async commitStagedChanges(projectTitle: string, activeFigures: any[]): Promise<void> {
-        // If a commit is running, await it instead of silently aborting!
+    public async commitStagedChanges(projectTitle: string, activeFigures: Figure[]): Promise<void> {
         if (this.commitPromise) return this.commitPromise;
 
         this.commitPromise = (async () => {
             try {
-                const activeIds = new Set<number>(activeFigures.map((f: any) => f.id));
+                const activeIds = new Set<number>(activeFigures.map((f) => f.id));
 
                 for (const [id, blob] of this.pendingUploads.entries()) {
                     if (activeIds.has(id)) {
@@ -270,9 +281,8 @@ export class WorkspaceManager {
 
                 await this.storage.cleanupOrphanFigures(projectTitle, activeIds);   
                 this.clearStagedChanges();
-            } catch (error: any) {
-                // Offline DBs frequently hit storage limits. Catch and throw clearly.
-                if (error.name === 'QuotaExceededError') {
+            } catch (error: unknown) {
+                if (error instanceof Error && error.name === 'QuotaExceededError') {
                     alert("⚠️ Browser storage is full! Could not save the latest images. Please delete old workspaces to free up space.");
                 }
                 throw error;
