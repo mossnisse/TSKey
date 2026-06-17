@@ -173,6 +173,7 @@ export class KeyStore {
 
         if (this.undoStack.length > this.maxHistoryLimit) {
             this.undoStack.shift();
+            this.currentHistoryIndex--;
             if (this.savedHistoryIndex > 0) {
                 this.savedHistoryIndex--;
             } else {
@@ -1160,7 +1161,8 @@ export class KeyStore {
 }
 
     public addFigureReference(id: number, filename: string, blob: Blob): void {
-        this.state.figures.push({ id, filename, caption: '' });
+        this.saveCheckpoint();
+        this.state.figures = [...this.state.figures, { id, filename, caption: '' }];
         workspaceStorage.uploadFigureBinary(id, blob);
         this.hasUncommittedChanges = true;
     }
@@ -1169,6 +1171,7 @@ export class KeyStore {
      * Handles dropping an image from reference map stack tracking
      */
     public deleteFigureReference(id: number): void {
+        this.saveCheckpoint();
         this.state.figures = this.state.figures.filter(f => f.id !== id);
         workspaceStorage.deleteFigureBinary(id);
         this.hasUncommittedChanges = true;

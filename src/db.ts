@@ -34,6 +34,11 @@ class IndexedDBEngine {
             };
             request.onsuccess = () => resolve(request.result);
             request.onerror = () => reject(request.error);
+            request.onblocked = () => reject(new Error('IndexedDB open blocked by another open connection.'));
+        });
+
+        this.dbPromise.catch(() => {
+            this.dbPromise = null;
         });
 
         return this.dbPromise;
@@ -199,7 +204,7 @@ class IndexedDBEngine {
                 const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
                 if (cursor) {
                     const key = cursor.key as string;
-                    const id = key.split('::')[1];
+                    const id = key.substring(key.lastIndexOf('::') + 2);
                     const blob = cursor.value as Blob;
 
                     store.put(blob, this.getFigureKey(newTitle, parseInt(id, 10)));
@@ -267,9 +272,11 @@ export class WorkspaceManager {
     }
 
     public async commitStagedChanges(projectTitle: string, activeFigures: Figure[]): Promise<void> {
-        if (this.commitPromise) return this.commitPromise;
+        const previous = this.commitPromise ?? Promise.resolve();
 
-        this.commitPromise = (async () => {
+        const run = (async () => {
+            await previous.catch(() => { });
+
             try {
                 const activeIds = new Set<number>(activeFigures.map((f) => f.id));
 
@@ -279,19 +286,22 @@ export class WorkspaceManager {
                     }
                 }
 
-                await this.storage.cleanupOrphanFigures(projectTitle, activeIds);   
+                await this.storage.cleanupOrphanFigures(projectTitle, activeIds);
                 this.clearStagedChanges();
             } catch (error: unknown) {
                 if (error instanceof Error && error.name === 'QuotaExceededError') {
                     alert("⚠️ Browser storage is full! Could not save the latest images. Please delete old workspaces to free up space.");
                 }
                 throw error;
-            } finally {
-                this.commitPromise = null;
             }
         })();
 
-        return this.commitPromise;
+        const tracked = run.finally(() => {
+            if (this.commitPromise === tracked) this.commitPromise = null;
+        });
+        this.commitPromise = tracked;
+
+        return tracked;
     }
 }
 

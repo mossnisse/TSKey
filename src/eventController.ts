@@ -60,7 +60,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
 
             store.setTitle(newTitle);
             batchedRefresh(refreshAll);
-        });
+        }, { signal });
     }
 
     keyContainer.addEventListener('click', (e: MouseEvent) => {
@@ -313,12 +313,12 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                 // Populate the sync cache directory immediately using raw object bindings
                 const freshUrl = URL.createObjectURL(file);
                 activeObjectURLs.set(figId, freshUrl);
-
-                // Update the state directly and explicitly
                 store.updateFigure(figId, { filename: file.name });
+                target.value = '';
+
                 batchedRefresh(refreshAll);
             }
-        });
+        }, { signal });
 
         // --- FIGURE DRAG AND DROP ENGINE ---
         let draggedFigId: number | null = null;

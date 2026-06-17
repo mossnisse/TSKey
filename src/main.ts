@@ -40,13 +40,10 @@ async function bootstrapApp() {
         }
     }
 
-    // 3. Fallback tracking: If there is no session history, or the target project was deleted, build the fallback canvas
+    // Fallback tracking: If there is no session history, or the target project was deleted, build the fallback canvas
     if (!loadSuccess) {
         console.log("🌱 No active database workspace recovered. Hydrating baseline sample template.");
-        await store.loadFromStorage([...fallbackData], [...fallbackFigures]);
-        
-        // Ensure "Untitled Key" is written as the base tracking context title
-        store.setProjectName("Untitled Key");
+        await store.loadFromStorage([...fallbackData], [...fallbackFigures], "Untitled Key");
         uiState.setActiveProjectTitle("Untitled Key");
     }
 

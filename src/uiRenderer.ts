@@ -8,6 +8,8 @@ import { workspaceStorage, activeObjectURLs } from './db.ts';
 // CORE LAYOUT HELPERS
 // ==========================================
 
+let pendingFigureRefresh: number | null = null;
+
 /** Helper to target and patch changing attributes safely without dropping cursor focus */
 function syncField(parent: HTMLElement, selector: string, value: string, forceUpdate = false): HTMLInputElement | HTMLTextAreaElement | null {
     const el = parent.querySelector(selector) as HTMLInputElement | HTMLTextAreaElement;
@@ -658,10 +660,10 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
                         if (blob) {
                             const newUrl = URL.createObjectURL(blob);
                             activeObjectURLs.set(fig.id, newUrl);
-                            if (typeof (window as any)._pendingFigureRefresh === 'undefined') {
-                                (window as any)._pendingFigureRefresh = requestAnimationFrame(() => {
+                            if (pendingFigureRefresh === null) {
+                                pendingFigureRefresh = requestAnimationFrame(() => {
+                                    pendingFigureRefresh = null;
                                     refreshAll();
-                                    delete (window as any)._pendingFigureRefresh;
                                 });
                             }
                         } else {
