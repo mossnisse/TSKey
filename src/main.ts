@@ -1,4 +1,4 @@
-// main.ts - Updated application bootstrap routine with lifecycle controls
+// main.ts
 
 import './style.css';
 import { KeyStore } from './store.ts';
@@ -25,10 +25,30 @@ async function bootstrapApp() {
         throw new Error("Application bootstrap failed: DOM target element '#app' was not found.");
     }
 
-    const store = new KeyStore([], []);
-    await store.loadFromStorage([...fallbackData], [...fallbackFigures]);
-
     const uiState = new UIStateStore();
+    const lastViewedProject = uiState.activeProjectTitle;
+
+    const store = new KeyStore([], []);
+    let loadSuccess = false;
+
+    if (lastViewedProject && lastViewedProject !== 'Untitled Key') {
+        try {
+            // Attempt to load the exact project last opened/viewed by the user
+            loadSuccess = await store.loadProject(lastViewedProject);
+        } catch (loadError) {
+            console.error(`Failed to restore active project session "${lastViewedProject}":`, loadError);
+        }
+    }
+
+    // 3. Fallback tracking: If there is no session history, or the target project was deleted, build the fallback canvas
+    if (!loadSuccess) {
+        console.log("🌱 No active database workspace recovered. Hydrating baseline sample template.");
+        await store.loadFromStorage([...fallbackData], [...fallbackFigures]);
+        
+        // Ensure "Untitled Key" is written as the base tracking context title
+        store.setProjectName("Untitled Key");
+        uiState.setActiveProjectTitle("Untitled Key");
+    }
 
     const refreshAll = () => {
         applyPanelVisibility(uiState);
