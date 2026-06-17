@@ -762,7 +762,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
     document.querySelector('#cmd-save-as')?.addEventListener('click', async () => {
         const originalTitle = store.getProjectName();
         const titleInput = prompt("Save current configuration under a new title:", originalTitle);
-        if (titleInput === null) return; // User cancelled
+        if (titleInput === null) return;
 
         const chosenTitle = titleInput.trim();
         if (!chosenTitle) {
@@ -778,23 +778,14 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                 if (!confirmOverwrite) return;
             }
 
-            if (originalTitle && originalTitle !== 'Untitled Key' && originalTitle !== chosenTitle) {
-                await workspaceStorage.cloneProjectFigures(originalTitle, chosenTitle);
-            }
-
-            store.setProjectName(chosenTitle);
+            // Use the new explicit Save As method
             uiState.setActiveProjectTitle(chosenTitle);
-            await store.saveToStorage();
+            await store.saveAsProject(chosenTitle);
 
             showToast(`💾 Saved workspace as "${chosenTitle}"`, "success");
             batchedRefresh(refreshAll);
         } catch (error) {
-            console.error("Save As Operation Failed:", error);
-            
-            // ROLLBACK: If saving failed, revert the store's in-memory name to prevent state pollution
-            store.setProjectName(originalTitle);
             uiState.setActiveProjectTitle(originalTitle);
-            
             showToast("⚠️ Save As operation failed.", "error");
         }
     }, { signal });
@@ -825,7 +816,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
             batchedRefresh(refreshAll);
         } catch (error) {
             console.error("Atomic save/rename failed:", error);
-            
+
             // Controller Rollback: If store.saveToStorage failed during a rename operation, 
             // make sure the store is reverted back to its true persisted title name.
             if (oldTitle && oldTitle !== newTitle) {
@@ -936,7 +927,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
             batchedRefresh(refreshAll);
         } catch (err) {
             console.error("Import processing error:", err);
-            
+
             // ROLLBACK: Revert the title state if mutation halfway broke down
             if (originalTitle) {
                 store.setProjectName(originalTitle);
@@ -1205,7 +1196,11 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
  */
 export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) {
     const handleKeyDown = (e: KeyboardEvent) => {
-        const activeModal = document.querySelector('.modal-overlay[style*="display: flex"]') as HTMLElement | null;
+        const modals = document.querySelectorAll('.modal-overlay');
+        const activeModal = Array.from(modals).find(
+            el => (el as HTMLElement).style.display === 'flex'
+        ) as HTMLElement | null;
+
         if (activeModal) {
             if (e.key === 'Escape') {
                 activeModal.style.display = 'none';

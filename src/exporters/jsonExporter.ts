@@ -5,19 +5,22 @@ import { blobToBase64, workspaceStorage } from '../db.ts';
 
 export async function exportKeyToJSON(store: KeyStore): Promise<void> {
     const figures = store.getFigures();
+    const exportedFigures = [];
     
-    const exportedFigures = await Promise.all(figures.map(async (fig) => {
+    for (const fig of figures) {
         const projectTitle = store.getProjectName();
         const blob = await workspaceStorage.getFigureBinary(projectTitle, fig.id);
         let binaryData = null;
+        
         if (blob) {
             binaryData = await blobToBase64(blob);
         }
-        return {
+        
+        exportedFigures.push({
             ...fig,
             binaryData
-        };
-    }));
+        });
+    }
 
     const exportPayload = {
         metadata: {

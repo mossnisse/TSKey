@@ -1109,18 +1109,16 @@ export class KeyStore {
 
         try {
             if (isRename && oldTitle) {
-                for (const fig of this.state.figures) {
-                    const blob = await workspaceStorage.getFigureBinary(oldTitle, fig.id);
-                    if (blob) {
-                        workspaceStorage.uploadFigureBinary(fig.id, blob);
-                    }
-                }
+                // FIX: Use the DB layer to clone blobs directly! Zero RAM overhead.
+                await workspaceStorage.cloneProjectFigures(oldTitle, this.state.title);
             }
 
+            // Save JSON metadata
             const currentData = this.state.dichotomousKey;
             await workspaceStorage.saveProject(this.state.title, currentData, this.state.figures);
 
             if (isRename && oldTitle) {
+                // Safely wipe the old project since this was a pure rename
                 await workspaceStorage.deleteProject(oldTitle);
             }
 
@@ -1130,15 +1128,36 @@ export class KeyStore {
 
         } catch (error) {
             console.error("Failed to save or rename project workspace:", error);
-            
             if (isRename && oldTitle) {
                 this.state.title = oldTitle;
-                workspaceStorage.clearStagedChanges(); // Roll back stale in-memory staging
+                workspaceStorage.clearStagedChanges();
             }
-            
-            throw error; 
+            throw error;
         }
     }
+
+    public async saveAsProject(newTitle: string): Promise<void> {
+    const oldTitle = this.persistedTitle;
+
+    try {
+        if (oldTitle && oldTitle !== 'Untitled Key') {
+            await workspaceStorage.cloneProjectFigures(oldTitle, newTitle);
+        }
+
+        this.state.title = newTitle;
+        
+        await workspaceStorage.saveProject(newTitle, this.state.dichotomousKey, this.state.figures);
+
+        this.persistedTitle = newTitle;
+        localStorage.setItem('TSKey_LastActiveProject', newTitle);
+        this.markSaved();
+    } catch (error) {
+        console.error("Save As Operation Failed:", error);
+        // Rollback state title on failure
+        this.state.title = oldTitle;
+        throw error;
+    }
+}
 
     public addFigureReference(id: number, filename: string, blob: Blob): void {
         this.state.figures.push({ id, filename, caption: '' });
@@ -1401,6 +1420,8 @@ export class KeyStore {
      * Incomplete or unresolvable tokens are left unchanged.
      */
     public encodeFigureTokens(text: string): string {
+        if (!text) return '';
+
         const figures = this.state.figures;
         const displayNumToId = new Map<number, number>();
         const filenameToId = new Map<string, number>();
@@ -1436,8 +1457,9 @@ export class KeyStore {
      * current position and automatically updates when figures are reordered.
      */
     public decodeTextReferencesForEditor(text: string): string {
-        const figures = this.state.figures;
+        if (!text) return '';
 
+        const figures = this.state.figures;
         const idToDisplayNum = new Map<number, number>();
         figures.forEach((fig, index) => {
             idToDisplayNum.set(fig.id, index + 1);

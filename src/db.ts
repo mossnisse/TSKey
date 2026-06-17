@@ -207,7 +207,7 @@ class IndexedDBEngine {
 export class WorkspaceManager {
     private storage = new IndexedDBEngine();
     private pendingUploads = new Map<number, Blob>();
-    private isCommitting = false;
+    private commitPromise: Promise<void> | null = null;
 
     public async getProjectList(): Promise<{ name: string, lastModified: number }[]> {
         return this.storage.getProjectList();
@@ -255,23 +255,33 @@ export class WorkspaceManager {
     }
 
     public async commitStagedChanges(projectTitle: string, activeFigures: any[]): Promise<void> {
-        if (this.isCommitting) return;
-        this.isCommitting = true;
+        // If a commit is running, await it instead of silently aborting!
+        if (this.commitPromise) return this.commitPromise;
 
-        try {
-            const activeIds = new Set<number>(activeFigures.map((f: any) => f.id));
+        this.commitPromise = (async () => {
+            try {
+                const activeIds = new Set<number>(activeFigures.map((f: any) => f.id));
 
-            for (const [id, blob] of this.pendingUploads.entries()) {
-                if (activeIds.has(id)) {
-                    await this.storage.saveFigure(projectTitle, id, blob);
+                for (const [id, blob] of this.pendingUploads.entries()) {
+                    if (activeIds.has(id)) {
+                        await this.storage.saveFigure(projectTitle, id, blob);
+                    }
                 }
-            }
 
-            await this.storage.cleanupOrphanFigures(projectTitle, activeIds);   
-            this.clearStagedChanges();
-        } finally {
-            this.isCommitting = false;
-        }
+                await this.storage.cleanupOrphanFigures(projectTitle, activeIds);   
+                this.clearStagedChanges();
+            } catch (error: any) {
+                // Offline DBs frequently hit storage limits. Catch and throw clearly.
+                if (error.name === 'QuotaExceededError') {
+                    alert("⚠️ Browser storage is full! Could not save the latest images. Please delete old workspaces to free up space.");
+                }
+                throw error;
+            } finally {
+                this.commitPromise = null;
+            }
+        })();
+
+        return this.commitPromise;
     }
 }
 

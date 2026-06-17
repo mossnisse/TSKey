@@ -280,7 +280,8 @@ export function sanitizeFilename(title: string, extension = '.tskey'): string {
         .toLowerCase()
         .trim()
         .replace(/[^a-z0-9_\-]/gi, '_') // Replace spaces and special characters with underscores
-        .replace(/_+/g, '_');           // Collapse consecutive underscores
+        .replace(/_+/g, '_')            // Collapse consecutive underscores
+        .replace(/_$/, '');             // NEW: Strip trailing underscore
     
     return `${slug || 'untitled_key'}${extension}`;
 }
