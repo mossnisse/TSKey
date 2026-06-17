@@ -8,6 +8,7 @@ import { exportKeyToHTML } from './exporters/htmlExporter.ts';
 import { exportKeyToLaTeX } from './exporters/latexExporter.ts';
 import { exportKeyToPlainText } from './exporters/plainTextExporter.ts';
 import { exportKeyToJSON } from './exporters/jsonExporter.ts';
+import { setupPlainTextImporter, openPlainTextImportDialog } from './importers/plainTextImporter.ts';
 
 const DEBOUNCE_TYPING_MS = 800;
 const AUTO_SCROLL_THRESHOLD_PX = 80;
@@ -39,6 +40,9 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
 
     const controller = new AbortController();
     const { signal } = controller;
+
+    // Wire the plain-text import dialog (markup lives in initializeShell).
+    setupPlainTextImporter(store, uiState, refreshAll, signal);
 
     // Helper to refresh and populate rows inside the workspace project selector hub
     async function refreshHubView() {
@@ -948,6 +952,14 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
             return;
         }
         hiddenInput?.click();
+    }, { signal });
+
+    document.querySelector('#cmd-import-text')?.addEventListener('click', () => {
+        if (isImporting) {
+            showToast("⚠️ An import is currently in progress. Please wait.", "error");
+            return;
+        }
+        openPlainTextImportDialog();
     }, { signal });
 
     document.querySelector('#cmd-export-text')?.addEventListener('click', () => exportKeyToPlainText(store), { signal });

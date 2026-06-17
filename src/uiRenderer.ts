@@ -61,6 +61,9 @@ export function initializeShell(appDiv: HTMLDivElement) {
             <button id="cmd-trigger-import" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>📤 Import External File...</span>
             </button>
+            <button id="cmd-import-text" class="dropdown-action" role="menuitem" tabindex="-1">
+              <span>📋 Import from Plain Text...</span>
+            </button>
             <button id="cmd-export-json" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>📥 Export Native File (.tskey)</span>
             </button>
@@ -292,6 +295,67 @@ export function initializeShell(appDiv: HTMLDivElement) {
           <p class="about-credits">
             Written by Nils Ericson 2026<br>Released under the zlib license
           </p>
+        </div>
+      </div>
+    </div>
+
+    <div id="plain-text-import-view" class="fullscreen-view" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="pt-import-title-label" tabindex="-1">
+      <div class="fullscreen-view-header">
+        <h3 id="pt-import-title-label">📋 Import Key from Plain Text</h3>
+        <button id="pt-import-close" class="modal-close-x" aria-label="Close import view">&times;</button>
+      </div>
+
+      <div class="import-options-bar" role="group" aria-label="Parsing options">
+        <span class="import-options-title">Parsing options</span>
+        <label class="import-option"><input type="checkbox" id="pt-opt-join" checked /> Join wrapped lines</label>
+        <label class="import-option"><input type="checkbox" id="pt-opt-dehyphen" checked /> De-hyphenate breaks</label>
+        <label class="import-option"><input type="checkbox" id="pt-opt-ws" checked /> Spaces/Tab separator</label>
+        <label class="import-option"><input type="checkbox" id="pt-opt-lettered" checked /> Lettered (1a/1b)</label>
+        <label class="import-option"><input type="checkbox" id="pt-opt-dash" checked /> Dash second line</label>
+        <label class="import-option"><input type="checkbox" id="pt-opt-fill" checked /> Fill missing couplets</label>
+        <label class="import-option import-option-num">Min leader dots
+          <input type="number" id="pt-opt-min-dots" min="2" max="10" step="1" value="3" />
+        </label>
+      </div>
+
+      <div class="fullscreen-view-body import-view-body">
+        <section class="import-input-pane">
+          <div class="import-pane-toolbar">
+            <label for="pt-import-source" class="import-pane-label">Paste your key, or load a text file</label>
+            <div class="import-toolbar-actions">
+              <button id="pt-import-load-file" class="btn btn-secondary">📂 Load .txt File...</button>
+              <button id="pt-import-clear" class="btn btn-outline">Clear</button>
+            </div>
+          </div>
+          <textarea id="pt-import-source" class="import-source-textarea" spellcheck="false"
+            placeholder="1.&#9;Has feathers&#9;Bird&#10;&#8212;&#9;Lacks feathers&#9;2&#10;&#10;2.&#9;Has fur&#9;Mammal&#10;&#8212;&#9;Has scales&#9;Reptile"></textarea>
+          <input type="file" id="pt-import-file-hidden" accept=".txt,text/plain" style="display: none;" />
+          <p class="import-hint">
+            Paste a key in almost any layout. Each step starts with a number (<code>1</code>, <code>1.</code>, <code>1a</code>/<code>1b</code>)
+            and the second alternative may start with a dash (<code>-</code> <code>–</code> <code>—</code>). The destination — a step number
+            or a taxon name — is whatever follows a dotted leader (<code>……</code>), a tab, or wide spacing at the end of the lead.
+            Lines wrapped across a page (common in PDFs) are stitched back together. Tune the options above and watch the preview.
+            The result is best-effort and may need a little manual cleanup.
+          </p>
+        </section>
+
+        <section class="import-preview-pane">
+          <div class="import-pane-toolbar">
+            <span class="import-pane-label">Preview</span>
+            <span id="pt-import-status" class="import-status"></span>
+          </div>
+          <div id="pt-import-preview" class="import-preview-content"></div>
+        </section>
+      </div>
+
+      <div class="fullscreen-view-footer">
+        <label class="import-title-field">
+          Import as:
+          <input type="text" id="pt-import-title" placeholder="Imported Key" />
+        </label>
+        <div class="import-footer-actions">
+          <button id="pt-import-cancel" class="btn btn-secondary">Cancel</button>
+          <button id="pt-import-confirm" class="btn btn-primary" disabled>Import into Workspace</button>
         </div>
       </div>
     </div>
