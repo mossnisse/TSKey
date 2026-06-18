@@ -1,5 +1,6 @@
 // store.ts
 import { isValidCoupletArray, isValidFigureArray, isRecord, branchTarget, classifyBranch, EMPTY_BRANCH } from './utils.ts';
+import { figIdTokenRegex, figRawTokenRegex, buildFigureLookups } from './figureTokens.ts';
 import { workspaceStorage } from './db.ts';
 
 export const APP_NAME = 'TSKey';
@@ -922,14 +923,7 @@ export class KeyStore {
         // Create a history checkpoint before mutating state
         this.saveCheckpoint();
 
-        // Build optimized lookup maps matching how resolveTextReferences functions
-        const idToFig = new Map<number, Figure>(figures.map(f => [f.id, f]));
-        const displayNumToFig = new Map<number, Figure>();
-        const filenameToFig = new Map<string, Figure>();
-        figures.forEach((f, index) => {
-            displayNumToFig.set(index + 1, f);
-            filenameToFig.set(f.filename.trim().toLowerCase(), f);
-        });
+        const { idToFig, displayNumToFig, filenameToFig } = buildFigureLookups(figures);
 
         const orderedFigures: Figure[] = [];
         const seenFigureIds = new Set<number>();
@@ -946,7 +940,7 @@ export class KeyStore {
                 let match: RegExpExecArray | null;
 
                 // Stored references [figID: N] — value is always an internal figure ID
-                const idTokenRegex = /\[figID:\s*(\d+)\s*\]/gi;
+                const idTokenRegex = figIdTokenRegex();
                 while ((match = idTokenRegex.exec(text)) !== null) {
                     const id = parseInt(match[1].trim(), 10);
                     const matchedFig = idToFig.get(id);
@@ -957,7 +951,7 @@ export class KeyStore {
                 }
 
                 // Unresolved references [fig: VALUE] — numeric = 1-based display number, text = filename
-                const rawTokenRegex = /\[fig:\s*(.*?)\s*\]/gi;
+                const rawTokenRegex = figRawTokenRegex();
                 while ((match = rawTokenRegex.exec(text)) !== null) {
                     const trimmedValue = match[1].trim();
                     let matchedFig: Figure | undefined = undefined;
@@ -1322,8 +1316,8 @@ export class KeyStore {
             }
 
             // --- Unresolved Figure Reference Diagnostics ---
-            const FIG_ID_REGEX = /\[figID:\s*(\d+)\s*\]/gi;
-            const FIG_RAW_REGEX = /\[fig:\s*([^\]]+)\s*\]/gi;
+            const FIG_ID_REGEX = figIdTokenRegex();
+            const FIG_RAW_REGEX = figRawTokenRegex();
 
             // Check Choice A
             if (c.alt1) {
@@ -1419,17 +1413,10 @@ export class KeyStore {
         if (!text) return text;
 
         const figureCount = this.state.figures.length;
-        const filenameToDisplayNum = new Map<string, number>();
-        this.state.figures.forEach(fig => {
-            if (!fig.filename) return;
-            const displayNum = idToDisplayNum.get(fig.id);
-            if (displayNum !== undefined) {
-                filenameToDisplayNum.set(fig.filename.trim().toLowerCase(), displayNum);
-            }
-        });
+        const { filenameToFig } = buildFigureLookups(this.state.figures);
 
         // Stored references [figID: N] — value is always an internal figure ID.
-        text = text.replace(/\[figID:\s*(\d+)\s*\]/gi, (_match, value) => {
+        text = text.replace(figIdTokenRegex(), (_match, value) => {
             const id = parseInt(value.trim(), 10);
             const displayNum = idToDisplayNum.get(id);
             return displayNum !== undefined
@@ -1438,7 +1425,7 @@ export class KeyStore {
         });
 
         // Unresolved references [fig: value] — numeric = 1-based display number, text = filename.
-        text = text.replace(/\[fig:\s*(.*?)\s*\]/gi, (_match, value) => {
+        text = text.replace(figRawTokenRegex(), (_match, value) => {
             const trimmedValue = value.trim();
 
             const displayNum = Number(trimmedValue);
@@ -1446,9 +1433,10 @@ export class KeyStore {
                 return `(Fig. ${displayNum})`;
             }
 
-            const lowercaseFilename = trimmedValue.toLowerCase();
-            if (filenameToDisplayNum.has(lowercaseFilename)) {
-                return `(Fig. ${filenameToDisplayNum.get(lowercaseFilename)})`;
+            const fig = filenameToFig.get(trimmedValue.toLowerCase());
+            if (fig) {
+                const fileDisplayNum = idToDisplayNum.get(fig.id);
+                if (fileDisplayNum !== undefined) return `(Fig. ${fileDisplayNum})`;
             }
 
             return `[Broken Fig: ${trimmedValue}]`;
@@ -1465,28 +1453,21 @@ export class KeyStore {
     public encodeFigureTokens(text: string): string {
         if (!text) return '';
 
-        const figures = this.state.figures;
-        const displayNumToId = new Map<number, number>();
-        const filenameToId = new Map<string, number>();
+        const { displayNumToFig, filenameToFig } = buildFigureLookups(this.state.figures);
 
-        figures.forEach((fig, index) => {
-            displayNumToId.set(index + 1, fig.id);
-            filenameToId.set(fig.filename.trim().toLowerCase(), fig.id);
-        });
-
-        return text.replace(/\[fig:\s*(.*?)\s*\]/gi, (match, value) => {
+        return text.replace(figRawTokenRegex(), (match, value) => {
             const trimmed = value.trim();
 
             // Try as a 1-based display number (the primary user-facing format)
             const displayNum = parseInt(trimmed, 10);
-            if (!isNaN(displayNum) && String(displayNum) === trimmed && displayNumToId.has(displayNum)) {
-                return `[figID: ${displayNumToId.get(displayNum)!}]`;
+            if (!isNaN(displayNum) && String(displayNum) === trimmed && displayNumToFig.has(displayNum)) {
+                return `[figID: ${displayNumToFig.get(displayNum)!.id}]`;
             }
 
             // Try as a filename (case-insensitive)
-            const fig = filenameToId.get(trimmed.toLowerCase());
-            if (fig !== undefined) {
-                return `[figID: ${fig}]`;
+            const fig = filenameToFig.get(trimmed.toLowerCase());
+            if (fig) {
+                return `[figID: ${fig.id}]`;
             }
 
             // Cannot resolve — keep the original token so the user sees the problem
@@ -1502,13 +1483,9 @@ export class KeyStore {
     public decodeTextReferencesForEditor(text: string): string {
         if (!text) return '';
 
-        const figures = this.state.figures;
-        const idToDisplayNum = new Map<number, number>();
-        figures.forEach((fig, index) => {
-            idToDisplayNum.set(fig.id, index + 1);
-        });
+        const { idToDisplayNum } = buildFigureLookups(this.state.figures);
 
-        return text.replace(/\[figID:\s*(\d+)\s*\]/gi, (match, value) => {
+        return text.replace(figIdTokenRegex(), (match, value) => {
             const id = parseInt(value.trim(), 10);
             const displayNum = idToDisplayNum.get(id);
             return displayNum !== undefined
