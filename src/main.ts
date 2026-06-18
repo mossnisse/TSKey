@@ -29,6 +29,9 @@ async function bootstrapApp() {
     const lastViewedProject = uiState.activeProjectTitle;
 
     const store = new KeyStore([], []);
+
+    store.setProjectPersistedListener(title => uiState.setActiveProjectTitle(title));
+
     let loadSuccess = false;
 
     if (lastViewedProject && lastViewedProject !== 'Untitled Key') {

@@ -49,6 +49,7 @@ export class KeyStore {
     private state: AppState;
     private hasUncommittedChanges: boolean = false;
     private persistedTitle: string = '';
+    private onProjectPersisted?: (title: string) => void;
 
     private undoStack: AppState[] = [];
     private redoStack: AppState[] = [];
@@ -1058,13 +1059,22 @@ export class KeyStore {
         this.setTitle(newTitle);
     }
 
+    public setProjectPersistedListener(cb: (title: string) => void): void {
+        this.onProjectPersisted = cb;
+    }
+
+    private commitPersistedTitle(title: string): void {
+        this.persistedTitle = title;
+        this.onProjectPersisted?.(title);   // <- the single place the pointer updates
+    }
+
     public async getStoredProjectsList(): Promise<{ name: string, lastModified: number }[]> {
         return await workspaceStorage.getProjectList();
     }
 
     public async createNewProject(title: string): Promise<void> {
         this.state.title = title;
-        this.persistedTitle = title; // Sync the disk tracking name
+        this.commitPersistedTitle(title); // Sync the disk tracking name
         this.state.dichotomousKey = [];
         this.state.figures = [];
         this.resetTrackingContext();
@@ -1077,7 +1087,7 @@ export class KeyStore {
         const data = await workspaceStorage.loadProject(title);
         if (data) {
             this.state.title = data.title;
-            this.persistedTitle = data.title; // Sync the disk tracking name
+            this.commitPersistedTitle(data.title); // Sync the disk tracking name
             this.state.dichotomousKey = data.dichotomousKey;
             this.state.figures = data.figures;
             this.resetTrackingContext();
@@ -1115,8 +1125,7 @@ export class KeyStore {
                 await workspaceStorage.deleteProject(oldTitle);
             }
 
-            this.persistedTitle = this.state.title;
-            localStorage.setItem('TSKey_LastActiveProject', this.state.title);
+            this.commitPersistedTitle(this.state.title);
             this.markSaved();
 
         } catch (error) {
@@ -1141,8 +1150,7 @@ export class KeyStore {
 
             await workspaceStorage.saveProject(newTitle, this.state.dichotomousKey, this.state.figures);
 
-            this.persistedTitle = newTitle;
-            localStorage.setItem('TSKey_LastActiveProject', newTitle);
+            this.commitPersistedTitle(newTitle);
             this.markSaved();
         } catch (error) {
             console.error("Save As Operation Failed:", error);
@@ -1169,8 +1177,8 @@ export class KeyStore {
         this.hasUncommittedChanges = true;
     }
 
-    public async loadFromStorage(fallbackData: Couplet[] = [], fallbackFigures: Figure[] = [], fallbackTitle = 'Untitled Key'): Promise<boolean> {
-        const lastActive = localStorage.getItem('TSKey_LastActiveProject') || fallbackTitle;
+    public async loadFromStorage(fallbackData: Couplet[] = [], fallbackFigures: Figure[] = [], lastActiveTitle = 'Untitled Key'): Promise<boolean> {
+        const lastActive = lastActiveTitle;
         const success = await this.loadProject(lastActive);
 
         if (!success) {

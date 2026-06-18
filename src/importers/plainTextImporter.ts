@@ -21,7 +21,7 @@ import type { UIStateStore } from '../uiState.ts';
 import { APP_NAME, APP_VERSION } from '../store.ts';
 import { showToast } from '../uiRenderer.ts';
 import { escapeHTML } from '../utils.ts';
-import { workspaceStorage, activeObjectURLs } from '../db.ts';
+import { workspaceStorage, revokeStoredObjectURLs  } from '../db.ts';
 
 const EMPTY_DEST_TOKEN = '...';
 const EMPTY_ALT_TOKEN = '___';
@@ -539,11 +539,7 @@ async function confirmImport(store: KeyStore, uiState: UIStateStore, refreshAll:
             return;
         }
 
-        // Plain-text imports never carry binary image data — clear any stale URLs.
-        for (const url of activeObjectURLs.values()) {
-            URL.revokeObjectURL(url);
-        }
-        activeObjectURLs.clear();
+        revokeStoredObjectURLs();  // is it needed at al? should it be?
         workspaceStorage.clearStagedChanges();
 
         store.setProjectName(targetName);

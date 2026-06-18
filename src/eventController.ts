@@ -784,13 +784,11 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
             }
 
             // Use the new explicit Save As method
-            uiState.setActiveProjectTitle(chosenTitle);
             await store.saveAsProject(chosenTitle);
 
             showToast(`💾 Saved workspace as "${chosenTitle}"`, "success");
             batchedRefresh(refreshAll);
         } catch (error) {
-            uiState.setActiveProjectTitle(originalTitle);
             showToast("⚠️ Save As operation failed.", "error");
         }
     }, { signal });
@@ -826,7 +824,6 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
             // make sure the store is reverted back to its true persisted title name.
             if (oldTitle && oldTitle !== newTitle) {
                 store.setProjectName(oldTitle);
-                uiState.setActiveProjectTitle(oldTitle);
             }
 
             showToast("⚠️ Save failed. Your changes were kept in memory.", "error");
@@ -885,7 +882,6 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
             workspaceStorage.clearStagedChanges();
 
             store.setProjectName(targetName);
-            uiState.setActiveProjectTitle(targetName);
 
             const failedFigureIds: number[] = [];
             if (importResult.importedFigures && importResult.importedFigures.length > 0) {
@@ -936,7 +932,6 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
             // ROLLBACK: Revert the title state if mutation halfway broke down
             if (originalTitle) {
                 store.setProjectName(originalTitle);
-                uiState.setActiveProjectTitle(originalTitle);
             }
             workspaceStorage.clearStagedChanges();
 
