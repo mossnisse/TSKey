@@ -39,6 +39,7 @@ export class TypingSession {
      */
     public start(fieldKey: string, onStart: () => void): void {
         if (!this.active || this.fieldKey !== fieldKey) {
+            this.clearTimer();      // <-- never inherit the previous field's timer
             onStart();
             this.active = true;
             this.fieldKey = fieldKey;
@@ -51,8 +52,9 @@ export class TypingSession {
     public extendTimeout(debounceMs: number, onTimeout: () => void): void {
         this.clearTimer();
         this.timeoutId = window.setTimeout(() => {
-            this.active = false;
             this.timeoutId = null;
+            this.active = false;
+            this.fieldKey = null;   // <-- keep active/fieldKey in lockstep
             onTimeout();
         }, debounceMs);
     }
@@ -71,7 +73,9 @@ export class TypingSession {
      * Concludes the session if the focus matches the ending field context.
      */
     public end(fieldKey: string | null, onEnd: () => void): boolean {
-        if (this.fieldKey !== null && fieldKey !== null && this.fieldKey === fieldKey) {
+        if (!this.active && this.fieldKey === null) return false;
+
+        if (fieldKey === null || this.fieldKey === fieldKey) {
             this.active = false;
             this.fieldKey = null;
             this.clearTimer();

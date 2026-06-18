@@ -1,5 +1,5 @@
 // store.ts
-import { isValidCoupletArray, isValidFigureArray } from './utils.ts';
+import { isValidCoupletArray, isValidFigureArray, isRecord } from './utils.ts';
 import { workspaceStorage } from './db.ts';
 
 export const APP_NAME = 'TSKey';
@@ -24,6 +24,10 @@ export interface Figure {
     caption: string;
 }
 
+export interface FigureWithBinary extends Figure {
+    binaryData?: string;
+}
+
 export interface KeyValidationError {
     severity: 'warning' | 'error';
     message: string;
@@ -38,7 +42,7 @@ interface AppState {
 export interface ImportResult {
     success: boolean;
     errors: string[];
-    importedFigures?: any[];
+    importedFigures?: FigureWithBinary[];
 }
 
 export class KeyStore {
@@ -971,33 +975,21 @@ export class KeyStore {
             let importedFigures: Figure[] = [];
             let importedTitle = 'Untitled Key';
 
-            if (
-                rawData &&
-                typeof rawData === 'object' &&
-                'data' in rawData &&
-                (rawData as any).data &&
-                typeof (rawData as any).data === 'object'
-            ) {
+            if (isRecord(rawData) && isRecord(rawData.data)) {
                 const payload = (rawData as any).data;
 
-                if (
-                    'key' in payload &&
-                    isValidCoupletArray(payload.key)
-                ) {
+                if ('key' in payload && isValidCoupletArray(payload.key)) {
                     importedKey = payload.key;
 
-                    if (
-                        'figures' in payload &&
-                        isValidFigureArray(payload.figures)
-                    ) {
+                    if (isValidFigureArray(payload.figures)) {
                         importedFigures = payload.figures;
                     }
                 }
 
                 // Extract project title if declared inside native file format
-                if ('title' in payload && typeof payload.title === 'string') {
+                if (typeof payload.title === 'string') {
                     importedTitle = payload.title;
-                } else if ('title' in (rawData as any) && typeof (rawData as any).title === 'string') {
+                } else if (typeof rawData.title === 'string') {
                     importedTitle = (rawData as any).title;
                 }
             }
@@ -1016,14 +1008,14 @@ export class KeyStore {
                 };
             }
 
-            let extractedFiguresWithBinary: any[] = [];
-            if (importedFigures && importedFigures.length > 0) {
+            let extractedFiguresWithBinary: FigureWithBinary[] = [];
+            if (importedFigures.length > 0) {
                 extractedFiguresWithBinary = [...importedFigures];
 
                 // Strip the bulky binary data out of the application state timeline
-                importedFigures = importedFigures.map((f: any) => {
+                importedFigures = importedFigures.map((f: FigureWithBinary): Figure => {
                     const { binaryData, ...cleanFigure } = f;
-                    return cleanFigure as Figure;
+                    return cleanFigure;
                 });
             }
 
@@ -1138,27 +1130,27 @@ export class KeyStore {
     }
 
     public async saveAsProject(newTitle: string): Promise<void> {
-    const oldTitle = this.persistedTitle;
+        const oldTitle = this.persistedTitle;
 
-    try {
-        if (oldTitle && oldTitle !== 'Untitled Key') {
-            await workspaceStorage.cloneProjectFigures(oldTitle, newTitle);
+        try {
+            if (oldTitle && oldTitle !== 'Untitled Key') {
+                await workspaceStorage.cloneProjectFigures(oldTitle, newTitle);
+            }
+
+            this.state.title = newTitle;
+
+            await workspaceStorage.saveProject(newTitle, this.state.dichotomousKey, this.state.figures);
+
+            this.persistedTitle = newTitle;
+            localStorage.setItem('TSKey_LastActiveProject', newTitle);
+            this.markSaved();
+        } catch (error) {
+            console.error("Save As Operation Failed:", error);
+            // Rollback state title on failure
+            this.state.title = oldTitle;
+            throw error;
         }
-
-        this.state.title = newTitle;
-        
-        await workspaceStorage.saveProject(newTitle, this.state.dichotomousKey, this.state.figures);
-
-        this.persistedTitle = newTitle;
-        localStorage.setItem('TSKey_LastActiveProject', newTitle);
-        this.markSaved();
-    } catch (error) {
-        console.error("Save As Operation Failed:", error);
-        // Rollback state title on failure
-        this.state.title = oldTitle;
-        throw error;
     }
-}
 
     public addFigureReference(id: number, filename: string, blob: Blob): void {
         this.saveCheckpoint();

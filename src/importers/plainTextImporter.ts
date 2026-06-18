@@ -102,7 +102,7 @@ function parseMarker(line: string, opts: PlainTextParseOptions): LeadMarker | nu
     // Numbered or lettered lead: "1", "1.", "1)", "12", "1a", "1b.", etc.
     // The marker must be followed by whitespace then text, which keeps wrapped
     // continuations like "3F) on inner side" from being mistaken for markers.
-    const letterClass = opts.recognizeLetteredCouplets ? '([a-dA-D])?' : '()?';
+    const letterClass = opts.recognizeLetteredCouplets ? '([a-bA-B])?' : '()?';
     const numbered = line.match(new RegExp(`^\\s*(\\d{1,4})\\s*${letterClass}\\s*[.)]?\\s+(\\S.*)$`));
     if (numbered) {
         const num = parseInt(numbered[1], 10);
@@ -222,7 +222,7 @@ export function parsePlainTextKey(
     interface Lead { num: number; isSecond: boolean; body: string; }
     const leads: Lead[] = [];
     let current: Lead | null = null;
-    let lastFirstNum = 0;
+    let lastCoupletNum = 0;
     let droppedContinuations = 0;
 
     const finalize = () => {
@@ -236,13 +236,16 @@ export function parsePlainTextKey(
         if (marker) {
             finalize();
             if (marker.kind === 'first') {
-                lastFirstNum = marker.coupletNum!;
+                lastCoupletNum = marker.coupletNum!;
                 current = { num: marker.coupletNum!, isSecond: false, body: marker.rest };
             } else {
-                const num = marker.coupletNum ?? lastFirstNum;
+                const num = marker.coupletNum ?? lastCoupletNum;
                 if (num === 0) {
                     warnings.push(`Ignored a second-alternative line before any numbered step: "${line.trim().slice(0, 50)}"`);
                     continue;
+                }
+                if (marker.coupletNum !== null) {
+                    lastCoupletNum = marker.coupletNum;
                 }
                 current = { num, isSecond: true, body: marker.rest };
             }
@@ -280,6 +283,11 @@ export function parsePlainTextKey(
     let cappedLink = false;
 
     for (const lead of leads) {
+        if (lead.num > MAX_COUPLET_NUMBER) {
+            warnings.push(`Step number ${lead.num} exceeds the safety ceiling of ${MAX_COUPLET_NUMBER} and was skipped.`);
+            continue;
+        }
+
         maxNum = Math.max(maxNum, lead.num);
         const { text, dest } = splitBody(lead.body, opts);
         let { linkNum, taxa } = classifyDest(dest);

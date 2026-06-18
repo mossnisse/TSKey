@@ -119,6 +119,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
         // Synchronize the text change immediately to the store without waiting
         let updatePayload: Partial<Omit<Couplet, 'id'>> = {};
         const currentValue = target.value;
+        type CoupletStringField = 'alt1' | 'alt2' | 'taxa1' | 'taxa2';
 
         if (field === 'dest1' || field === 'dest2') {
             const linkField = field === 'dest1' ? 'link1' : 'link2';
@@ -129,7 +130,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
             updatePayload[linkField] = parsed.link;
             updatePayload[taxaField] = parsed.taxa;
         } else {
-            updatePayload[field as keyof Omit<Couplet, 'id'>] = currentValue as never;
+            updatePayload[field as CoupletStringField] = currentValue;
         }
 
         store.updateCouplet(id, updatePayload);

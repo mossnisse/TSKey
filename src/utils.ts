@@ -31,8 +31,7 @@ export function triggerFileDownload(content: string, filename: string, mimeType:
             const chunkSize = 8192;
             for (let i = 0; i < binaryBytes.length; i += chunkSize) {
                 const chunk = binaryBytes.subarray(i, i + chunkSize);
-                // @ts-ignore
-                binaryString += String.fromCharCode.apply(null, chunk);
+                binaryString += String.fromCharCode(...chunk);
             }
 
             const encodedContent = btoa(binaryString);
@@ -69,7 +68,7 @@ export function triggerFileDownload(content: string, filename: string, mimeType:
 
     } catch (globalError) {
         console.error("An unhandled exception occurred during file synthesis/download processing:", globalError);
-        
+
         // Fallback: If an error occurs BEFORE scheduling the timeout, clean up immediately
         if (downloadAnchor && document.body.contains(downloadAnchor)) {
             document.body.removeChild(downloadAnchor);
@@ -84,7 +83,9 @@ export function triggerFileDownload(content: string, filename: string, mimeType:
  */
 export const IS_MAC: boolean = (() => {
     // Modern User-Agent Client Hints API (Chrome, Edge, Opera)
-    const userAgentData = (navigator as any).userAgentData;
+    interface NavigatorUAData { platform?: string }
+    const navWithUA = navigator as Navigator & { userAgentData?: NavigatorUAData };
+    const userAgentData = navWithUA.userAgentData;
     if (userAgentData?.platform) {
         return userAgentData.platform.toLowerCase().includes('mac');
     }
@@ -103,7 +104,7 @@ export const IS_MAC: boolean = (() => {
 /**
  * Checks if the json is an valid array of Couplets.
  */
-export function isValidCoupletArray(data: any): data is Couplet[] {
+export function isValidCoupletArray(data: unknown): data is Couplet[] {
     if (!Array.isArray(data)) return false;
 
     const seenIds = new Set<number>();
@@ -134,7 +135,7 @@ export function isValidCoupletArray(data: any): data is Couplet[] {
 /**
  * Checks if the json is a valid array of Figures.
  */
-export function isValidFigureArray(data: any): data is Figure[] {
+export function isValidFigureArray(data: unknown): data is Figure[] {
     if (!Array.isArray(data)) return false;
 
     const seenIds = new Set<number>();
@@ -282,6 +283,10 @@ export function sanitizeFilename(title: string, extension = '.tskey'): string {
         .replace(/[^a-z0-9_\-]/gi, '_') // Replace spaces and special characters with underscores
         .replace(/_+/g, '_')            // Collapse consecutive underscores
         .replace(/_$/, '');             // NEW: Strip trailing underscore
-    
+
     return `${slug || 'untitled_key'}${extension}`;
+}
+
+export function isRecord(v: unknown): v is Record<string, unknown> {
+    return typeof v === 'object' && v !== null;
 }

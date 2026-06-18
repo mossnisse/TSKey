@@ -59,15 +59,15 @@ export function initializeShell(appDiv: HTMLDivElement) {
             </button>
             <div class="menu-divider" role="separator"></div>
             <button id="cmd-trigger-import" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>📤 Import External File...</span>
-            </button>
-            <button id="cmd-import-text" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>📋 Import from Plain Text...</span>
+              <span>📤 Import Native File (.tskey)...</span>
             </button>
             <button id="cmd-export-json" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>📥 Export Native File (.tskey)</span>
             </button>
             <div class="menu-divider"></div>
+            <button id="cmd-import-text" class="dropdown-action" role="menuitem" tabindex="-1">
+              <span>📋 Import from Plain Text...</span>
+            </button>
             <button id="cmd-export-text" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>📄 Export to Plain Text (.txt)</span>
             </button>
@@ -388,7 +388,7 @@ export function renderMenu(store: KeyStore, uiState: UIStateStore) {
     const hasClipboard = store.hasClipboardData();
 
     // Contextual Sync for current key title & modification indicators
-    const currentTitle = (store as any).getProjectName ? (store as any).getProjectName() : 'Untitled Key';
+    const currentTitle = store.getProjectName();
     const isUnsaved = store.hasUnsavedChanges();
     const formattedTitleText = `${currentTitle}${isUnsaved ? ' *' : ''}`;
 
