@@ -64,8 +64,8 @@ export async function exportKeyToHTML(store: KeyStore): Promise<void> {
             const c = key[index];
             const currentDisplayNum = index + 1;
 
-            const dest1 = resolveDestination(c.link1, c.taxa1, idToIndexMap);
-            const dest2 = resolveDestination(c.link2, c.taxa2, idToIndexMap);
+            const dest1 = resolveDestination(c.branch1, idToIndexMap);
+            const dest2 = resolveDestination(c.branch2, idToIndexMap);
 
             const end1 = destinationToHtml(dest1);
             const end2 = destinationToHtml(dest2);

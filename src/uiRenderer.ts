@@ -547,8 +547,8 @@ export function renderEditorCards(store: KeyStore) {
         const displayNum = index + 1;
         const isSelected = selectedIds.has(couplet.id);
         const inboundLinks = inboundLinksMap.get(couplet.id) || [];
-        const dest1 = resolveDestination(couplet.link1, couplet.taxa1, idToIndexMap);
-        const dest2 = resolveDestination(couplet.link2, couplet.taxa2, idToIndexMap);
+        const dest1 = resolveDestination(couplet.branch1, idToIndexMap);
+        const dest2 = resolveDestination(couplet.branch2, idToIndexMap);
         const cardErrors = activeDiagnostics.get(couplet.id) || [];
         const computedTitle = `${displayNum}.`;
         const badgeClass = inboundLinks.length ? 'badge badge-linked' : (index === 0 ? 'badge badge-linked' : 'badge badge-isolated');
@@ -789,8 +789,8 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
     key.forEach((c, index) => {
         const currentDisplayNum = index + 1;
 
-        const dest1 = resolveDestination(c.link1, c.taxa1, idToIndexMap);
-        const dest2 = resolveDestination(c.link2, c.taxa2, idToIndexMap);
+        const dest1 = resolveDestination(c.branch1, idToIndexMap);
+        const dest2 = resolveDestination(c.branch2, idToIndexMap);
 
         const val1 = store.resolveTextReferences(c.alt1, figDisplayMap) || '___';
         const val2 = store.resolveTextReferences(c.alt2, figDisplayMap) || '___';

@@ -1,5 +1,5 @@
 // store.ts
-import { isValidCoupletArray, isValidFigureArray, isRecord } from './utils.ts';
+import { isValidCoupletArray, isValidFigureArray, isRecord, branchTarget, classifyBranch, EMPTY_BRANCH } from './utils.ts';
 import { workspaceStorage } from './db.ts';
 
 export const APP_NAME = 'TSKey';
@@ -8,14 +8,31 @@ export const STORAGE_KEY = 'dichotomous_key';
 export const FIGURES_STORAGE_KEY = 'dichotomous_key_figures';
 export const TITLE_STORAGE_KEY = 'dichotomous_key_title';
 
+/**
+ * A couplet choice's destination. Replaces the old (link: number, taxa: string)
+ * pair that overloaded two fields to encode several states. Exactly one of:
+ *
+ *   linked     — points at another couplet's permanent id
+ *   unresolved — a step number was typed before that step exists
+ *   taxon      — a terminal taxon name (the branch ends here)
+ *   empty      — nothing entered yet
+ *
+ * A "broken" destination (a `linked` branch whose target no longer exists) is
+ * NOT a stored kind — it is derived at read time via classifyBranch(), since it
+ * depends on the rest of the key rather than on the branch itself.
+ */
+export type Branch =
+    | { kind: 'linked'; targetId: number }
+    | { kind: 'unresolved'; step: number }
+    | { kind: 'taxon'; name: string }
+    | { kind: 'empty' };
+
 export interface Couplet {
-    id: number;    // Permanent internal unique ID
+    id: number;        // Permanent internal unique ID
     alt1: string;
     alt2: string;
-    link1: number; // Links to the internal ID of another couplet
-    link2: number;
-    taxa1: string; // taxon name or an unresolved link to an step
-    taxa2: string;
+    branch1: Branch;   // destination for the first alternative
+    branch2: Branch;   // destination for the second alternative
 }
 
 export interface Figure {
@@ -64,7 +81,7 @@ export class KeyStore {
     // Shared clipboard state structure
     private clipboardBuffer: Couplet[] = [];
     private clipboardMode: 'copy' | 'cut' = 'copy';
-    private cutIncomingLinksBuffer: Array<{ sourceId: number, field: 'link1' | 'link2', targetOldId: number }> = [];
+    private cutIncomingLinksBuffer: Array<{ sourceId: number, field: 'branch1' | 'branch2', targetOldId: number }> = [];
 
     // Figures
     private selectedFigureIds: Set<number> = new Set();
@@ -280,13 +297,15 @@ export class KeyStore {
         key.forEach((couplet, index) => {
             const humanLabel = index + 1;
 
-            if (couplet.link1) {
-                if (!map.has(couplet.link1)) map.set(couplet.link1, []);
-                map.get(couplet.link1)!.push(`${humanLabel}a`);
+            const t1 = branchTarget(couplet.branch1);
+            if (t1 !== null) {
+                if (!map.has(t1)) map.set(t1, []);
+                map.get(t1)!.push(`${humanLabel}a`);
             }
-            if (couplet.link2) {
-                if (!map.has(couplet.link2)) map.set(couplet.link2, []);
-                map.get(couplet.link2)!.push(`${humanLabel}b`);
+            const t2 = branchTarget(couplet.branch2);
+            if (t2 !== null) {
+                if (!map.has(t2)) map.set(t2, []);
+                map.get(t2)!.push(`${humanLabel}b`);
             }
         });
 
@@ -314,8 +333,10 @@ export class KeyStore {
 
                 const match = lookupMap.get(activeId);
                 if (match) {
-                    if (match.link2) stack.push(match.link2);
-                    if (match.link1) stack.push(match.link1);
+                    const t2 = branchTarget(match.branch2);
+                    if (t2 !== null) stack.push(t2);
+                    const t1 = branchTarget(match.branch1);
+                    if (t1 !== null) stack.push(t1);
                 }
             }
         }
@@ -356,42 +377,41 @@ export class KeyStore {
         }, 100);
 
         const nextInternalId = maxId + 1;
-        // Determine what the 1-based step number string will be for the new card
-        const newStepNumberStr = (this.state.dichotomousKey.length + 1).toString();
+        // Determine what the 1-based step number will be for the new card
+        const newStepNumber = this.state.dichotomousKey.length + 1;
 
         // Find which slot we want to auto-link (searching backwards)
         let targetLinkIndex = -1;
-        let targetField: 'link1' | 'link2' | null = null;
+        let targetField: 'branch1' | 'branch2' | null = null;
 
         for (let i = this.state.dichotomousKey.length - 1; i >= 0; i--) {
             const couplet = this.state.dichotomousKey[i];
-            if (!couplet.link1 && !couplet.taxa1) {
+            if (couplet.branch1.kind === 'empty') {
                 targetLinkIndex = i;
-                targetField = 'link1';
+                targetField = 'branch1';
                 break;
-            } else if (!couplet.link2 && !couplet.taxa2) {
+            } else if (couplet.branch2.kind === 'empty') {
                 targetLinkIndex = i;
-                targetField = 'link2';
+                targetField = 'branch2';
                 break;
             }
         }
 
+        const linkedToNew: Branch = { kind: 'linked', targetId: nextInternalId };
+
+        // An unresolved branch that was waiting for this exact step now resolves to it
+        const resolveIfWaiting = (branch: Branch): Branch =>
+            branch.kind === 'unresolved' && branch.step === newStepNumber ? linkedToNew : branch;
+
         const updatedKey = this.state.dichotomousKey.map((couplet, index) => {
             let updated = { ...couplet };
 
+            updated.branch1 = resolveIfWaiting(updated.branch1);
+            updated.branch2 = resolveIfWaiting(updated.branch2);
+
             // Apply standard backward auto-linking if this card matched an open slot
             if (index === targetLinkIndex && targetField) {
-                updated[targetField] = nextInternalId;
-            }
-
-            // Scan for unresolved text entries pointing to the new step number and link them
-            if (!updated.link1 && updated.taxa1.trim() === newStepNumberStr) {
-                updated.link1 = nextInternalId;
-                updated.taxa1 = "";
-            }
-            if (!updated.link2 && updated.taxa2.trim() === newStepNumberStr) {
-                updated.link2 = nextInternalId;
-                updated.taxa2 = "";
+                updated[targetField] = linkedToNew;
             }
 
             return updated;
@@ -403,8 +423,7 @@ export class KeyStore {
             {
                 id: nextInternalId,
                 alt1: "", alt2: "",
-                link1: 0, link2: 0,
-                taxa1: "", taxa2: ""
+                branch1: EMPTY_BRANCH, branch2: EMPTY_BRANCH
             }
         ];
         this.hasUncommittedChanges = true;
@@ -441,16 +460,19 @@ export class KeyStore {
             idTranslationMap.set(item.id, newId);
         });
 
-        const newCards: Couplet[] = this.clipboardBuffer.map((item) => {
-            const mappedId = idTranslationMap.get(item.id)!;
-            const mappedLink1 = idTranslationMap.has(item.link1) ? idTranslationMap.get(item.link1)! : item.link1;
-            const mappedLink2 = idTranslationMap.has(item.link2) ? idTranslationMap.get(item.link2)! : item.link2;
+        // Re-point a linked branch to the pasted copy of its target when that target
+        // was part of the same paste; external links keep their original id.
+        const remapBranch = (branch: Branch): Branch =>
+            branch.kind === 'linked' && idTranslationMap.has(branch.targetId)
+                ? { kind: 'linked', targetId: idTranslationMap.get(branch.targetId)! }
+                : branch;
 
+        const newCards: Couplet[] = this.clipboardBuffer.map((item) => {
             return {
                 ...item,
-                id: mappedId,
-                link1: mappedLink1,
-                link2: mappedLink2
+                id: idTranslationMap.get(item.id)!,
+                branch1: remapBranch(item.branch1),
+                branch2: remapBranch(item.branch2)
             };
         });
 
@@ -469,7 +491,7 @@ export class KeyStore {
                 linksToRestore.forEach(b => {
                     const newTargetId = idTranslationMap.get(b.targetOldId);
                     if (newTargetId !== undefined) {
-                        updated[b.field] = newTargetId;
+                        updated[b.field] = { kind: 'linked', targetId: newTargetId };
                     }
                 });
 
@@ -511,13 +533,15 @@ export class KeyStore {
             .filter(c => !selectedIds.has(c.id))
             .map(c => {
                 let updated = { ...c };
-                if (selectedIds.has(c.link1)) {
-                    this.cutIncomingLinksBuffer.push({ sourceId: c.id, field: 'link1', targetOldId: c.link1 });
-                    updated.link1 = 0;
+                const t1 = branchTarget(c.branch1);
+                if (t1 !== null && selectedIds.has(t1)) {
+                    this.cutIncomingLinksBuffer.push({ sourceId: c.id, field: 'branch1', targetOldId: t1 });
+                    updated.branch1 = EMPTY_BRANCH;
                 }
-                if (selectedIds.has(c.link2)) {
-                    this.cutIncomingLinksBuffer.push({ sourceId: c.id, field: 'link2', targetOldId: c.link2 });
-                    updated.link2 = 0;
+                const t2 = branchTarget(c.branch2);
+                if (t2 !== null && selectedIds.has(t2)) {
+                    this.cutIncomingLinksBuffer.push({ sourceId: c.id, field: 'branch2', targetOldId: t2 });
+                    updated.branch2 = EMPTY_BRANCH;
                 }
                 return updated;
             });
@@ -536,12 +560,18 @@ export class KeyStore {
             this.activeCoupletId = null;
         }
 
+        // Any branch pointing at a removed couplet is reset to empty.
+        const severIfRemoved = (branch: Branch): Branch => {
+            const target = branchTarget(branch);
+            return target !== null && removedIds.has(target) ? EMPTY_BRANCH : branch;
+        };
+
         this.state.dichotomousKey = this.state.dichotomousKey
             .filter(c => !removedIds.has(c.id))
             .map(c => ({
                 ...c,
-                link1: removedIds.has(c.link1) ? 0 : c.link1,
-                link2: removedIds.has(c.link2) ? 0 : c.link2,
+                branch1: severIfRemoved(c.branch1),
+                branch2: severIfRemoved(c.branch2),
             }));
 
         this.selectedCoupletIds = new Set();
@@ -563,10 +593,8 @@ export class KeyStore {
                     ...couplet,
                     alt1: couplet.alt2,
                     alt2: couplet.alt1,
-                    link1: couplet.link2,
-                    link2: couplet.link1,
-                    taxa1: couplet.taxa2,
-                    taxa2: couplet.taxa1
+                    branch1: couplet.branch2,
+                    branch2: couplet.branch1
                 };
             }
             return couplet;
@@ -622,46 +650,39 @@ export class KeyStore {
             this.state.dichotomousKey.map(c => [c.id, c])
         );
 
-        // Helper closures to cleanly detect string and link states
-        const isValidLink = (linkId: number) => linkId !== 0 && idToCoupletMap.has(linkId);
-
-        type BranchType = 'terminal' | 'unresolved' | 'linked' | 'broken';
-
-        // Consolidated branch classifier
-        const classifyBranch = (taxaStr: string, linkId: number): BranchType => {
-            const trimmed = taxaStr.trim();
-            const isNumeric = /^\d+$/.test(trimmed);
-
-            if (trimmed !== '' && !isNumeric) return 'terminal';
-            if (isValidLink(linkId)) return 'linked';
-            if (isNumeric) return 'unresolved';
-            return 'broken';
+        // A branch that continues into an existing couplet, or null otherwise.
+        const linkTarget = (branch: Branch): number | null => {
+            const t = branchTarget(branch);
+            return t !== null && idToCoupletMap.has(t) ? t : null;
         };
 
-        // Declarative rank lookup object (replaces getChoiceRank function)
-        const rankMap: Record<BranchType, number> = {
-            terminal: 1,
+        // Declarative rank lookup keyed by the shared branch classifier.
+        // Shorter/terminal branches rank lower so they sort into Alt1.
+        const rankMap: Record<ReturnType<typeof classifyBranch>, number> = {
+            taxon: 1,
             linked: 2,
             unresolved: 2, // Both imply continuing paths
-            broken: 3      // Implies a long/broken branch
+            broken: 3,     // Implies a long/broken branch
+            empty: 3       // Treated as a long/dangling branch
         };
 
         // Compute branch depths recursively (Memoized to prevent infinite loops on cycles)
         const depthCache = new Map<number, number>();
         const dynamicVisited = new Set<number>();
 
-        // infer depth natively from strings if unresolved
-        const getEdgeDepth = (taxaStr: string, linkId: number): number => {
-            const type = classifyBranch(taxaStr, linkId);
-            if (type === 'terminal') return 0;
-            if (type === 'linked') return calculateBranchDepth(linkId);
-            // Treat the unresolved numeric string as its simulated depth (higher number = deeper branch)
-            if (type === 'unresolved') return parseInt(taxaStr.trim(), 10) || 0;  // sketchy but may be the best we can do, number only imply relative length
-            return 10000; // if link is broken, count it as an long branch
+        // infer depth natively from the branch state if unresolved
+        const getEdgeDepth = (branch: Branch): number => {
+            switch (classifyBranch(branch, idToCoupletMap)) {
+                case 'taxon': return 0;
+                case 'linked': return calculateBranchDepth((branch as { targetId: number }).targetId);
+                // Treat the unresolved step number as its simulated depth (higher number = deeper branch)
+                case 'unresolved': return (branch as { step: number }).step || 0;
+                default: return 10000; // broken/empty: count it as a long branch
+            }
         };
 
         const calculateBranchDepth = (id: number): number => {
-            if (!isValidLink(id)) return 0;
+            if (!idToCoupletMap.has(id)) return 0;
             if (depthCache.has(id)) return depthCache.get(id)!;
             if (dynamicVisited.has(id)) return 0; // Handle cyclic loops gracefully
 
@@ -669,8 +690,8 @@ export class KeyStore {
             const couplet = idToCoupletMap.get(id)!;
 
             // Compute utilizing our new edge depth evaluator
-            const d1 = getEdgeDepth(couplet.taxa1, couplet.link1);
-            const d2 = getEdgeDepth(couplet.taxa2, couplet.link2);
+            const d1 = getEdgeDepth(couplet.branch1);
+            const d2 = getEdgeDepth(couplet.branch2);
 
             dynamicVisited.delete(id);
 
@@ -684,8 +705,8 @@ export class KeyStore {
 
         // Mirror Pass: Re-map and swap alt1/alt2 fields using the Rank Engine
         const optimizedKey = this.state.dichotomousKey.map(c => {
-            const type1 = classifyBranch(c.taxa1, c.link1);
-            const type2 = classifyBranch(c.taxa2, c.link2);
+            const type1 = classifyBranch(c.branch1, idToCoupletMap);
+            const type2 = classifyBranch(c.branch2, idToCoupletMap);
 
             const rank1 = rankMap[type1];
             const rank2 = rankMap[type2];
@@ -698,8 +719,8 @@ export class KeyStore {
                 // Tie-breakers when both alternatives share the same structural rank
                 if (rank1 === 2) {
                     // Both are continuing paths (Linked vs Unresolved vs Both)
-                    const depth1 = getEdgeDepth(c.taxa1, c.link1);
-                    const depth2 = getEdgeDepth(c.taxa2, c.link2);
+                    const depth1 = getEdgeDepth(c.branch1);
+                    const depth2 = getEdgeDepth(c.branch2);
 
                     // Shorter branches (actual or inferred) go to Alt1
                     if (depth2 < depth1) {
@@ -718,10 +739,8 @@ export class KeyStore {
                     ...c,
                     alt1: c.alt2,
                     alt2: c.alt1,
-                    link1: c.link2,
-                    link2: c.link1,
-                    taxa1: c.taxa2,
-                    taxa2: c.taxa1
+                    branch1: c.branch2,
+                    branch2: c.branch1
                 };
             }
             return { ...c };
@@ -733,8 +752,10 @@ export class KeyStore {
         // Trace incoming references to identify top-level structural root items
         const incomingCounts = new Map<number, number>();
         optimizedKey.forEach(c => {
-            if (isValidLink(c.link1)) incomingCounts.set(c.link1, (incomingCounts.get(c.link1) || 0) + 1);
-            if (isValidLink(c.link2)) incomingCounts.set(c.link2, (incomingCounts.get(c.link2) || 0) + 1);
+            const t1 = linkTarget(c.branch1);
+            if (t1 !== null) incomingCounts.set(t1, (incomingCounts.get(t1) || 0) + 1);
+            const t2 = linkTarget(c.branch2);
+            if (t2 !== null) incomingCounts.set(t2, (incomingCounts.get(t2) || 0) + 1);
         });
 
         const roots = optimizedKey.filter(c => !incomingCounts.has(c.id));
@@ -759,12 +780,14 @@ export class KeyStore {
                 visited.add(currentId);
                 orderedCouplets.push(couplet);
 
-                // Push link2 first, then link1 onto the stack.
-                if (isValidLink(couplet.link2) && !visited.has(couplet.link2)) {
-                    stack.push(couplet.link2);
+                // Push branch2's target first, then branch1's, onto the stack.
+                const t2 = linkTarget(couplet.branch2);
+                if (t2 !== null && !visited.has(t2)) {
+                    stack.push(t2);
                 }
-                if (isValidLink(couplet.link1) && !visited.has(couplet.link1)) {
-                    stack.push(couplet.link1);
+                const t1 = linkTarget(couplet.branch1);
+                if (t1 !== null && !visited.has(t1)) {
+                    stack.push(t1);
                 }
             }
         };
@@ -900,7 +923,9 @@ export class KeyStore {
 
         // Scan couplets sequentially in their current key order
         for (const couplet of this.state.dichotomousKey) {
-            const fieldsToScan = [couplet.alt1, couplet.alt2, couplet.taxa1, couplet.taxa2];
+            const taxon1 = couplet.branch1.kind === 'taxon' ? couplet.branch1.name : '';
+            const taxon2 = couplet.branch2.kind === 'taxon' ? couplet.branch2.name : '';
+            const fieldsToScan = [couplet.alt1, couplet.alt2, taxon1, taxon2];
 
             for (const text of fieldsToScan) {
                 if (!text) continue;
@@ -1249,36 +1274,34 @@ export class KeyStore {
             idMap.set(c.id, c);
             idToIndexMap.set(c.id, index);
 
-            if (c.link1) {
-                let parentSet = inboundParentMap.get(c.link1);
-                if (!parentSet) inboundParentMap.set(c.link1, (parentSet = new Set()));
+            const t1 = branchTarget(c.branch1);
+            if (t1 !== null) {
+                let parentSet = inboundParentMap.get(t1);
+                if (!parentSet) inboundParentMap.set(t1, (parentSet = new Set()));
                 parentSet.add(c.id);
             }
-            if (c.link2) {
-                let parentSet = inboundParentMap.get(c.link2);
-                if (!parentSet) inboundParentMap.set(c.link2, (parentSet = new Set()));
+            const t2 = branchTarget(c.branch2);
+            if (t2 !== null) {
+                let parentSet = inboundParentMap.get(t2);
+                if (!parentSet) inboundParentMap.set(t2, (parentSet = new Set()));
                 parentSet.add(c.id);
             }
         });
 
         const reachableNodes = this.getReachableNodes(idMap);
-        const NUMERIC_REGEX = /^\d+$/;
 
         key.forEach((c, index) => {
             const issues: KeyValidationError[] = [];
 
-            const isUnresolved1 = !c.link1 && NUMERIC_REGEX.test(c.taxa1);
-            const isUnresolved2 = !c.link2 && NUMERIC_REGEX.test(c.taxa2);
-
-            if (isUnresolved1) {
-                issues.push({ severity: 'error', message: `Choice A points to step '${c.taxa1}' which does not exist yet.` });
-            } else if (!c.taxa1 && !c.link1) {
+            if (c.branch1.kind === 'unresolved') {
+                issues.push({ severity: 'error', message: `Choice A points to step '${c.branch1.step}' which does not exist yet.` });
+            } else if (c.branch1.kind === 'empty') {
                 issues.push({ severity: 'warning', message: 'Choice A is incomplete. Assign a Taxa or destination step.' });
             }
 
-            if (isUnresolved2) {
-                issues.push({ severity: 'error', message: `Choice B points to step '${c.taxa2}' which does not exist yet.` });
-            } else if (!c.taxa2 && !c.link2) {
+            if (c.branch2.kind === 'unresolved') {
+                issues.push({ severity: 'error', message: `Choice B points to step '${c.branch2.step}' which does not exist yet.` });
+            } else if (c.branch2.kind === 'empty') {
                 issues.push({ severity: 'warning', message: 'Choice B is incomplete. Assign a Taxa or destination step.' });
             }
 
@@ -1339,14 +1362,14 @@ export class KeyStore {
             if (index > 0 && !reachableNodes.has(c.id)) {
                 issues.push({ severity: 'warning', message: 'Orphaned: This step is unreachable from Step #1.' });
             }
-            if (c.link1 === c.id) issues.push({ severity: 'error', message: 'Choice A loops directly into its own card.' });
-            if (c.link2 === c.id) issues.push({ severity: 'error', message: 'Choice B loops directly into its own card.' });
-
-            if (c.link1 && !idMap.has(c.link1)) issues.push({ severity: 'error', message: 'Choice A points to an invalid or deleted step.' });
-            if (c.link2 && !idMap.has(c.link2)) issues.push({ severity: 'error', message: 'Choice B points to an invalid or deleted step.' });
-
-            if (c.taxa1 && c.link1) issues.push({ severity: 'warning', message: 'Choice A contains both Taxa and a Goto jump (Hint Mode activated).' });
-            if (c.taxa2 && c.link2) issues.push({ severity: 'warning', message: 'Choice B contains both Taxa and a Goto jump (Hint Mode activated).' });
+            if (c.branch1.kind === 'linked') {
+                if (c.branch1.targetId === c.id) issues.push({ severity: 'error', message: 'Choice A loops directly into its own card.' });
+                else if (!idMap.has(c.branch1.targetId)) issues.push({ severity: 'error', message: 'Choice A points to an invalid or deleted step.' });
+            }
+            if (c.branch2.kind === 'linked') {
+                if (c.branch2.targetId === c.id) issues.push({ severity: 'error', message: 'Choice B loops directly into its own card.' });
+                else if (!idMap.has(c.branch2.targetId)) issues.push({ severity: 'error', message: 'Choice B points to an invalid or deleted step.' });
+            }
 
             const uniqueParents = inboundParentMap.get(c.id);
             if (uniqueParents && uniqueParents.size > 1) {

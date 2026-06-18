@@ -1,6 +1,6 @@
 // latexExporter.ts
 import type { KeyStore } from '../store.ts';
-import { triggerFileDownload, getStepNumberById, buildIdToIndexMap, buildFigureIdToDisplayNumMap } from '../utils.ts';
+import { triggerFileDownload, resolveDestination, buildIdToIndexMap, buildFigureIdToDisplayNumMap } from '../utils.ts';
 import { showToast } from '../uiRenderer.ts';
 
 /**
@@ -49,17 +49,21 @@ export function exportKeyToLaTeX(store: KeyStore): void {
             // --- KEY COUPLETS LOOP ---
             key.forEach((c, index) => {
                 const currentDisplayNum = index + 1;
-                const step1Dest = getStepNumberById(idToIndexMap, c.link1);
-                const step2Dest = getStepNumberById(idToIndexMap, c.link2);
 
-                // Guard against structural 'INVALID ID' fragments slipping into text fields
-                const end1 = c.taxa1
-                    ? `\\mbox{\\textbf{\\textit{${escapeLaTeX(c.taxa1)}}}}`
-                    : (c.link1 && step1Dest !== 'INVALID ID' ? `\\mbox{\\textbf{${step1Dest}}}` : `\\dots`);
+                // Render a destination: italic-bold taxon name, bold step number,
+                // or \dots when the branch is empty/broken.
+                const renderEnd = (dest: ReturnType<typeof resolveDestination>): string => {
+                    if (dest.printClass === 'print-dest-taxon') {
+                        return `\\mbox{\\textbf{\\textit{${escapeLaTeX(dest.printText)}}}}`;
+                    }
+                    if (dest.printClass === 'print-dest-strong') {
+                        return `\\mbox{\\textbf{${dest.printText}}}`;
+                    }
+                    return `\\dots`;
+                };
 
-                const end2 = c.taxa2
-                    ? `\\mbox{\\textbf{\\textit{${escapeLaTeX(c.taxa2)}}}}`
-                    : (c.link2 && step2Dest !== 'INVALID ID' ? `\\mbox{\\textbf{${step2Dest}}}` : `\\dots`);
+                const end1 = renderEnd(resolveDestination(c.branch1, idToIndexMap));
+                const end2 = renderEnd(resolveDestination(c.branch2, idToIndexMap));
 
                 // Escape text strings first to keep figure macros intact for regex token processing
                 let alt1Text = escapeLaTeX(c.alt1);

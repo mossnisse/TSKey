@@ -119,16 +119,13 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
         // Synchronize the text change immediately to the store without waiting
         let updatePayload: Partial<Omit<Couplet, 'id'>> = {};
         const currentValue = target.value;
-        type CoupletStringField = 'alt1' | 'alt2' | 'taxa1' | 'taxa2';
+        type CoupletStringField = 'alt1' | 'alt2';
 
         if (field === 'dest1' || field === 'dest2') {
-            const linkField = field === 'dest1' ? 'link1' : 'link2';
-            const taxaField = field === 'dest1' ? 'taxa1' : 'taxa2';
+            const branchField = field === 'dest1' ? 'branch1' : 'branch2';
 
             // We parse using the current snapshot of the key array
-            const parsed = parseDestinationInput(currentValue, store.getKey());
-            updatePayload[linkField] = parsed.link;
-            updatePayload[taxaField] = parsed.taxa;
+            updatePayload[branchField] = parseDestinationInput(currentValue, store.getKey());
         } else {
             updatePayload[field as CoupletStringField] = currentValue;
         }
@@ -155,11 +152,10 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                 const currentCouplet = updatedKey.find(c => c.id === id);
 
                 if (currentCouplet) {
-                    const link = field === 'dest1' ? currentCouplet.link1 : currentCouplet.link2;
-                    const taxa = field === 'dest1' ? currentCouplet.taxa1 : currentCouplet.taxa2;
+                    const branch = field === 'dest1' ? currentCouplet.branch1 : currentCouplet.branch2;
 
                     const idToIndexMap = buildIdToIndexMap(updatedKey);
-                    const resolution = resolveDestination(link, taxa, idToIndexMap);
+                    const resolution = resolveDestination(branch, idToIndexMap);
 
                     target.classList.toggle('input-error', resolution.isUnresolved);
                 }

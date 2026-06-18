@@ -16,7 +16,7 @@
 // "..." marks an empty destination and "___" marks an empty description.
 // An optional "FIGURES DATA" appendix is parsed into figure records.
 
-import type { Couplet, Figure, KeyStore } from '../store.ts';
+import type { Branch, Couplet, Figure, KeyStore } from '../store.ts';
 import type { UIStateStore } from '../uiState.ts';
 import { APP_NAME, APP_VERSION } from '../store.ts';
 import { showToast } from '../uiRenderer.ts';
@@ -199,6 +199,23 @@ function emptyAccumulator(): CoupletAccumulator {
 }
 
 /**
+ * Folds a parsed (link, taxa) pair into a Branch. The couplet number doubles as
+ * the internal id: a numeric link resolves only if the target couplet exists,
+ * otherwise it degrades to an unresolved reference so the editor flags it.
+ */
+function accToBranch(link: number, taxa: string, present: Set<number>): Branch {
+    if (link) {
+        return present.has(link)
+            ? { kind: 'linked', targetId: link }
+            : { kind: 'unresolved', step: link };
+    }
+    const trimmed = taxa.trim();
+    if (trimmed === '') return { kind: 'empty' };
+    if (/^\d+$/.test(trimmed)) return { kind: 'unresolved', step: parseInt(trimmed, 10) };
+    return { kind: 'taxon', name: trimmed };
+}
+
+/**
  * Parses a plain-text dichotomous key into store-ready couplet records.
  *
  * Uses the couplet number as the internal id and (optionally) generates empty
@@ -336,18 +353,11 @@ export function parsePlainTextKey(
 
     const couplets: Couplet[] = numbers.map(num => {
         const acc = byNum.get(num)!;
-        // The couplet number doubles as the internal id. A numeric link resolves
-        // only if the target couplet exists; otherwise it degrades to an unresolved
-        // taxon so the editor flags it instead of crashing.
-        const link1 = acc.link1 && present.has(acc.link1) ? acc.link1 : 0;
-        const taxa1 = acc.link1 && !present.has(acc.link1) ? String(acc.link1) : acc.taxa1;
-        const link2 = acc.link2 && present.has(acc.link2) ? acc.link2 : 0;
-        const taxa2 = acc.link2 && !present.has(acc.link2) ? String(acc.link2) : acc.taxa2;
         return {
             id: num,
             alt1: acc.alt1, alt2: acc.alt2,
-            link1, link2,
-            taxa1, taxa2,
+            branch1: accToBranch(acc.link1, acc.taxa1, present),
+            branch2: accToBranch(acc.link2, acc.taxa2, present),
         };
     });
 
@@ -472,12 +482,19 @@ function renderPreviewHtml(result: PlainTextParseResult): string {
     const idToStep = new Map<number, number>();
     result.couplets.forEach((c, i) => idToStep.set(c.id, i + 1));
 
-    const destLabel = (link: number, taxa: string): string => {
-        if (link !== 0) {
-            const step = idToStep.get(link);
-            return step !== undefined ? `→ step ${step}` : '→ ?';
+    const destLabel = (branch: Branch): string => {
+        switch (branch.kind) {
+            case 'linked': {
+                const step = idToStep.get(branch.targetId);
+                return step !== undefined ? `→ step ${step}` : '→ ?';
+            }
+            case 'unresolved':
+                return `→ step ${branch.step}`;
+            case 'taxon':
+                return escapeHTML(branch.name);
+            case 'empty':
+                return '<span class="import-preview-muted">(empty)</span>';
         }
-        return taxa ? escapeHTML(taxa) : '<span class="import-preview-muted">(empty)</span>';
     };
 
     html += `<ol class="import-preview-list">`;
@@ -488,11 +505,11 @@ function renderPreviewHtml(result: PlainTextParseResult): string {
                 <div class="import-preview-rows">
                     <div class="import-preview-row">
                         <span class="import-preview-text">${escapeHTML(c.alt1) || '<span class="import-preview-muted">(blank)</span>'}</span>
-                        <span class="import-preview-dest">${destLabel(c.link1, c.taxa1)}</span>
+                        <span class="import-preview-dest">${destLabel(c.branch1)}</span>
                     </div>
                     <div class="import-preview-row">
                         <span class="import-preview-text">${escapeHTML(c.alt2) || '<span class="import-preview-muted">(blank)</span>'}</span>
-                        <span class="import-preview-dest">${destLabel(c.link2, c.taxa2)}</span>
+                        <span class="import-preview-dest">${destLabel(c.branch2)}</span>
                     </div>
                 </div>
             </li>`;

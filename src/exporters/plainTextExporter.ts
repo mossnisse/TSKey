@@ -1,7 +1,7 @@
 // plainTextExporter.ts
 import type { KeyStore } from '../store.ts';
 import { showToast } from '../uiRenderer.ts';
-import { getStepNumberById, triggerFileDownload, buildIdToIndexMap, buildFigureIdToDisplayNumMap
+import { resolveDestination, triggerFileDownload, buildIdToIndexMap, buildFigureIdToDisplayNumMap
 } from '../utils.ts';
 
 /**
@@ -22,14 +22,9 @@ export function exportKeyToPlainText(store: KeyStore): void {
         key.forEach((c, index) => {
             const currentDisplayNum = index + 1;
             
-            // Resolve destinations (either a text taxon or a numerical step number)
-            const dest1 = c.taxa1 
-                ? c.taxa1 
-                : (c.link1 ? getStepNumberById(idToIndexMap, c.link1) : '...');
-                
-            const dest2 = c.taxa2 
-                ? c.taxa2 
-                : (c.link2 ? getStepNumberById(idToIndexMap, c.link2) : '...');
+            // Resolve destinations (taxon name, step number, or '...' when empty)
+            const dest1 = resolveDestination(c.branch1, idToIndexMap).printText;
+            const dest2 = resolveDestination(c.branch2, idToIndexMap).printText;
 
             // Resolve figure shorthand macros (e.g. converting [figID: 101] to [fig: 1])
             const alt1Text = store.resolveTextReferences(c.alt1, idToDisplayNum) || '___';
