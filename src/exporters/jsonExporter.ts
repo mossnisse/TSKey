@@ -7,9 +7,9 @@ export async function exportKeyToJSON(store: KeyStore): Promise<void> {
     const figures = store.getFigures();
     const exportedFigures = [];
     
+    const projectUid = store.getActiveProjectUid();
     for (const fig of figures) {
-        const projectTitle = store.getProjectName();
-        const blob = await workspaceStorage.getFigureBinary(projectTitle, fig.id);
+        const blob = await workspaceStorage.getFigureBinary(projectUid, fig.id);
         let binaryData = null;
         
         if (blob) {

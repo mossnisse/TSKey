@@ -21,7 +21,7 @@ import type { UIStateStore } from '../uiState.ts';
 import { APP_NAME, APP_VERSION } from '../store.ts';
 import { showToast } from '../uiRenderer.ts';
 import { escapeHTML } from '../utils.ts';
-import { workspaceStorage, revokeStoredObjectURLs  } from '../db.ts';
+import { workspaceStorage } from '../db.ts';
 
 const EMPTY_DEST_TOKEN = '...';
 const EMPTY_ALT_TOKEN = '___';
@@ -556,9 +556,8 @@ async function confirmImport(store: KeyStore, uiState: UIStateStore, refreshAll:
             return;
         }
 
-        revokeStoredObjectURLs();  // is it needed at al? should it be?
-        workspaceStorage.clearStagedChanges();
-
+        // store.importJsonData resets the image cache internally; a plain-text import
+        // brings no figures, so there's nothing further to stage here.
         store.setProjectName(targetName);
         uiState.setActiveProjectTitle(targetName);
 

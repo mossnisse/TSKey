@@ -207,15 +207,6 @@ export function buildIdToIndexMap(key: readonly Couplet[]): Map<number, number> 
 }
 
 /**
- * Resolves a permanent record identifier into a user-facing step layout label integer.
- */
-export function getStepNumberById(idToIndexMap: Map<number, number>, targetId: number): string {
-    if (targetId === 0) return '0';
-    const index = idToIndexMap.get(targetId);
-    return index !== undefined ? (index + 1).toString() : 'INVALID ID';
-}
-
-/**
  * Generates an O(1) hash map connecting unique Figure record IDs to their sequential 1-based display numbers.
  */
 export function buildFigureIdToDisplayNumMap(figures: readonly Figure[]): Map<number, number> {

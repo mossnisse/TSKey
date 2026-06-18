@@ -4,13 +4,18 @@ import { workspaceStorage } from './db.ts';
 
 export const APP_NAME = 'TSKey';
 export const APP_VERSION = '0.0.1';
+
+/** Stable, rename-proof project identity used to key figure blobs in storage. */
+function newProjectUid(): string {
+    return crypto.randomUUID();
+}
 export const STORAGE_KEY = 'dichotomous_key';
 export const FIGURES_STORAGE_KEY = 'dichotomous_key_figures';
 export const TITLE_STORAGE_KEY = 'dichotomous_key_title';
 
 /**
- * A couplet choice's destination. Replaces the old (link: number, taxa: string)
- * pair that overloaded two fields to encode several states. Exactly one of:
+ * A couplet choice's destination. 
+ * Exactly one of:
  *
  *   linked     — points at another couplet's permanent id
  *   unresolved — a step number was typed before that step exists
@@ -66,6 +71,7 @@ export class KeyStore {
     private state: AppState;
     private hasUncommittedChanges: boolean = false;
     private persistedTitle: string = '';
+    private activeProjectUid: string = newProjectUid();
     private onProjectPersisted?: (title: string) => void;
 
     private undoStack: AppState[] = [];
@@ -107,6 +113,10 @@ export class KeyStore {
 
     public getPersistedTitle(): string {
         return this.persistedTitle;
+    }
+
+    public getActiveProjectUid(): string {
+        return this.activeProjectUid;
     }
 
     public setTitle(newTitle: string): void {
@@ -1047,8 +1057,13 @@ export class KeyStore {
 
             this.saveCheckpoint();
             this.state.title = importedTitle;
+            this.activeProjectUid = newProjectUid(); // Imported project is a new identity
             this.state.dichotomousKey = importedKey;
             this.state.figures = importedFigures;
+
+            // Drop the displaced project's staged blobs and cached object-URLs before
+            // the caller stages this import's figures.
+            workspaceStorage.resetActiveImageCache();
 
             this.clearSelection();
             this.activeCoupletId = null;
@@ -1099,12 +1114,13 @@ export class KeyStore {
 
     public async createNewProject(title: string): Promise<void> {
         this.state.title = title;
+        this.activeProjectUid = newProjectUid(); // Fresh identity for a fresh project
         this.commitPersistedTitle(title); // Sync the disk tracking name
         this.state.dichotomousKey = [];
         this.state.figures = [];
         this.resetTrackingContext();
 
-        workspaceStorage.clearStagedChanges();
+        workspaceStorage.resetActiveImageCache();
         await this.saveToStorage();
     }
 
@@ -1112,12 +1128,13 @@ export class KeyStore {
         const data = await workspaceStorage.loadProject(title);
         if (data) {
             this.state.title = data.title;
+            // Legacy records predate projectUid; mint one so figures re-key cleanly.
+            this.activeProjectUid = data.projectUid || newProjectUid();
             this.commitPersistedTitle(data.title); // Sync the disk tracking name
             this.state.dichotomousKey = data.dichotomousKey;
             this.state.figures = data.figures;
             this.resetTrackingContext();
 
-            workspaceStorage.clearStagedChanges();
             return true;
         }
         return false;
@@ -1136,18 +1153,13 @@ export class KeyStore {
         const oldTitle = this.persistedTitle;
 
         try {
-            if (isRename && oldTitle) {
-                // FIX: Use the DB layer to clone blobs directly! Zero RAM overhead.
-                await workspaceStorage.cloneProjectFigures(oldTitle, this.state.title);
-            }
-
-            // Save JSON metadata
+            // Rename keeps the same projectUid, so figure blobs never move — we only
+            // rewrite the metadata record under the new title and drop the old one.
             const currentData = this.state.dichotomousKey;
-            await workspaceStorage.saveProject(this.state.title, currentData, this.state.figures);
+            await workspaceStorage.saveProject(this.state.title, this.activeProjectUid, currentData, this.state.figures);
 
             if (isRename && oldTitle) {
-                // Safely wipe the old project since this was a pure rename
-                await workspaceStorage.deleteProject(oldTitle);
+                await workspaceStorage.deleteProjectRecord(oldTitle);
             }
 
             this.commitPersistedTitle(this.state.title);
@@ -1165,22 +1177,25 @@ export class KeyStore {
 
     public async saveAsProject(newTitle: string): Promise<void> {
         const oldTitle = this.persistedTitle;
+        const oldUid = this.activeProjectUid;
+        const newUid = newProjectUid(); // Save As is a true duplicate — new identity
 
         try {
-            if (oldTitle && oldTitle !== 'Untitled Key') {
-                await workspaceStorage.cloneProjectFigures(oldTitle, newTitle);
-            }
+            // Copy the source project's persisted blobs to the new identity.
+            await workspaceStorage.cloneProjectFigures(oldUid, newUid);
 
             this.state.title = newTitle;
+            this.activeProjectUid = newUid;
 
-            await workspaceStorage.saveProject(newTitle, this.state.dichotomousKey, this.state.figures);
+            await workspaceStorage.saveProject(newTitle, newUid, this.state.dichotomousKey, this.state.figures);
 
             this.commitPersistedTitle(newTitle);
             this.markSaved();
         } catch (error) {
             console.error("Save As Operation Failed:", error);
-            // Rollback state title on failure
+            // Rollback identity on failure
             this.state.title = oldTitle;
+            this.activeProjectUid = oldUid;
             throw error;
         }
     }
@@ -1213,7 +1228,8 @@ export class KeyStore {
                 figures: fallbackFigures
             };
             this.persistedTitle = lastActive;
-            workspaceStorage.clearStagedChanges();
+            this.activeProjectUid = newProjectUid();
+            workspaceStorage.resetActiveImageCache();
             this.resetTrackingContext();
         }
         return success;
