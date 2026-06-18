@@ -1,5 +1,5 @@
 import type { KeyStore } from '../store.ts';
-import { escapeHTML, buildIdToIndexMap, buildFigureIdToDisplayNumMap, triggerFileDownload, resolveDestination } from '../utils.ts';
+import { escapeHTML, buildIdToIndexMap, buildFigureIdToDisplayNumMap, triggerFileDownload, resolveDestination, sanitizeFilename } from '../utils.ts';
 import type { DestinationResolution } from '../utils.ts';
 import { showToast } from '../uiRenderer.ts';
 import { workspaceStorage, blobToBase64 } from '../db.ts';
@@ -26,13 +26,14 @@ export async function exportKeyToHTML(store: KeyStore): Promise<void> {
         const projectUid = store.getActiveProjectUid();
         const key = store.getKey();
         const figures = store.getFigures();
+        const title = store.getTitle();
         const idToIndexMap = buildIdToIndexMap(key);
         const idToDisplayNum = buildFigureIdToDisplayNumMap(figures);
 
         // COMPILE GLOBAL FIGURES PANEL SIDEBAR (CONCURRENT PIPELINE)
         const figureCards = await Promise.all(
-            figures.map(async (fig) => {
-                const displayNum = idToDisplayNum.get(fig.id) || 0;
+            figures.map(async (fig, index) => {
+                const displayNum = index + 1;
                 let imgTag = '';
 
                 try {
@@ -60,6 +61,9 @@ export async function exportKeyToHTML(store: KeyStore): Promise<void> {
 
         // COMPILE DICHOTOMOUS KEY COUPLERS
         let keyColumnMarkup = '';
+        if (key.length === 0) {
+            keyColumnMarkup = `<p class="print-empty-notice">[The identification key is currently empty. Add couplets in the editor to populate this document.]</p>`;
+        }
         for (let index = 0; index < key.length; index++) {
             const c = key[index];
             const currentDisplayNum = index + 1;
@@ -91,9 +95,9 @@ export async function exportKeyToHTML(store: KeyStore): Promise<void> {
 
         // GENERATE TARGET DOCUMENT STRUCTURE
         const hasFiguresClass = figures.length > 0 ? ' layout-has-figures' : '';
-        const htmlDocument = buildHTMLBoilerplate(keyColumnMarkup, figuresColumnMarkup, hasFiguresClass);
+        const htmlDocument = buildHTMLBoilerplate(title, keyColumnMarkup, figuresColumnMarkup, hasFiguresClass);
 
-        triggerFileDownload(htmlDocument, 'dichotomous_key_publication.html', 'text/html;charset=utf-8;');
+        triggerFileDownload(htmlDocument, sanitizeFilename(title, '.html'), 'text/html;charset=utf-8;');
 
     } catch (error) {
         console.error('HTML Export layout compilation system failure:', error);
@@ -104,12 +108,13 @@ export async function exportKeyToHTML(store: KeyStore): Promise<void> {
 /**
  * Isolated template wrapper providing core layout scaffolding styles.
  */
-function buildHTMLBoilerplate(keyContent: string, figuresContent: string, layoutClass: string): string {
+function buildHTMLBoilerplate(title: string, keyContent: string, figuresContent: string, layoutClass: string): string {
+    const safeTitle = escapeHTML(title);
     return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Exported Dichotomous Key with Figures Panel</title>
+  <title>${safeTitle}</title>
   <style>
     :root {
       --color-bg: #ffffff;
@@ -242,6 +247,9 @@ function buildHTMLBoilerplate(keyContent: string, figuresContent: string, layout
       line-height: inherit;
     }
     
+    .print-doc-title { font-family: serif; font-size: 22px; font-weight: bold; text-align: center; margin: 0 0 16px 0; color: var(--color-text); }
+    .print-empty-notice { font-style: italic; color: var(--color-text-muted); text-align: center; }
+
     .print-dest-strong { font-weight: bold; color: var(--color-text); }
     .print-dest-taxon { font-weight: bold; font-style: italic; color: var(--color-text); }
     .error-text { font-weight: bold; color: #ef4444; }
@@ -275,6 +283,7 @@ function buildHTMLBoilerplate(keyContent: string, figuresContent: string, layout
   <div class="print-page-layout${layoutClass}">
     <div class="print-key-column">
       <div class="print-key-container">
+        <h1 class="print-doc-title">${safeTitle}</h1>
         ${keyContent}
       </div>
     </div>

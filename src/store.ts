@@ -1402,13 +1402,6 @@ export class KeyStore {
         return diagnostics;
     }
 
-    /**
-     * Converts figure reference tokens in text to rendered print labels like (Fig. 3).
-     * Handles two token forms:
-     *   [figID: N]    — stable stored reference (internal figure ID, survives reordering)
-     *   [fig: value]  — an unresolved reference the user typed that hasn't been encoded
-     *                   yet; value is a 1-based display number or a filename.
-     */
     public resolveTextReferences(text: string, idToDisplayNum: Map<number, number>): string {
         if (!text) return text;
 

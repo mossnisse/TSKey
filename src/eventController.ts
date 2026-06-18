@@ -24,7 +24,6 @@ function batchedRefresh(refreshFn: () => void) {
     refreshScheduled = true;
 
     requestAnimationFrame(() => {
-
         refreshScheduled = false;
         refreshFn();
     });
@@ -37,11 +36,6 @@ async function refreshHubView(store: KeyStore) {
     renderProjectHubList(projects, currentTitle);
 }
 
-/**
- * Orchestrator: wires up every editor listener and returns a single teardown.
- * Each concern lives in its own setupX() helper below; they all share one
- * AbortSignal so the returned cleanup tears everything down at once.
- */
 export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, refreshAll: () => void) {
     const keyContainer = document.querySelector('#editor-container') as HTMLElement;
     if (!keyContainer) return () => { };
@@ -49,9 +43,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
     const controller = new AbortController();
     const { signal } = controller;
 
-    // Wire the plain-text import dialog (markup lives in initializeShell).
     setupPlainTextImporter(store, uiState, refreshAll, signal);
-
     setupTitleEditing(store, refreshAll, signal);
     setupCoupletSelection(keyContainer, store, refreshAll, signal);
     setupCoupletInput(keyContainer, store, uiState, refreshAll, signal);

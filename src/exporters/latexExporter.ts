@@ -1,6 +1,7 @@
 // latexExporter.ts
 import type { KeyStore } from '../store.ts';
-import { triggerFileDownload, resolveDestination, buildIdToIndexMap, buildFigureIdToDisplayNumMap } from '../utils.ts';
+import { triggerFileDownload, resolveDestination, buildIdToIndexMap, buildFigureIdToDisplayNumMap, sanitizeFilename } from '../utils.ts';
+import { figIdTokenRegex } from '../figureTokens.ts';
 import { showToast } from '../uiRenderer.ts';
 
 /**
@@ -32,8 +33,19 @@ export function exportKeyToLaTeX(store: KeyStore): void {
     try {
         const key = store.getKey();
         const figures = store.getFigures();
+        const title = store.getTitle();
         const idToIndexMap = buildIdToIndexMap(key);
         const figureIdToDisplayNum = buildFigureIdToDisplayNumMap(figures);
+
+        // Converts stored [figID: N] tokens in already-escaped text into inline (Fig.~N)
+        // citations. Escaping leaves the digit-only tokens intact for this pass.
+        const figIdRegex = figIdTokenRegex();
+        const resolveFigCitations = (escapedText: string): string =>
+            escapedText.replace(figIdRegex, (match, idStr) => {
+                const id = parseInt(idStr, 10);
+                const displayNum = figureIdToDisplayNum.get(id);
+                return displayNum !== undefined ? ` (Fig.~${displayNum})` : match;
+            });
 
         let mainContent = '';
 
@@ -65,26 +77,9 @@ export function exportKeyToLaTeX(store: KeyStore): void {
                 const end1 = renderEnd(resolveDestination(c.branch1, idToIndexMap));
                 const end2 = renderEnd(resolveDestination(c.branch2, idToIndexMap));
 
-                // Escape text strings first to keep figure macros intact for regex token processing
-                let alt1Text = escapeLaTeX(c.alt1);
-                let alt2Text = escapeLaTeX(c.alt2);
-
-                // Regex pattern captures both standard [figID: X] and LaTeX-escaped \[figID: X\] brackets
-                const figRegex = /\\?\[figID:\s*(\d+)\s*\\?\]/gi;
-
-                // Process alternative choice 1 (Convert to seamless inline parenthetical notation)
-                alt1Text = alt1Text.replace(figRegex, (match, idStr) => {
-                    const id = parseInt(idStr, 10);
-                    const displayNum = figureIdToDisplayNum.get(id);
-                    return displayNum !== undefined ? ` (Fig.~${displayNum})` : match;
-                });
-
-                // Process alternative choice 2
-                alt2Text = alt2Text.replace(figRegex, (match, idStr) => {
-                    const id = parseInt(idStr, 10);
-                    const displayNum = figureIdToDisplayNum.get(id);
-                    return displayNum !== undefined ? ` (Fig.~${displayNum})` : match;
-                });
+                // Escape text first, then convert [figID: N] tokens into inline (Fig.~N) citations.
+                const alt1Text = resolveFigCitations(escapeLaTeX(c.alt1));
+                const alt2Text = resolveFigCitations(escapeLaTeX(c.alt2));
 
                 // Structural formatting utilizing flexible dot-fill constraints to auto-align right boundaries
                 bodyContent += `{\\interlinepenalty=10000\n`;
@@ -102,6 +97,8 @@ ${bodyContent}
         }
 
         // --- FIGURES APPENDIX GENERATION ---
+        // Filenames \detokenize can't rescue (spaces / multiple dots) are collected for a warning.
+        const problematicFilenames: string[] = [];
         let figuresAppendix = '';
         if (figures.length > 0) {
             figuresAppendix += `\\newpage\n\\section*{Figures Appendix}\n`;
@@ -114,8 +111,16 @@ ${bodyContent}
                 figuresAppendix += `\\begin{figure}[htbp]\n`;
                 figuresAppendix += `  \\centering\n`;
 
-                if (fig.filename && fig.filename.trim()) {
-                    figuresAppendix += `  \\includegraphics[width=0.7\\linewidth]{figures/${fig.filename.trim()}}\n`;
+                const filename = fig.filename.trim();
+                if (filename) {
+                    // \detokenize keeps the literal filename (so the link still resolves) while
+                    // neutralizing catcode-active characters such as underscores.
+                    figuresAppendix += `  \\includegraphics[width=0.7\\linewidth]{\\detokenize{figures/${filename}}}\n`;
+
+                    // \detokenize cannot rescue spaces or multiple dots — flag those for the user.
+                    if (/\s/.test(filename) || (filename.match(/\./g)?.length ?? 0) > 1) {
+                        problematicFilenames.push(filename);
+                    }
                 } else {
                     figuresAppendix += `  \\framebox[0.7\\linewidth]{\\vbox{\\vspace{1.5cm}\\centering\\textbf{[Image Placeholder]}\\par\\vspace{0.5em}\\small No filename provided in data store\\vspace{1.5cm}}}\n`;
                 }
@@ -141,7 +146,7 @@ ${bodyContent}
 \\usepackage{parskip}
 \\usepackage{graphicx} % Package to handle external image file parsing natively
 
-\\title{\\textbf{Dichotomous Key Publication}}
+\\title{\\textbf{${escapeLaTeX(title)}}}
 \\date{\\today}
 \\author{}
 
@@ -155,7 +160,14 @@ ${mainContent}
 ${figuresAppendix}
 \\end{document}`;
 
-        triggerFileDownload(latexDocument, 'dichotomous_key.tex', 'application/x-latex;charset=utf-8;');
+        triggerFileDownload(latexDocument, sanitizeFilename(title, '.tex'), 'application/x-latex;charset=utf-8;');
+
+        if (problematicFilenames.length > 0) {
+            showToast(
+                `⚠️ ${problematicFilenames.length} image filename(s) contain spaces or multiple dots and may fail to compile in LaTeX. Consider renaming: ${problematicFilenames.join(', ')}`,
+                'error'
+            );
+        }
 
     } catch (error) {
         console.error('LaTeX Export system failure:', error);

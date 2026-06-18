@@ -93,11 +93,11 @@ export function initializeShell(appDiv: HTMLDivElement) {
             </button>
             <div class="menu-divider" role="separator"></div>
             <button id="cmd-cut" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>✂️ Cut Selected Cards</span>
+              <span>✂️ Cut Selected Steps</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘X' : 'Ctrl+X'}</span>
             </button>
             <button id="cmd-copy" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>📋 Copy Selected Cards</span>
+              <span>📋 Copy Selected Steps</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘C' : 'Ctrl+C'}</span>
             </button>
             <button id="cmd-paste-below" class="dropdown-action" role="menuitem" tabindex="-1">
@@ -109,7 +109,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
               <span class="menu-shortcut">${IS_MAC ? 'Shift+⌘V' : 'Shift+Ctrl+V'}</span>
             </button>
             <button id="cmd-delete" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>🗑️ Delete Selected Cards</span>
+              <span>🗑️ Delete Selected steps and figures</span>
               <span class="menu-shortcut">Delete</span>
             </button>
             <button id="cmd-swap" class="dropdown-action" role="menuitem" tabindex="-1">
@@ -194,13 +194,13 @@ export function initializeShell(appDiv: HTMLDivElement) {
         <div class="editor-column">
           <h2>Key Editor: <span id="active-project-title">Untitled Key</span></h2>
           <div id="editor-container"></div>
-          <button id="add-couplet-btn" class="btn-add-block">+ Add New Step Block (Alt+N)</button>
+          <button id="add-couplet-btn" class="btn-add-block">+ Add New Step (Alt+N)</button>
         </div>
 
         <div class="figure-column">
           <h2>Figure References</h2>
           <div id="figure-container"></div>
-          <button id="add-figure-btn" class="btn-add-block">+ Add New Figure Attachment</button>
+          <button id="add-figure-btn" class="btn-add-block">+ Add New Figure</button>
         </div>
 
         <div class="print-column">
@@ -766,6 +766,18 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
 }
 
 /**
+ * Escapes resolved print text and renders any unresolved figure markers
+ * ([Broken Fig: …], produced by resolveTextReferences) in red. The red colour
+ * conveys the problem, so the word "Broken" is dropped from the label here.
+ */
+function highlightBrokenFigures(resolvedText: string): string {
+    return escapeHTML(resolvedText).replace(
+        /\[Broken Fig:([^\]]*)\]/g,
+        (_match, value) => `<span class="error-text">[Fig:${value}]</span>`
+    );
+}
+
+/**
  * Renders the passive publication presentation view structure.
  */
 export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
@@ -794,6 +806,8 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
 
         const val1 = store.resolveTextReferences(c.alt1, figDisplayMap) || '___';
         const val2 = store.resolveTextReferences(c.alt2, figDisplayMap) || '___';
+        const html1 = highlightBrokenFigures(val1);
+        const html2 = highlightBrokenFigures(val2);
 
         let block = existingMap.get(c.id);
 
@@ -806,7 +820,7 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
             }
 
             const txt1 = block.querySelector('.print-row[data-choice="1"] .print-text');
-            if (txt1 && txt1.textContent !== val1) txt1.textContent = val1;
+            if (txt1 && txt1.innerHTML !== html1) txt1.innerHTML = html1;
 
             const dest1El = block.querySelector('.print-row[data-choice="1"] .print-dest');
             if (dest1El) {
@@ -816,7 +830,7 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
             }
 
             const txt2 = block.querySelector('.print-row[data-choice="2"] .print-text');
-            if (txt2 && txt2.textContent !== val2) txt2.textContent = val2;
+            if (txt2 && txt2.innerHTML !== html2) txt2.innerHTML = html2;
 
             const dest2El = block.querySelector('.print-row[data-choice="2"] .print-dest');
             if (dest2El) {
@@ -851,7 +865,7 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
             if (stepNumEl) stepNumEl.textContent = `${currentDisplayNum}.`;
 
             const txt1 = block.querySelector('.print-row[data-choice="1"] .print-text');
-            if (txt1) txt1.textContent = val1;
+            if (txt1) txt1.innerHTML = html1;
 
             const dest1El = block.querySelector('.print-row[data-choice="1"] .print-dest');
             if (dest1El) {
@@ -860,7 +874,7 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
             }
 
             const txt2 = block.querySelector('.print-row[data-choice="2"] .print-text');
-            if (txt2) txt2.textContent = val2;
+            if (txt2) txt2.innerHTML = html2;
 
             const dest2El = block.querySelector('.print-row[data-choice="2"] .print-dest');
             if (dest2El) {

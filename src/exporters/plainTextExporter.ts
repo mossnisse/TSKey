@@ -1,11 +1,11 @@
 // plainTextExporter.ts
 import type { KeyStore } from '../store.ts';
 import { showToast } from '../uiRenderer.ts';
-import { resolveDestination, triggerFileDownload, buildIdToIndexMap, buildFigureIdToDisplayNumMap
+import { resolveDestination, triggerFileDownload, buildIdToIndexMap, buildFigureIdToDisplayNumMap, sanitizeFilename
 } from '../utils.ts';
 
 /**
- * Compiles the dichotomous key into a cleanly aligned plain-text document,
+ * Compiles the dichotomous key into a tab-separated plain-text document,
  * fully resolving embedded figure references and appending a metadata block.
  */
 export function exportKeyToPlainText(store: KeyStore): void {
@@ -18,10 +18,17 @@ export function exportKeyToPlainText(store: KeyStore): void {
         
         let content = '';
 
+        // --- KEY TITLE ---
+        content += `${store.getTitle()}\n\n`;
+
         // --- DICHOTOMOUS KEY COUPLETS ---
+        if (key.length === 0) {
+            content += `[The identification key is currently empty. Add couplets in the editor to populate this document.]\n\n`;
+        }
+
         key.forEach((c, index) => {
             const currentDisplayNum = index + 1;
-            
+
             // Resolve destinations (taxon name, step number, or '...' when empty)
             const dest1 = resolveDestination(c.branch1, idToIndexMap).printText;
             const dest2 = resolveDestination(c.branch2, idToIndexMap).printText;
@@ -41,8 +48,8 @@ export function exportKeyToPlainText(store: KeyStore): void {
             content += `FIGURES DATA\n`;
             content += `========================================\n\n`;
 
-            figures.forEach((fig) => {
-                const displayNum = idToDisplayNum.get(fig.id) || 0;
+            figures.forEach((fig, index) => {
+                const displayNum = index + 1;
                 const filename = fig.filename || 'Untitled File';
                 const caption = fig.caption || 'No caption provided.';
 
@@ -53,7 +60,7 @@ export function exportKeyToPlainText(store: KeyStore): void {
         }
 
         // Forward to the unified browser file system download thread
-        triggerFileDownload(content, 'dichotomous_key.txt', 'text/plain;charset=utf-8;');
+        triggerFileDownload(content, sanitizeFilename(store.getTitle(), '.txt'), 'text/plain;charset=utf-8;');
         
     } catch (error) {
         console.error('Plain Text Export system failure:', error);
