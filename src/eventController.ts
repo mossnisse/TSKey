@@ -566,8 +566,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
             }
 
             try {
-                // Project-switch teardown (revoke object-URLs + drop staged uploads)
-                // is handled inside store.loadProject → workspaceStorage.loadProject.
+
                 await store.loadProject(projectName);
 
                 if (modalProjectHub) modalProjectHub.style.display = 'none';
@@ -595,7 +594,6 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                     const currentOpenName = store.getProjectName();
 
                     if (currentOpenName === projectName) {
-                        // createNewProject resets the image cache internally.
                         await store.createNewProject('Untitled Key');
                         await store.saveToStorage(); // Persist baseline
                     }
@@ -736,7 +734,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                 if (!confirmOverwrite) return;
             }
 
-            // createNewProject resets the image cache internally.
+   
             await store.createNewProject(chosenTitle);
             await store.saveToStorage();
 
@@ -859,8 +857,6 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
                 return;
             }
 
-            // store.importJsonData already reset the image cache; stage the import's
-            // own figure binaries below.
             store.setProjectName(targetName);
 
             const failedFigureIds: number[] = [];

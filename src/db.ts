@@ -29,9 +29,7 @@ class IndexedDBEngine {
                 if (!db.objectStoreNames.contains(this.projectsStoreName)) {
                     db.createObjectStore(this.projectsStoreName, { keyPath: 'title' });
                 }
-                // v2: figure blobs are keyed by `${projectUid}::${id}` instead of the old
-                // `${title}::${id}`. The old keys are unreadable under the new scheme, so
-                // drop and recreate the store (pre-v2 images are discarded).
+
                 if (db.objectStoreNames.contains(this.figuresStoreName)) {
                     db.deleteObjectStore(this.figuresStoreName);
                 }
@@ -167,6 +165,18 @@ class IndexedDBEngine {
         });
     }
 
+    public async deleteFigure(projectUid: string, id: number): Promise<void> {
+        const db = await this.getDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(this.figuresStoreName, 'readwrite');
+            tx.objectStore(this.figuresStoreName).delete(this.getFigureKey(projectUid, id));
+
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(new Error(`Transaction aborted while deleting figure ID ${id}`));
+        });
+    }
+
     /**
      * Garbage Collection Engine: Deletes binary objects from IndexedDB 
      * whose IDs are no longer tracked in the active project metadata.
@@ -246,6 +256,7 @@ class IndexedDBEngine {
 export class WorkspaceManager {
     private storage = new IndexedDBEngine();
     private pendingUploads = new Map<number, Blob>();
+    private pendingDeletes = new Set<number>();
     private commitPromise: Promise<void> | null = null;
 
     public async getProjectList(): Promise<{ name: string, lastModified: number }[]> {
@@ -286,6 +297,7 @@ export class WorkspaceManager {
 
     public clearStagedChanges(): void {
         this.pendingUploads.clear();
+        this.pendingDeletes.clear();
     }
 
     /**
@@ -300,14 +312,17 @@ export class WorkspaceManager {
 
     public deleteFigureBinary(id: number): void {
         this.pendingUploads.delete(id);
+        this.pendingDeletes.add(id);
     }
 
     public uploadFigureBinary(id: number, blob: Blob): void {
+        this.pendingDeletes.delete(id); // A fresh upload supersedes a staged delete
         this.pendingUploads.set(id, blob);
     }
 
     public async getFigureBinary(projectUid: string, id: number): Promise<Blob | null> {
         if (this.pendingUploads.has(id)) return this.pendingUploads.get(id)!;
+        if (this.pendingDeletes.has(id)) return null; // Removed but not yet committed
         return this.storage.getFigure(projectUid, id);
     }
 
@@ -324,6 +339,10 @@ export class WorkspaceManager {
                     if (activeIds.has(id)) {
                         await this.storage.saveFigure(projectUid, id, blob);
                     }
+                }
+
+                for (const id of this.pendingDeletes) {
+                    await this.storage.deleteFigure(projectUid, id);
                 }
 
                 await this.storage.cleanupOrphanFigures(projectUid, activeIds);

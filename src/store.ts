@@ -924,9 +924,12 @@ export class KeyStore {
 
         // Build optimized lookup maps matching how resolveTextReferences functions
         const idToFig = new Map<number, Figure>(figures.map(f => [f.id, f]));
-        const filenameToFig = new Map<string, Figure>(
-            figures.map(f => [f.filename.trim().toLowerCase(), f])
-        );
+        const displayNumToFig = new Map<number, Figure>();
+        const filenameToFig = new Map<string, Figure>();
+        figures.forEach((f, index) => {
+            displayNumToFig.set(index + 1, f);
+            filenameToFig.set(f.filename.trim().toLowerCase(), f);
+        });
 
         const orderedFigures: Figure[] = [];
         const seenFigureIds = new Set<number>();
@@ -942,7 +945,7 @@ export class KeyStore {
 
                 let match: RegExpExecArray | null;
 
-                // Primary: match new storage format [figID: N] — value is always an internal ID
+                // Stored references [figID: N] — value is always an internal figure ID
                 const idTokenRegex = /\[figID:\s*(\d+)\s*\]/gi;
                 while ((match = idTokenRegex.exec(text)) !== null) {
                     const id = parseInt(match[1].trim(), 10);
@@ -953,15 +956,15 @@ export class KeyStore {
                     }
                 }
 
-                // Legacy: match old [fig: VALUE] format — numeric = old ID, text = filename
-                const legacyTokenRegex = /\[fig:\s*(.*?)\s*\]/gi;
-                while ((match = legacyTokenRegex.exec(text)) !== null) {
+                // Unresolved references [fig: VALUE] — numeric = 1-based display number, text = filename
+                const rawTokenRegex = /\[fig:\s*(.*?)\s*\]/gi;
+                while ((match = rawTokenRegex.exec(text)) !== null) {
                     const trimmedValue = match[1].trim();
                     let matchedFig: Figure | undefined = undefined;
 
-                    const targetId = Number(trimmedValue);
-                    if (!isNaN(targetId) && idToFig.has(targetId)) {
-                        matchedFig = idToFig.get(targetId);
+                    const displayNum = Number(trimmedValue);
+                    if (Number.isInteger(displayNum) && displayNumToFig.has(displayNum)) {
+                        matchedFig = displayNumToFig.get(displayNum);
                     } else {
                         const lowercaseFilename = trimmedValue.toLowerCase();
                         if (filenameToFig.has(lowercaseFilename)) {
@@ -1061,8 +1064,6 @@ export class KeyStore {
             this.state.dichotomousKey = importedKey;
             this.state.figures = importedFigures;
 
-            // Drop the displaced project's staged blobs and cached object-URLs before
-            // the caller stages this import's figures.
             workspaceStorage.resetActiveImageCache();
 
             this.clearSelection();
@@ -1153,8 +1154,7 @@ export class KeyStore {
         const oldTitle = this.persistedTitle;
 
         try {
-            // Rename keeps the same projectUid, so figure blobs never move — we only
-            // rewrite the metadata record under the new title and drop the old one.
+
             const currentData = this.state.dichotomousKey;
             await workspaceStorage.saveProject(this.state.title, this.activeProjectUid, currentData, this.state.figures);
 
@@ -1409,15 +1409,16 @@ export class KeyStore {
     }
 
     /**
-     * Converts all figure reference tokens in text to rendered print labels like (Fig. 3).
-     * Handles two formats:
-     * [figID: 106]  — new storage format (internal ID, always stable)
-     * [fig: value]  — legacy format (numeric value treated as old ID, text as filename)
+     * Converts figure reference tokens in text to rendered print labels like (Fig. 3).
+     * Handles two token forms:
+     *   [figID: N]    — stable stored reference (internal figure ID, survives reordering)
+     *   [fig: value]  — an unresolved reference the user typed that hasn't been encoded
+     *                   yet; value is a 1-based display number or a filename.
      */
     public resolveTextReferences(text: string, idToDisplayNum: Map<number, number>): string {
         if (!text) return text;
 
-
+        const figureCount = this.state.figures.length;
         const filenameToDisplayNum = new Map<string, number>();
         this.state.figures.forEach(fig => {
             if (!fig.filename) return;
@@ -1427,7 +1428,7 @@ export class KeyStore {
             }
         });
 
-        // resolve new storage format [figID: N] — value is always an internal ID
+        // Stored references [figID: N] — value is always an internal figure ID.
         text = text.replace(/\[figID:\s*(\d+)\s*\]/gi, (_match, value) => {
             const id = parseInt(value.trim(), 10);
             const displayNum = idToDisplayNum.get(id);
@@ -1436,13 +1437,13 @@ export class KeyStore {
                 : `[Broken Fig: ID ${id}]`;
         });
 
-        // resolve legacy format [fig: value] — numeric = old ID, text = filename
+        // Unresolved references [fig: value] — numeric = 1-based display number, text = filename.
         text = text.replace(/\[fig:\s*(.*?)\s*\]/gi, (_match, value) => {
             const trimmedValue = value.trim();
 
-            const targetId = Number(trimmedValue);
-            if (!isNaN(targetId) && idToDisplayNum.has(targetId)) {
-                return `(Fig. ${idToDisplayNum.get(targetId)})`;
+            const displayNum = Number(trimmedValue);
+            if (Number.isInteger(displayNum) && displayNum >= 1 && displayNum <= figureCount) {
+                return `(Fig. ${displayNum})`;
             }
 
             const lowercaseFilename = trimmedValue.toLowerCase();
