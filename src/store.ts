@@ -65,9 +65,182 @@ export interface ImportResult {
     importedFigures?: FigureWithBinary[];
 }
 
+/**
+ * Computes the set of couplet ids reachable from the first step by following
+ * branch links. Pure: operates only on the supplied key. Shared by the store's
+ * live editor and by pre-commit checks such as the plain-text importer.
+ */
+export function computeReachableNodes(key: Couplet[], idMap?: Map<number, Couplet>): Set<number> {
+    const reachable = new Set<number>();
+    if (key.length === 0) return reachable;
+
+    const lookupMap = idMap || new Map<number, Couplet>(key.map(c => [c.id, c]));
+    const stack: number[] = [key[0].id];
+
+    while (stack.length > 0) {
+        const activeId = stack.pop()!;
+        if (!reachable.has(activeId)) {
+            reachable.add(activeId);
+            const match = lookupMap.get(activeId);
+            if (match) {
+                const t2 = branchTarget(match.branch2);
+                if (t2 !== null) stack.push(t2);
+                const t1 = branchTarget(match.branch1);
+                if (t1 !== null) stack.push(t1);
+            }
+        }
+    }
+    return reachable;
+}
+
+/**
+ * Runs the full real-time diagnostics pass over a key, returning issues keyed by
+ * couplet id. Pure: takes the key and figure list explicitly so callers can vet
+ * a candidate key (e.g. a freshly parsed import) without first loading it into
+ * the store. The store's runDiagnostics() delegates here against live state.
+ */
+export function diagnoseKey(key: Couplet[], figures: Figure[]): Map<number, KeyValidationError[]> {
+    const diagnostics = new Map<number, KeyValidationError[]>();
+    if (key.length === 0) return diagnostics;
+
+    const idMap = new Map<number, Couplet>();
+    const idToIndexMap = new Map<number, number>();
+    const inboundParentMap = new Map<number, Set<number>>();
+
+    const figureIds = new Set(figures.map(f => f.id));
+
+    key.forEach((c, index) => {
+        idMap.set(c.id, c);
+        idToIndexMap.set(c.id, index);
+
+        const t1 = branchTarget(c.branch1);
+        if (t1 !== null) {
+            let parentSet = inboundParentMap.get(t1);
+            if (!parentSet) inboundParentMap.set(t1, (parentSet = new Set()));
+            parentSet.add(c.id);
+        }
+        const t2 = branchTarget(c.branch2);
+        if (t2 !== null) {
+            let parentSet = inboundParentMap.get(t2);
+            if (!parentSet) inboundParentMap.set(t2, (parentSet = new Set()));
+            parentSet.add(c.id);
+        }
+    });
+
+    const reachableNodes = computeReachableNodes(key, idMap);
+
+    // Created once and reused: matchAll clones the regex per call, so the shared
+    // lastIndex is never mutated across couplets.
+    const FIG_ID_REGEX = figIdTokenRegex();
+    const FIG_RAW_REGEX = figRawTokenRegex();
+
+    key.forEach((c, index) => {
+        const issues: KeyValidationError[] = [];
+
+        if (c.branch1.kind === 'unresolved') {
+            issues.push({ severity: 'error', message: `Choice A points to step '${c.branch1.couplet}' which does not exist yet.` });
+        } else if (c.branch1.kind === 'empty') {
+            issues.push({ severity: 'warning', message: 'Choice A is incomplete. Assign a Taxa or destination step.' });
+        }
+
+        if (c.branch2.kind === 'unresolved') {
+            issues.push({ severity: 'error', message: `Choice B points to step '${c.branch2.couplet}' which does not exist yet.` });
+        } else if (c.branch2.kind === 'empty') {
+            issues.push({ severity: 'warning', message: 'Choice B is incomplete. Assign a Taxa or destination step.' });
+        }
+
+        // --- Unresolved Figure Reference Diagnostics ---
+        // Check Choice A
+        if (c.alt1) {
+            const missingIds1: number[] = [];
+            for (const match of c.alt1.matchAll(FIG_ID_REGEX)) {
+                const figId = parseInt(match[1], 10);
+                if (!figureIds.has(figId) && !missingIds1.includes(figId)) {
+                    missingIds1.push(figId);
+                }
+            }
+            missingIds1.forEach(id => {
+                issues.push({ severity: 'warning', message: `Choice A references a missing or deleted figure (Internal ID: ${id}).` });
+            });
+
+            const unresolved1: string[] = [];
+            for (const match of c.alt1.matchAll(FIG_RAW_REGEX)) {
+                const token = match[1].trim();
+                if (!unresolved1.includes(token)) {
+                    unresolved1.push(token);
+                }
+            }
+            unresolved1.forEach(token => {
+                issues.push({ severity: 'warning', message: `Choice A references an unresolved figure reference '[fig: ${token}]'.` });
+            });
+        }
+
+        // Check Choice B
+        if (c.alt2) {
+            const missingIds2: number[] = [];
+            for (const match of c.alt2.matchAll(FIG_ID_REGEX)) {
+                const figId = parseInt(match[1], 10);
+                if (!figureIds.has(figId) && !missingIds2.includes(figId)) {
+                    missingIds2.push(figId);
+                }
+            }
+            missingIds2.forEach(id => {
+                issues.push({ severity: 'warning', message: `Choice B references a missing or deleted figure (Internal ID: ${id}).` });
+            });
+
+            const unresolved2: string[] = [];
+            for (const match of c.alt2.matchAll(FIG_RAW_REGEX)) {
+                const token = match[1].trim();
+                if (!unresolved2.includes(token)) {
+                    unresolved2.push(token);
+                }
+            }
+            unresolved2.forEach(token => {
+                issues.push({ severity: 'warning', message: `Choice B references an unresolved figure reference '[fig: ${token}]'.` });
+            });
+        }
+
+        if (index > 0 && !reachableNodes.has(c.id)) {
+            issues.push({ severity: 'warning', message: 'Orphaned: This step is unreachable from Step #1.' });
+        }
+        if (c.branch1.kind === 'linked') {
+            if (c.branch1.targetId === c.id) issues.push({ severity: 'error', message: 'Choice A loops directly into its own key step.' });
+            else if (!idMap.has(c.branch1.targetId)) issues.push({ severity: 'error', message: 'Choice A points to an invalid or deleted step.' });
+        }
+        if (c.branch2.kind === 'linked') {
+            if (c.branch2.targetId === c.id) issues.push({ severity: 'error', message: 'Choice B loops directly into its own key step.' });
+            else if (!idMap.has(c.branch2.targetId)) issues.push({ severity: 'error', message: 'Choice B points to an invalid or deleted step.' });
+        }
+
+        const uniqueParents = inboundParentMap.get(c.id);
+        if (uniqueParents && uniqueParents.size > 1) {
+            const parentStepLabels: string[] = [];
+            uniqueParents.forEach(parentId => {
+                const parentIdx = idToIndexMap.get(parentId);
+                if (parentIdx !== undefined && parentIdx !== -1) {
+                    parentStepLabels.push(`#${parentIdx + 1}`);
+                }
+            });
+            issues.push({
+                severity: 'warning',
+                message: `Convergence: Multiple steps (${parentStepLabels.join(', ')}) link here.`
+            });
+        }
+
+        if (issues.length > 0) diagnostics.set(c.id, issues);
+    });
+
+    return diagnostics;
+}
+
 export class KeyStore {
     private state: AppState;
     private hasUncommittedChanges: boolean = false;
+    // Which entity the open typing session is editing. Couplet and figure text
+    // edits only batch into one undo step while the scope matches; switching
+    // entity (or any session boundary) forces a fresh checkpoint so a key edit
+    // and a figure edit never collapse into a single undo.
+    private editScope: 'key' | 'figures' | null = null;
     private persistedTitle: string = '';
     private activeProjectUid: string = newProjectUid();
     private onProjectPersisted?: (title: string) => void;
@@ -161,6 +334,7 @@ export class KeyStore {
     public markSaved() {
         this.savedHistoryIndex = this.currentHistoryIndex;
         this.hasUncommittedChanges = false;
+        this.editScope = null;
     }
 
     public hasUnsavedChanges(): boolean {
@@ -176,6 +350,7 @@ export class KeyStore {
         this.currentHistoryIndex = 0;
         this.savedHistoryIndex = 0;
         this.hasUncommittedChanges = false;
+        this.editScope = null;
         this.selectedCoupletIds.clear();
         this.activeCoupletId = null;
         this._draggedId = null;
@@ -209,6 +384,7 @@ export class KeyStore {
 
         this.currentHistoryIndex++;
         this.hasUncommittedChanges = false;
+        this.editScope = null;
     }
 
     public undo(): boolean {
@@ -229,6 +405,7 @@ export class KeyStore {
 
         this.currentHistoryIndex--;
         this.hasUncommittedChanges = false;
+        this.editScope = null;
 
         if (this.clipboardMode === 'cut') {
             this.clipboardMode = 'copy';
@@ -254,6 +431,7 @@ export class KeyStore {
         this.currentHistoryIndex++;
         this.state = this.redoStack.pop()!;
         this.hasUncommittedChanges = false;
+        this.editScope = null;
 
         if (this.clipboardMode === 'cut') {
             this.clipboardMode = 'copy';
@@ -321,30 +499,7 @@ export class KeyStore {
      * Returns a Set containing all unique, reachable internal IDs.
      */
     public getReachableNodes(idMap?: Map<number, Couplet>): Set<number> {
-        const reachable = new Set<number>();
-        const key = this.state.dichotomousKey;
-        if (key.length === 0) return reachable;
-
-        const lookupMap = idMap || new Map<number, Couplet>(key.map(c => [c.id, c]));
-
-        const stack: number[] = [key[0].id];
-
-        while (stack.length > 0) {
-            const activeId = stack.pop()!;
-
-            if (!reachable.has(activeId)) {
-                reachable.add(activeId);
-
-                const match = lookupMap.get(activeId);
-                if (match) {
-                    const t2 = branchTarget(match.branch2);
-                    if (t2 !== null) stack.push(t2);
-                    const t1 = branchTarget(match.branch1);
-                    if (t1 !== null) stack.push(t1);
-                }
-            }
-        }
-        return reachable;
+        return computeReachableNodes(this.state.dichotomousKey, idMap);
     }
 
     // ==========================================
@@ -354,12 +509,16 @@ export class KeyStore {
     public endTypingSession() {
         if (!this.hasUncommittedChanges) return;
         this.hasUncommittedChanges = false;
+        this.editScope = null;
     }
 
     public updateCouplet(id: number, fields: Partial<Omit<Couplet, 'id'>>) {
-        if (!this.hasUncommittedChanges) {
+        // Open a fresh checkpoint unless we're already mid-edit on the key, so
+        // couplet edits batch together but never merge with a figure edit.
+        if (this.editScope !== 'key') {
             this.saveCheckpoint();
         }
+        this.editScope = 'key';
 
         const index = this.state.dichotomousKey.findIndex(c => c.id === id);
         if (index === -1) return;
@@ -825,19 +984,14 @@ export class KeyStore {
      * Toggles a figure's selection state. Supports multi-select via Ctrl/Cmd/Shift modifiers.
      */
     public toggleFigureSelection(id: number, multiSelect: boolean) {
-        if (!multiSelect) {
-            const wasSelected = this.selectedFigureIds.has(id);
-            const sizeBefore = this.selectedFigureIds.size;
-            this.selectedFigureIds.clear();
-            if (!wasSelected || sizeBefore > 1) {
-                this.selectedFigureIds.add(id);
-            }
-        } else {
+        if (multiSelect) {
             if (this.selectedFigureIds.has(id)) {
                 this.selectedFigureIds.delete(id);
             } else {
                 this.selectedFigureIds.add(id);
             }
+        } else {
+            this.selectedFigureIds = new Set([id]);
         }
     }
 
@@ -882,9 +1036,12 @@ export class KeyStore {
     * Patches mutating attributes inside a targeting unique figure structure.
     */
     public updateFigure(id: number, fields: Partial<Omit<Figure, 'id'>>) {
-        if (!this.hasUncommittedChanges) {
+        // Open a fresh checkpoint unless we're already mid-edit on figures, so
+        // figure edits batch together but never merge with a couplet edit.
+        if (this.editScope !== 'figures') {
             this.saveCheckpoint();
         }
+        this.editScope = 'figures';
 
         const index = this.state.figures.findIndex(f => f.id === id);
         if (index === -1) return;
@@ -949,8 +1106,8 @@ export class KeyStore {
                     const trimmedValue = match[1].trim();
                     let matchedFig: Figure | undefined = undefined;
 
-                    const displayNum = Number(trimmedValue);
-                    if (Number.isInteger(displayNum) && displayNumToFig.has(displayNum)) {
+                    const displayNum = parseInt(trimmedValue, 10);
+                    if (!isNaN(displayNum) && String(displayNum) === trimmedValue && displayNumToFig.has(displayNum)) {
                         matchedFig = displayNumToFig.get(displayNum);
                     } else {
                         const lowercaseFilename = trimmedValue.toLowerCase();
@@ -1002,9 +1159,9 @@ export class KeyStore {
             let importedTitle = 'Untitled Key';
 
             if (isRecord(rawData) && isRecord(rawData.data)) {
-                const payload = (rawData as any).data;
+                const payload = rawData.data;
 
-                if ('key' in payload && isValidCoupletArray(payload.key)) {
+                if (isValidCoupletArray(payload.key)) {
                     importedKey = payload.key;
 
                     if (isValidFigureArray(payload.figures)) {
@@ -1016,7 +1173,7 @@ export class KeyStore {
                 if (typeof payload.title === 'string') {
                     importedTitle = payload.title;
                 } else if (typeof rawData.title === 'string') {
-                    importedTitle = (rawData as any).title;
+                    importedTitle = rawData.title;
                 }
             }
 
@@ -1228,138 +1385,7 @@ export class KeyStore {
     // ==========================================
 
     public runDiagnostics(): Map<number, KeyValidationError[]> {
-        const diagnostics = new Map<number, KeyValidationError[]>();
-        const key = this.state.dichotomousKey;
-
-        if (key.length === 0) return diagnostics;
-
-        const idMap = new Map<number, Couplet>();
-        const idToIndexMap = new Map<number, number>();
-        const inboundParentMap = new Map<number, Set<number>>();
-
-        // Collect all valid internal figure IDs currently present in the state
-        const figureIds = new Set(this.state.figures.map(f => f.id));
-
-        key.forEach((c, index) => {
-            idMap.set(c.id, c);
-            idToIndexMap.set(c.id, index);
-
-            const t1 = branchTarget(c.branch1);
-            if (t1 !== null) {
-                let parentSet = inboundParentMap.get(t1);
-                if (!parentSet) inboundParentMap.set(t1, (parentSet = new Set()));
-                parentSet.add(c.id);
-            }
-            const t2 = branchTarget(c.branch2);
-            if (t2 !== null) {
-                let parentSet = inboundParentMap.get(t2);
-                if (!parentSet) inboundParentMap.set(t2, (parentSet = new Set()));
-                parentSet.add(c.id);
-            }
-        });
-
-        const reachableNodes = this.getReachableNodes(idMap);
-
-        key.forEach((c, index) => {
-            const issues: KeyValidationError[] = [];
-
-            if (c.branch1.kind === 'unresolved') {
-                issues.push({ severity: 'error', message: `Choice A points to step '${c.branch1.couplet}' which does not exist yet.` });
-            } else if (c.branch1.kind === 'empty') {
-                issues.push({ severity: 'warning', message: 'Choice A is incomplete. Assign a Taxa or destination step.' });
-            }
-
-            if (c.branch2.kind === 'unresolved') {
-                issues.push({ severity: 'error', message: `Choice B points to step '${c.branch2.couplet}' which does not exist yet.` });
-            } else if (c.branch2.kind === 'empty') {
-                issues.push({ severity: 'warning', message: 'Choice B is incomplete. Assign a Taxa or destination step.' });
-            }
-
-            // --- Unresolved Figure Reference Diagnostics ---
-            const FIG_ID_REGEX = figIdTokenRegex();
-            const FIG_RAW_REGEX = figRawTokenRegex();
-
-            // Check Choice A
-            if (c.alt1) {
-                const missingIds1: number[] = [];
-                for (const match of c.alt1.matchAll(FIG_ID_REGEX)) {
-                    const figId = parseInt(match[1], 10);
-                    if (!figureIds.has(figId) && !missingIds1.includes(figId)) {
-                        missingIds1.push(figId);
-                    }
-                }
-                missingIds1.forEach(id => {
-                    issues.push({ severity: 'warning', message: `Choice A references a missing or deleted figure (Internal ID: ${id}).` });
-                });
-
-                const unresolved1: string[] = [];
-                for (const match of c.alt1.matchAll(FIG_RAW_REGEX)) {
-                    const token = match[1].trim();
-                    if (!unresolved1.includes(token)) {
-                        unresolved1.push(token);
-                    }
-                }
-                unresolved1.forEach(token => {
-                    issues.push({ severity: 'warning', message: `Choice A references an unresolved figure reference '[fig: ${token}]'.` });
-                });
-            }
-
-            // Check Choice B
-            if (c.alt2) {
-                const missingIds2: number[] = [];
-                for (const match of c.alt2.matchAll(FIG_ID_REGEX)) {
-                    const figId = parseInt(match[1], 10);
-                    if (!figureIds.has(figId) && !missingIds2.includes(figId)) {
-                        missingIds2.push(figId);
-                    }
-                }
-                missingIds2.forEach(id => {
-                    issues.push({ severity: 'warning', message: `Choice B references a missing or deleted figure (Internal ID: ${id}).` });
-                });
-
-                const unresolved2: string[] = [];
-                for (const match of c.alt2.matchAll(FIG_RAW_REGEX)) {
-                    const token = match[1].trim();
-                    if (!unresolved2.includes(token)) {
-                        unresolved2.push(token);
-                    }
-                }
-                unresolved2.forEach(token => {
-                    issues.push({ severity: 'warning', message: `Choice B references an unresolved figure reference '[fig: ${token}]'.` });
-                });
-            }
-
-            if (index > 0 && !reachableNodes.has(c.id)) {
-                issues.push({ severity: 'warning', message: 'Orphaned: This step is unreachable from Step #1.' });
-            }
-            if (c.branch1.kind === 'linked') {
-                if (c.branch1.targetId === c.id) issues.push({ severity: 'error', message: 'Choice A loops directly into its own key step.' });
-                else if (!idMap.has(c.branch1.targetId)) issues.push({ severity: 'error', message: 'Choice A points to an invalid or deleted step.' });
-            }
-            if (c.branch2.kind === 'linked') {
-                if (c.branch2.targetId === c.id) issues.push({ severity: 'error', message: 'Choice B loops directly into its own key step.' });
-                else if (!idMap.has(c.branch2.targetId)) issues.push({ severity: 'error', message: 'Choice B points to an invalid or deleted step.' });
-            }
-
-            const uniqueParents = inboundParentMap.get(c.id);
-            if (uniqueParents && uniqueParents.size > 1) {
-                const parentStepLabels: string[] = [];
-                uniqueParents.forEach(parentId => {
-                    const parentIdx = idToIndexMap.get(parentId);
-                    if (parentIdx !== undefined && parentIdx !== -1) {
-                        parentStepLabels.push(`#${parentIdx + 1}`);
-                    }
-                });
-                issues.push({
-                    severity: 'warning',
-                    message: `Convergence: Multiple steps (${parentStepLabels.join(', ')}) link here.`
-                });
-            }
-
-            if (issues.length > 0) diagnostics.set(c.id, issues);
-        });
-
-        return diagnostics;
+        return diagnoseKey(this.state.dichotomousKey, this.state.figures);
     }
 
     public resolveTextReferences(text: string, idToDisplayNum: Map<number, number>): string {
@@ -1381,8 +1407,8 @@ export class KeyStore {
         text = text.replace(figRawTokenRegex(), (_match, value) => {
             const trimmedValue = value.trim();
 
-            const displayNum = Number(trimmedValue);
-            if (Number.isInteger(displayNum) && displayNum >= 1 && displayNum <= figureCount) {
+            const displayNum = parseInt(trimmedValue, 10);
+            if (!isNaN(displayNum) && String(displayNum) === trimmedValue && displayNum >= 1 && displayNum <= figureCount) {
                 return `(Fig. ${displayNum})`;
             }
 

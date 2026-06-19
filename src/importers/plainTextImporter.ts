@@ -18,13 +18,105 @@
 
 import type { Branch, Couplet, Figure, KeyStore } from '../store.ts';
 import type { UIStateStore } from '../uiState.ts';
-import { APP_NAME, APP_VERSION } from '../store.ts';
+import { APP_NAME, APP_VERSION, diagnoseKey } from '../store.ts';
 import { showToast } from '../uiRenderer.ts';
 import { escapeHTML } from '../utils.ts';
 import { workspaceStorage } from '../db.ts';
 
 const EMPTY_DEST_TOKEN = '...';
 const EMPTY_ALT_TOKEN = '___';
+
+// ==========================================
+// CHARACTER ENCODING (pure — no DOM, no store)
+// ==========================================
+
+/**
+ * Encodings the file loader can decode. 'auto' sniffs a BOM, then a UTF-16
+ * null-byte pattern, then validates UTF-8, finally falling back to Windows-1252
+ * (a superset of Latin-1) for legacy single-byte text.
+ */
+export type TextEncodingChoice =
+    | 'auto'
+    | 'utf-8'
+    | 'utf-16le'
+    | 'utf-16be'
+    | 'windows-1252';
+
+export interface DecodeResult {
+    text: string;
+    /** The encoding actually used (the resolved label when choice was 'auto'). */
+    encoding: Exclude<TextEncodingChoice, 'auto'>;
+    /** True when the encoding was auto-detected rather than chosen explicitly. */
+    autoDetected: boolean;
+}
+
+/** Human-readable label for an encoding, used in status messages. */
+export function encodingLabel(encoding: TextEncodingChoice): string {
+    switch (encoding) {
+        case 'auto': return 'Auto-detect';
+        case 'utf-8': return 'UTF-8';
+        case 'utf-16le': return 'UTF-16 LE';
+        case 'utf-16be': return 'UTF-16 BE';
+        case 'windows-1252': return 'Windows-1252 / Latin-1';
+    }
+}
+
+/** Detects a leading byte-order mark, if any. */
+function sniffBom(bytes: Uint8Array): Exclude<TextEncodingChoice, 'auto'> | null {
+    if (bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) {
+        return 'utf-8';
+    }
+    if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xFE) {
+        return 'utf-16le';
+    }
+    if (bytes.length >= 2 && bytes[0] === 0xFE && bytes[1] === 0xFF) {
+        return 'utf-16be';
+    }
+    return null;
+}
+
+/**
+ * Best-effort encoding detection for files without a BOM. UTF-16 is recognized
+ * by its dense null bytes (every ASCII char carries a zero high byte); the lane
+ * the nulls fall in gives the endianness. Otherwise we trust valid UTF-8 and
+ * treat anything that fails strict UTF-8 validation as legacy Windows-1252.
+ */
+function detectEncoding(bytes: Uint8Array): Exclude<TextEncodingChoice, 'auto'> {
+    const bom = sniffBom(bytes);
+    if (bom) return bom;
+
+    const sample = Math.min(bytes.length, 4096);
+    let evenNul = 0;
+    let oddNul = 0;
+    for (let i = 0; i < sample; i++) {
+        if (bytes[i] === 0) {
+            if (i % 2 === 0) evenNul++; else oddNul++;
+        }
+    }
+    if (sample > 0 && (evenNul + oddNul) / sample > 0.2) {
+        // NULs in odd lanes => low-byte-first => little-endian.
+        return oddNul > evenNul ? 'utf-16le' : 'utf-16be';
+    }
+
+    try {
+        new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+        return 'utf-8';
+    } catch {
+        return 'windows-1252';
+    }
+}
+
+/**
+ * Decodes raw file bytes into text using the chosen encoding, resolving 'auto'
+ * by sniffing. TextDecoder strips a leading BOM for the UTF labels, so the
+ * returned text is clean regardless of how the file was saved.
+ */
+export function decodeBytes(buffer: ArrayBuffer, choice: TextEncodingChoice): DecodeResult {
+    const bytes = new Uint8Array(buffer);
+    const encoding = choice === 'auto' ? detectEncoding(bytes) : choice;
+    const text = new TextDecoder(encoding).decode(buffer);
+    return { text, encoding, autoDetected: choice === 'auto' };
+}
 
 // Safety ceiling: if numbering implies more couplets than this we assume a
 // misparse rather than generating runaway empty couplets.
@@ -372,6 +464,11 @@ const VIEW_ID = 'plain-text-import-view';
 
 let latestResult: PlainTextParseResult | null = null;
 
+// Retains the most recently loaded file's bytes so the user can re-decode it
+// with a different encoding without reloading from disk. Cleared once the user
+// edits the textarea, so manual changes are never clobbered by a re-decode.
+let lastLoadedBuffer: ArrayBuffer | null = null;
+
 function getEl<T extends HTMLElement>(id: string): T | null {
     return document.getElementById(id) as T | null;
 }
@@ -396,6 +493,12 @@ function gatherOptions(): PlainTextParseOptions {
         recognizeDashSecondLead: checked('pt-opt-dash', DEFAULT_PARSE_OPTIONS.recognizeDashSecondLead),
         fillMissingCouplets: checked('pt-opt-fill', DEFAULT_PARSE_OPTIONS.fillMissingCouplets),
     };
+}
+
+/** Reads the encoding chosen in the dialog, defaulting to auto-detect. */
+function getEncodingChoice(): TextEncodingChoice {
+    const el = getEl<HTMLSelectElement>('pt-import-encoding');
+    return (el?.value as TextEncodingChoice) || 'auto';
 }
 
 /** Opens the full-window import dialog, anchored directly under the menu bar. */
@@ -479,6 +582,23 @@ function renderPreviewHtml(result: PlainTextParseResult): string {
         html += `</div>`;
     }
 
+    // Run the same diagnostics engine the live editor uses, so problems in the
+    // imported key (orphaned steps, dead-end choices, convergence, unresolved
+    // links/figures) surface here before the user commits the import.
+    const diagnostics = diagnoseKey(result.couplets, result.figures);
+    let errorCount = 0;
+    let warningCount = 0;
+    diagnostics.forEach(issues => issues.forEach(i => {
+        if (i.severity === 'error') errorCount++; else warningCount++;
+    }));
+
+    if (errorCount > 0 || warningCount > 0) {
+        const parts: string[] = [];
+        if (errorCount > 0) parts.push(`${errorCount} error${errorCount === 1 ? '' : 's'}`);
+        if (warningCount > 0) parts.push(`${warningCount} warning${warningCount === 1 ? '' : 's'}`);
+        html += `<div class="import-diagnostics-summary">🩺 Key check: ${parts.join(', ')}. Fixable after import in the editor.</div>`;
+    }
+
     const idToStep = new Map<number, number>();
     result.couplets.forEach((c, i) => idToStep.set(c.id, i + 1));
 
@@ -497,10 +617,22 @@ function renderPreviewHtml(result: PlainTextParseResult): string {
         }
     };
 
+    const diagnosticsHtml = (id: number): string => {
+        const issues = diagnostics.get(id);
+        if (!issues || issues.length === 0) return '';
+        const rows = issues.map(issue => {
+            const cls = issue.severity === 'error' ? 'error-text' : 'warning-text';
+            const icon = issue.severity === 'error' ? '⛔' : '⚠️';
+            return `<div class="${cls}">${icon} ${escapeHTML(issue.message)}</div>`;
+        }).join('');
+        return `<div class="import-preview-diagnostics warning-block">${rows}</div>`;
+    };
+
     html += `<ol class="import-preview-list">`;
     result.couplets.forEach((c, index) => {
+        const hasIssues = diagnostics.has(c.id);
         html += `
-            <li class="import-preview-step">
+            <li class="import-preview-step${hasIssues ? ' has-issues' : ''}">
                 <div class="import-preview-num">${index + 1}.</div>
                 <div class="import-preview-rows">
                     <div class="import-preview-row">
@@ -511,6 +643,7 @@ function renderPreviewHtml(result: PlainTextParseResult): string {
                         <span class="import-preview-text">${escapeHTML(c.alt2) || '<span class="import-preview-muted">(blank)</span>'}</span>
                         <span class="import-preview-dest">${destLabel(c.branch2)}</span>
                     </div>
+                    ${diagnosticsHtml(c.id)}
                 </div>
             </li>`;
     });
@@ -598,7 +731,11 @@ export function setupPlainTextImporter(
     const textarea = getEl<HTMLTextAreaElement>('pt-import-source');
     const fileInput = getEl<HTMLInputElement>('pt-import-file-hidden');
 
-    textarea?.addEventListener('input', () => refreshPreview(), { signal });
+    textarea?.addEventListener('input', () => {
+        // Manual edits detach from the loaded file; stop re-decoding it.
+        lastLoadedBuffer = null;
+        refreshPreview();
+    }, { signal });
 
     // Re-parse whenever any parsing option changes so the user can tune live.
     const optionIds = [
@@ -619,10 +756,15 @@ export function setupPlainTextImporter(
         const file = (e.target as HTMLInputElement).files?.[0];
         if (!file) return;
         try {
-            const text = await file.text();
+            const buffer = await file.arrayBuffer();
+            lastLoadedBuffer = buffer;
+            const { text, encoding, autoDetected } = decodeBytes(buffer, getEncodingChoice());
             if (textarea) {
                 textarea.value = text;
                 refreshPreview();
+            }
+            if (autoDetected) {
+                showToast(`📥 Loaded "${file.name}" — detected ${encodingLabel(encoding)} encoding.`, 'success');
             }
             // Pre-fill the title from the filename if the user hasn't set one.
             const titleInput = getEl<HTMLInputElement>('pt-import-title');
@@ -637,8 +779,20 @@ export function setupPlainTextImporter(
         }
     }, { signal });
 
+    // Re-decode the loaded file when the encoding changes, so a mis-detected
+    // file can be fixed without reloading. No-op until a file has been loaded.
+    getEl<HTMLSelectElement>('pt-import-encoding')?.addEventListener('change', () => {
+        if (!lastLoadedBuffer) return;
+        const { text } = decodeBytes(lastLoadedBuffer, getEncodingChoice());
+        if (textarea) {
+            textarea.value = text;
+            refreshPreview();
+        }
+    }, { signal });
+
     getEl('pt-import-clear')?.addEventListener('click', () => {
         if (textarea) textarea.value = '';
+        lastLoadedBuffer = null;
         refreshPreview();
         textarea?.focus();
     }, { signal });

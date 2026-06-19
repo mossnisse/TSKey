@@ -323,6 +323,15 @@ export function initializeShell(appDiv: HTMLDivElement) {
           <div class="import-pane-toolbar">
             <label for="pt-import-source" class="import-pane-label">Paste your key, or load a text file</label>
             <div class="import-toolbar-actions">
+              <label class="import-encoding-field" for="pt-import-encoding">Encoding
+                <select id="pt-import-encoding">
+                  <option value="auto" selected>Auto-detect</option>
+                  <option value="utf-8">UTF-8</option>
+                  <option value="utf-16le">UTF-16 LE</option>
+                  <option value="utf-16be">UTF-16 BE</option>
+                  <option value="windows-1252">Windows-1252 / Latin-1</option>
+                </select>
+              </label>
               <button id="pt-import-load-file" class="btn btn-secondary">📂 Load .txt File...</button>
               <button id="pt-import-clear" class="btn btn-outline">Clear</button>
             </div>
@@ -335,6 +344,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
             and the second alternative may start with a dash (<code>-</code> <code>–</code> <code>—</code>). The destination — a step number
             or a taxon name — is whatever follows a dotted leader (<code>……</code>), a tab, or wide spacing at the end of the lead.
             Lines wrapped across a page (common in PDFs) are stitched back together. Tune the options above and watch the preview.
+            File encoding is auto-detected (UTF-8, UTF-16, and legacy Windows-1252/Latin-1); pick it manually if accented characters look wrong.
             The result is best-effort and may need a little manual cleanup.
           </p>
         </section>

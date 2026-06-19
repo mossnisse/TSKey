@@ -854,7 +854,23 @@ html, body {
     margin-bottom: 10px;
 }
 .import-pane-label { font-weight: 600; color: var(--color-text); font-size: 14px; }
-.import-toolbar-actions { display: flex; gap: 8px; }
+.import-toolbar-actions { display: flex; gap: 8px; align-items: center; }
+.import-encoding-field {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--color-text);
+    user-select: none;
+}
+.import-encoding-field select {
+    padding: 4px 6px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-size: 13px;
+}
 
 .import-source-textarea {
     flex: 1 1 auto;
@@ -921,6 +937,22 @@ html, body {
 .import-preview-row { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
 .import-preview-text { color: var(--color-text); }
 .import-preview-dest { flex: 0 0 auto; color: var(--color-text-muted); font-weight: 500; white-space: nowrap; }
+
+.import-diagnostics-summary {
+    margin-bottom: 12px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    background: #fef3c7;
+    color: var(--color-warning);
+    font-size: 13px;
+    font-weight: 500;
+}
+.import-preview-step.has-issues { border-color: var(--color-warning); }
+.import-preview-diagnostics.warning-block {
+    margin: 4px 0 0 0;
+    border-left-width: 2px;
+    font-size: 12px;
+}
 
 .import-title-field { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; color: var(--color-text); }
 .import-title-field input {
