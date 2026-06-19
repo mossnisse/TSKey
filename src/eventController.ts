@@ -2,7 +2,7 @@
 import type { KeyStore, Couplet } from './store.ts';
 import type { UIStateStore } from './uiState.ts';
 import { showToast, renderProjectHubList } from './uiRenderer.ts';
-import { IS_MAC, resolveDestination, parseDestinationInput, buildIdToIndexMap } from './utils.ts';
+import { IS_MAC, resolveDestination, parseDestinationInput, buildIdToIndexMap, isLeadFormat } from './utils.ts';
 import { workspaceStorage, activeObjectURLs } from './db.ts';
 import { exportKeyToHTML } from './exporters/htmlExporter.ts';
 import { exportKeyToLaTeX } from './exporters/latexExporter.ts';
@@ -50,8 +50,8 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
     setupCoupletFocus(keyContainer, store, uiState, refreshAll, signal);
     setupCoupletDragAndDrop(keyContainer, store, refreshAll, signal);
     setupFigurePanel(store, uiState, refreshAll, signal);
-    setupDialogs(store, refreshAll, signal);
-    setupFileMenu(store, refreshAll, signal);
+    setupDialogs(store, uiState, refreshAll, signal);
+    setupFileMenu(store, uiState, refreshAll, signal);
     setupEditMenu(store, uiState, refreshAll, signal);
     setupMenuBarNavigation(signal);
 
@@ -646,17 +646,38 @@ function setupFigureDragAndDrop(figureContainer: HTMLElement, store: KeyStore, r
 }
 
 /** Modal open/close triggers and the project workspace hub row actions (load / delete). */
-function setupDialogs(store: KeyStore, refreshAll: () => void, signal: AbortSignal) {
+function setupDialogs(store: KeyStore, uiState: UIStateStore, refreshAll: () => void, signal: AbortSignal) {
     const modalShortcuts = document.getElementById('modal-shortcuts') as HTMLElement;
     const modalOptions = document.getElementById('modal-options') as HTMLElement;
     const modalAbout = document.getElementById('modal-about') as HTMLElement;
     const modalProjectHub = document.getElementById('modal-open-project') as HTMLElement;
+
+    // --- OPTIONS: KEY LEADING FORMAT + BACK-REFERENCE ---
+    const leadFormatGroup = document.getElementById('opt-lead-format');
+    const backRefCheckbox = document.getElementById('opt-backref') as HTMLInputElement | null;
+    const syncOptionControls = () => {
+        leadFormatGroup
+            ?.querySelectorAll<HTMLInputElement>('input[name="lead-format"]')
+            .forEach(radio => { radio.checked = radio.value === uiState.leadFormat; });
+        if (backRefCheckbox) backRefCheckbox.checked = uiState.showBackReference;
+    };
+    leadFormatGroup?.addEventListener('change', (e) => {
+        const target = e.target as HTMLInputElement;
+        if (target.name !== 'lead-format' || !isLeadFormat(target.value)) return;
+        uiState.setLeadFormat(target.value);
+        batchedRefresh(refreshAll);
+    }, { signal });
+    backRefCheckbox?.addEventListener('change', () => {
+        uiState.setShowBackReference(backRefCheckbox.checked);
+        batchedRefresh(refreshAll);
+    }, { signal });
 
     // --- DIALOG MODAL OPEN TRIGGERS ---
     document.getElementById('cmd-open-shortcuts')?.addEventListener('click', () => {
         modalShortcuts.style.display = 'flex';
     }, { signal });
     document.getElementById('cmd-open-options')?.addEventListener('click', () => {
+        syncOptionControls();
         modalOptions.style.display = 'flex';
     }, { signal });
     document.getElementById('cmd-open-about')?.addEventListener('click', () => {
@@ -756,7 +777,7 @@ function setupDialogs(store: KeyStore, refreshAll: () => void, signal: AbortSign
 }
 
 /** File menu: new / save / save-as / JSON+text+HTML+LaTeX export / import. */
-function setupFileMenu(store: KeyStore, refreshAll: () => void, signal: AbortSignal) {
+function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll: () => void, signal: AbortSignal) {
     const modalProjectHub = document.getElementById('modal-open-project') as HTMLElement;
 
     // --- NEW TRADITIONAL WORKFLOW FILE ACTIONS ---
@@ -986,9 +1007,9 @@ function setupFileMenu(store: KeyStore, refreshAll: () => void, signal: AbortSig
         openPlainTextImportDialog();
     }, { signal });
 
-    document.querySelector('#cmd-export-text')?.addEventListener('click', () => exportKeyToPlainText(store), { signal });
-    document.querySelector('#cmd-export-html')?.addEventListener('click', () => exportKeyToHTML(store), { signal });
-    document.querySelector('#cmd-export-latex')?.addEventListener('click', () => exportKeyToLaTeX(store), { signal });
+    document.querySelector('#cmd-export-text')?.addEventListener('click', () => exportKeyToPlainText(store, uiState.leadFormat, uiState.showBackReference), { signal });
+    document.querySelector('#cmd-export-html')?.addEventListener('click', () => exportKeyToHTML(store, uiState.leadFormat, uiState.showBackReference), { signal });
+    document.querySelector('#cmd-export-latex')?.addEventListener('click', () => exportKeyToLaTeX(store, uiState.leadFormat, uiState.showBackReference), { signal });
 }
 
 /** Edit, View, and Tools menu command bindings (undo/redo, clipboard, toggles, auto-order). */

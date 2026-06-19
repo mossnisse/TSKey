@@ -1,6 +1,7 @@
 // latexExporter.ts
 import type { KeyStore } from '../store.ts';
-import { triggerFileDownload, resolveDestination, buildIdToIndexMap, buildFigureIdToDisplayNumMap, sanitizeFilename } from '../utils.ts';
+import { triggerFileDownload, resolveDestination, buildIdToIndexMap, buildFigureIdToDisplayNumMap, sanitizeFilename, buildCoupletLeads, buildBackReferenceMap } from '../utils.ts';
+import type { LeadFormat } from '../utils.ts';
 import { figIdTokenRegex } from '../figureTokens.ts';
 import { showToast } from '../uiRenderer.ts';
 
@@ -25,10 +26,20 @@ function escapeLaTeX(str: string): string {
 }
 
 /**
+ * Renders a couplet lead marker (e.g. "1.", "1a", "—") as a bold, fixed-width
+ * box. The em dash is emitted as \textemdash{} so it compiles without relying on
+ * inputenc handling of the literal character.
+ */
+function latexLeadBox(lead: string, width: string): string {
+    const body = escapeLaTeX(lead).replace(/—/g, '\\textemdash{}');
+    return `\\makebox[${width}][l]{\\textbf{${body}}}`;
+}
+
+/**
  * Compiles the current KeyStore state into a valid standalone LaTeX structure
  * using classic inline notation and dot leaders to prevent layout overlap.
  */
-export function exportKeyToLaTeX(store: KeyStore): void {
+export function exportKeyToLaTeX(store: KeyStore, leadFormat: LeadFormat, showBackReference: boolean): void {
 
     try {
         const key = store.getKey();
@@ -36,6 +47,10 @@ export function exportKeyToLaTeX(store: KeyStore): void {
         const title = store.getTitle();
         const idToIndexMap = buildIdToIndexMap(key);
         const figureIdToDisplayNum = buildFigureIdToDisplayNumMap(figures);
+        const backRefMap = showBackReference ? buildBackReferenceMap(key) : null;
+        // The back-reference widens the lead ("2 (1)"), so give the fixed box and
+        // matching hang-indent extra room to avoid overprinting the diagnosis text.
+        const leadWidth = showBackReference ? '4.5em' : '2.5em';
 
         // Converts stored [figID: N] tokens in already-escaped text into inline (Fig.~N)
         // citations. Escaping leaves the digit-only tokens intact for this pass.
@@ -81,10 +96,12 @@ export function exportKeyToLaTeX(store: KeyStore): void {
                 const alt1Text = resolveFigCitations(escapeLaTeX(c.alt1));
                 const alt2Text = resolveFigCitations(escapeLaTeX(c.alt2));
 
+                const { lead1, lead2 } = buildCoupletLeads(leadFormat, currentDisplayNum, backRefMap?.get(c.id));
+
                 // Structural formatting utilizing flexible dot-fill constraints to auto-align right boundaries
                 bodyContent += `{\\interlinepenalty=10000\n`;
-                bodyContent += `\\noindent\\hangindent=2.5em\\hangafter=1\\makebox[2.5em][l]{\\textbf{${currentDisplayNum}.}}${alt1Text}\\nobreak\\dotfill\\allowbreak\\hspace*{0pt}\\dotfill ${end1}\\par\\nopagebreak\n`;
-                bodyContent += `\\noindent\\hangindent=2.5em\\hangafter=1\\makebox[2.5em][l]{\\textemdash}${alt2Text}\\nobreak\\dotfill\\allowbreak\\hspace*{0pt}\\dotfill ${end2}\\par}\n`;
+                bodyContent += `\\noindent\\hangindent=${leadWidth}\\hangafter=1${latexLeadBox(lead1, leadWidth)}${alt1Text}\\nobreak\\dotfill\\allowbreak\\hspace*{0pt}\\dotfill ${end1}\\par\\nopagebreak\n`;
+                bodyContent += `\\noindent\\hangindent=${leadWidth}\\hangafter=1${latexLeadBox(lead2, leadWidth)}${alt2Text}\\nobreak\\dotfill\\allowbreak\\hspace*{0pt}\\dotfill ${end2}\\par}\n`;
                 bodyContent += `\\vspace{0.6em}\n\n`;
             });
 

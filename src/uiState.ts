@@ -2,6 +2,9 @@
 // Manages persistent UI preferences, separate from key data in KeyStore.
 // Panel visibility and other display settings survive page reloads via localStorage.
 
+import { DEFAULT_LEAD_FORMAT, isLeadFormat } from './utils.ts';
+import type { LeadFormat } from './utils.ts';
+
 export const UI_STATE_STORAGE_KEY = 'dichotomous_key_ui';
 
 export interface UIPanelState {
@@ -9,6 +12,8 @@ export interface UIPanelState {
     isPrintHidden: boolean;
     isImagesHidden: boolean;
     activeProjectTitle: string;
+    leadFormat: LeadFormat;
+    showBackReference: boolean;
 }
 
 const DEFAULTS: UIPanelState = {
@@ -16,6 +21,8 @@ const DEFAULTS: UIPanelState = {
     isPrintHidden: false,
     isImagesHidden: false,
     activeProjectTitle: 'Untitled Key',
+    leadFormat: DEFAULT_LEAD_FORMAT,
+    showBackReference: false,
 };
 
 /**
@@ -123,6 +130,14 @@ export class UIStateStore {
         return this.state.activeProjectTitle || 'Untitled Key';
     }
 
+    get leadFormat(): LeadFormat {
+        return this.state.leadFormat;
+    }
+
+    get showBackReference(): boolean {
+        return this.state.showBackReference;
+    }
+
     // ==========================================
     // MUTATORS
     // ==========================================
@@ -147,6 +162,18 @@ export class UIStateStore {
         this.persist();
     }
 
+    public setLeadFormat(format: LeadFormat): void {
+        if (!isLeadFormat(format) || this.state.leadFormat === format) return;
+        this.state = { ...this.state, leadFormat: format };
+        this.persist();
+    }
+
+    public setShowBackReference(value: boolean): void {
+        if (this.state.showBackReference === value) return;
+        this.state = { ...this.state, showBackReference: value };
+        this.persist();
+    }
+
     // ==========================================
     // PERSISTENCE
     // ==========================================
@@ -155,7 +182,10 @@ export class UIStateStore {
         try {
             const raw = localStorage.getItem(UI_STATE_STORAGE_KEY);
             if (!raw) return { ...DEFAULTS };
-            return { ...DEFAULTS, ...JSON.parse(raw) };
+            const merged: UIPanelState = { ...DEFAULTS, ...JSON.parse(raw) };
+            // Guard against a stale/invalid persisted value from an older build.
+            if (!isLeadFormat(merged.leadFormat)) merged.leadFormat = DEFAULT_LEAD_FORMAT;
+            return merged;
         } catch {
             return { ...DEFAULTS };
         }

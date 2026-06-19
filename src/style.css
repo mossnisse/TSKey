@@ -590,6 +590,9 @@ html, body {
 .print-step-num { font-weight: bold; color: var(--color-text);}
 .print-step-block { display: contents; }
 .print-dash       { font-weight: bold; text-align: center; color: var(--color-text); }
+/* Lettered/minimal leads read better flush-left, aligned under the step number. */
+.print-grid[data-lead-format="lettered"] .print-dash,
+.print-grid[data-lead-format="minimal"] .print-dash { text-align: left; }
 .print-spacer     { grid-column: span 2; height: 8px; }
 
 .print-row {
@@ -752,6 +755,32 @@ html, body {
 .settings-group h4 { margin-top: 0; margin-bottom: 12px; }
 .setting-item { display: flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 500; }
 .setting-item input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--color-primary); }
+
+.settings-hint { margin: 0 0 16px; font-size: 13px; color: var(--color-text-muted); line-height: 1.5; }
+.settings-options { display: flex; flex-direction: column; gap: 10px; }
+
+.settings-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: var(--transition-base);
+}
+.settings-option:hover { background: var(--color-bg-muted); }
+.settings-option input[type="radio"] { margin-top: 3px; width: 16px; height: 16px; accent-color: var(--color-primary); }
+.settings-option:has(input:checked) { border-color: var(--color-primary); background: var(--color-primary-light); }
+
+.settings-checkbox { align-items: flex-start; gap: 12px; margin-top: 18px; font-weight: 400; }
+.settings-checkbox input[type="checkbox"] { margin-top: 3px; }
+.settings-checkbox-hint { margin: 0; }
+
+.settings-option-main { display: flex; flex-direction: column; gap: 6px; }
+.settings-option-title { font-weight: 600; color: var(--color-text); }
+.settings-option-sample { font-family: serif; font-size: 14px; color: var(--color-text-muted); line-height: 1.7; }
+.settings-option-sample span { display: inline-block; min-width: 1.9em; font-weight: bold; color: var(--color-text); }
 
 /* ==========================================
    FULL-WINDOW VIEW (Plain Text Import, etc.)

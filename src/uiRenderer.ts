@@ -1,7 +1,7 @@
 // uiRenderer.ts
 import { KeyStore, APP_NAME, APP_VERSION } from './store.ts';
 import { UIStateStore } from './uiState.ts';
-import { escapeHTML, buildIdToIndexMap, resolveDestination, IS_MAC, buildFigureIdToDisplayNumMap } from './utils.ts';
+import { escapeHTML, buildIdToIndexMap, resolveDestination, IS_MAC, buildFigureIdToDisplayNumMap, buildCoupletLeads, buildBackReferenceMap } from './utils.ts';
 import { workspaceStorage, activeObjectURLs } from './db.ts';
 
 // ==========================================
@@ -270,8 +270,39 @@ export function initializeShell(appDiv: HTMLDivElement) {
         </div>
         <div class="modal-body">
           <div class="settings-group">
-            <h4>System Memory Rules</h4>
-            <h4>View</h4>
+            <h4>Key labelling format</h4>
+            <p class="settings-hint">Choose how the two alternatives of every step are labelled. This applies to the Live Publication View and to the plain-text, HTML, and LaTeX exports.</p>
+            <div class="settings-options" id="opt-lead-format" role="radiogroup" aria-label="Key labelling format">
+              <label class="settings-option">
+                <input type="radio" name="lead-format" value="classic" />
+                <span class="settings-option-main">
+                  <span class="settings-option-title">Number &amp; em-dash</span>
+                  <span class="settings-option-sample"><span>1.</span>diagnose … Homo habilis<br><span>—</span>diagnose … 2</span>
+                </span>
+              </label>
+              <label class="settings-option">
+                <input type="radio" name="lead-format" value="lettered" />
+                <span class="settings-option-main">
+                  <span class="settings-option-title">Lettered</span>
+                  <span class="settings-option-sample"><span>1a</span>diagnose … Homo habilis<br><span>1b</span>diagnose … 2</span>
+                </span>
+              </label>
+              <label class="settings-option">
+                <input type="radio" name="lead-format" value="minimal" />
+                <span class="settings-option-main">
+                  <span class="settings-option-title">Number &amp; hyphen</span>
+                  <span class="settings-option-sample"><span>1</span>diagnose … Homo habilis<br><span>-</span>diagnose … 2</span>
+                </span>
+              </label>
+            </div>
+
+            <label class="setting-item settings-checkbox">
+              <input type="checkbox" id="opt-backref" />
+              <span class="settings-option-main">
+                <span class="settings-option-title">Show back-reference</span>
+                <span class="settings-hint settings-checkbox-hint">Append the step this couplet is reached from, in parentheses — e.g. <strong>2&nbsp;(1)</strong>. Handy for navigating a printed key upwards.</span>
+              </span>
+            </label>
           </div>
         </div>
       </div>
@@ -797,8 +828,13 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
     if (!container) return;
 
     const key = store.getKey();
+    const leadFormat = uiState.leadFormat;
     const idToIndexMap = buildIdToIndexMap(key);
     const figDisplayMap = buildFigureIdToDisplayNumMap(store.getFigures());
+    const backRefMap = uiState.showBackReference ? buildBackReferenceMap(key) : null;
+
+    // Drives the dash-alignment rule for lettered/minimal styles (see style.css).
+    container.dataset.leadFormat = leadFormat;
 
     const existingBlocks = Array.from(container.querySelectorAll('.print-step-block')) as HTMLElement[];
     const existingMap = new Map<number, HTMLElement>();
@@ -810,6 +846,7 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
 
     key.forEach((c, index) => {
         const currentDisplayNum = index + 1;
+        const { lead1, lead2 } = buildCoupletLeads(leadFormat, currentDisplayNum, backRefMap?.get(c.id));
 
         const dest1 = resolveDestination(c.branch1, idToIndexMap);
         const dest2 = resolveDestination(c.branch2, idToIndexMap);
@@ -825,8 +862,13 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
             existingMap.delete(c.id);
 
             const stepNumEl = block.querySelector('.print-step-num');
-            if (stepNumEl && stepNumEl.textContent !== `${currentDisplayNum}.`) {
-                stepNumEl.textContent = `${currentDisplayNum}.`;
+            if (stepNumEl && stepNumEl.textContent !== lead1) {
+                stepNumEl.textContent = lead1;
+            }
+
+            const dashEl = block.querySelector('.print-dash');
+            if (dashEl && dashEl.textContent !== lead2) {
+                dashEl.textContent = lead2;
             }
 
             const txt1 = block.querySelector('.print-row[data-choice="1"] .print-text');
@@ -863,7 +905,7 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
                   <span class="print-text"></span>
                   <span class="print-dest"></span>
                 </div>
-                <div class="print-dash">—</div>
+                <div class="print-dash"></div>
                 <div class="print-row" data-choice="2">
                   <span class="print-text"></span>
                   <span class="print-dest"></span>
@@ -872,7 +914,10 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
             `;
 
             const stepNumEl = block.querySelector('.print-step-num');
-            if (stepNumEl) stepNumEl.textContent = `${currentDisplayNum}.`;
+            if (stepNumEl) stepNumEl.textContent = lead1;
+
+            const dashEl = block.querySelector('.print-dash');
+            if (dashEl) dashEl.textContent = lead2;
 
             const txt1 = block.querySelector('.print-row[data-choice="1"] .print-text');
             if (txt1) txt1.innerHTML = html1;
