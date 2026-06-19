@@ -8,12 +8,14 @@ export interface UIPanelState {
     isFiguresHidden: boolean;
     isPrintHidden: boolean;
     isImagesHidden: boolean;
+    activeProjectTitle: string;
 }
 
 const DEFAULTS: UIPanelState = {
     isFiguresHidden: false,
     isPrintHidden: false,
     isImagesHidden: false,
+    activeProjectTitle: 'Untitled Key',
 };
 
 /**
@@ -37,6 +39,7 @@ export class TypingSession {
      */
     public start(fieldKey: string, onStart: () => void): void {
         if (!this.active || this.fieldKey !== fieldKey) {
+            this.clearTimer();      // <-- never inherit the previous field's timer
             onStart();
             this.active = true;
             this.fieldKey = fieldKey;
@@ -49,8 +52,9 @@ export class TypingSession {
     public extendTimeout(debounceMs: number, onTimeout: () => void): void {
         this.clearTimer();
         this.timeoutId = window.setTimeout(() => {
-            this.active = false;
             this.timeoutId = null;
+            this.active = false;
+            this.fieldKey = null;   // <-- keep active/fieldKey in lockstep
             onTimeout();
         }, debounceMs);
     }
@@ -69,7 +73,9 @@ export class TypingSession {
      * Concludes the session if the focus matches the ending field context.
      */
     public end(fieldKey: string | null, onEnd: () => void): boolean {
-        if (this.fieldKey !== null && fieldKey !== null && this.fieldKey === fieldKey) {
+        if (!this.active && this.fieldKey === null) return false;
+
+        if (fieldKey === null || this.fieldKey === fieldKey) {
             this.active = false;
             this.fieldKey = null;
             this.clearTimer();
@@ -113,9 +119,18 @@ export class UIStateStore {
         return this.state.isPrintHidden;
     }
 
+    get activeProjectTitle(): string {
+        return this.state.activeProjectTitle || 'Untitled Key';
+    }
+
     // ==========================================
     // MUTATORS
     // ==========================================
+
+    public setActiveProjectTitle(title: string): void {
+        this.state = { ...this.state, activeProjectTitle: title.trim() };
+        this.persist();
+    }
 
     public toggleFigures(): void {
         this.state = { ...this.state, isFiguresHidden: !this.state.isFiguresHidden };
@@ -140,7 +155,6 @@ export class UIStateStore {
         try {
             const raw = localStorage.getItem(UI_STATE_STORAGE_KEY);
             if (!raw) return { ...DEFAULTS };
-            // Spread DEFAULTS first so new fields added in future versions don't break old saves
             return { ...DEFAULTS, ...JSON.parse(raw) };
         } catch {
             return { ...DEFAULTS };

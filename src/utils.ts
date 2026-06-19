@@ -1,5 +1,33 @@
 // utils.ts
-import type { Couplet, Figure } from './store.ts';
+import type { Branch, Couplet, Figure } from './store.ts';
+
+/**
+ * The shared empty destination. Branches are treated as immutable values
+ * (always replaced, never mutated in place), so this single frozen instance
+ * can be reused everywhere a destination is cleared.
+ */
+export const EMPTY_BRANCH: Branch = Object.freeze({ kind: 'empty' });
+
+/** The couplet id a branch points at, or null when it isn't a link. */
+export function branchTarget(branch: Branch): number | null {
+    return branch.kind === 'linked' ? branch.targetId : null;
+}
+
+/**
+ * Classifies a branch against the current key. The only state that depends on
+ * the rest of the key is 'broken' — a 'linked' branch whose target id is absent
+ * from idMap. Every other status is intrinsic to the branch.
+ */
+export type BranchStatus = 'linked' | 'broken' | 'unresolved' | 'taxon' | 'empty';
+
+export function classifyBranch(branch: Branch, idMap: ReadonlyMap<number, unknown>): BranchStatus {
+    switch (branch.kind) {
+        case 'linked': return idMap.has(branch.targetId) ? 'linked' : 'broken';
+        case 'unresolved': return 'unresolved';
+        case 'taxon': return 'taxon';
+        case 'empty': return 'empty';
+    }
+}
 
 const HTML_ESCAPE_MAP: Record<string, string> = {
     '&': '&amp;',
@@ -31,8 +59,7 @@ export function triggerFileDownload(content: string, filename: string, mimeType:
             const chunkSize = 8192;
             for (let i = 0; i < binaryBytes.length; i += chunkSize) {
                 const chunk = binaryBytes.subarray(i, i + chunkSize);
-                // @ts-ignore
-                binaryString += String.fromCharCode.apply(null, chunk);
+                binaryString += String.fromCharCode(...chunk);
             }
 
             const encodedContent = btoa(binaryString);
@@ -69,7 +96,7 @@ export function triggerFileDownload(content: string, filename: string, mimeType:
 
     } catch (globalError) {
         console.error("An unhandled exception occurred during file synthesis/download processing:", globalError);
-        
+
         // Fallback: If an error occurs BEFORE scheduling the timeout, clean up immediately
         if (downloadAnchor && document.body.contains(downloadAnchor)) {
             document.body.removeChild(downloadAnchor);
@@ -84,7 +111,9 @@ export function triggerFileDownload(content: string, filename: string, mimeType:
  */
 export const IS_MAC: boolean = (() => {
     // Modern User-Agent Client Hints API (Chrome, Edge, Opera)
-    const userAgentData = (navigator as any).userAgentData;
+    interface NavigatorUAData { platform?: string }
+    const navWithUA = navigator as Navigator & { userAgentData?: NavigatorUAData };
+    const userAgentData = navWithUA.userAgentData;
     if (userAgentData?.platform) {
         return userAgentData.platform.toLowerCase().includes('mac');
     }
@@ -103,7 +132,19 @@ export const IS_MAC: boolean = (() => {
 /**
  * Checks if the json is an valid array of Couplets.
  */
-export function isValidCoupletArray(data: any): data is Couplet[] {
+function isValidBranch(value: unknown): value is Branch {
+    if (!value || typeof value !== 'object') return false;
+    const branch = value as { kind?: unknown; targetId?: unknown; step?: unknown; name?: unknown };
+    switch (branch.kind) {
+        case 'linked': return typeof branch.targetId === 'number';
+        case 'unresolved': return typeof branch.step === 'number';
+        case 'taxon': return typeof branch.name === 'string';
+        case 'empty': return true;
+        default: return false;
+    }
+}
+
+export function isValidCoupletArray(data: unknown): data is Couplet[] {
     if (!Array.isArray(data)) return false;
 
     const seenIds = new Set<number>();
@@ -116,10 +157,8 @@ export function isValidCoupletArray(data: any): data is Couplet[] {
             item.id > 0 &&
             typeof item.alt1 === 'string' &&
             typeof item.alt2 === 'string' &&
-            typeof item.link1 === 'number' &&
-            typeof item.link2 === 'number' &&
-            typeof item.taxa1 === 'string' &&
-            typeof item.taxa2 === 'string';
+            isValidBranch(item.branch1) &&
+            isValidBranch(item.branch2);
 
         if (!hasValidShape) return false;
 
@@ -134,7 +173,7 @@ export function isValidCoupletArray(data: any): data is Couplet[] {
 /**
  * Checks if the json is a valid array of Figures.
  */
-export function isValidFigureArray(data: any): data is Figure[] {
+export function isValidFigureArray(data: unknown): data is Figure[] {
     if (!Array.isArray(data)) return false;
 
     const seenIds = new Set<number>();
@@ -168,15 +207,6 @@ export function buildIdToIndexMap(key: readonly Couplet[]): Map<number, number> 
 }
 
 /**
- * Resolves a permanent record identifier into a user-facing step layout label integer.
- */
-export function getStepNumberById(idToIndexMap: Map<number, number>, targetId: number): string {
-    if (targetId === 0) return '0';
-    const index = idToIndexMap.get(targetId);
-    return index !== undefined ? (index + 1).toString() : 'INVALID ID';
-}
-
-/**
  * Generates an O(1) hash map connecting unique Figure record IDs to their sequential 1-based display numbers.
  */
 export function buildFigureIdToDisplayNumMap(figures: readonly Figure[]): Map<number, number> {
@@ -200,64 +230,44 @@ export interface DestinationResolution {
 /**
  * Resolves a destination's raw link and taxa state into a explicit UI and print configuration.
  */
-export function resolveDestination(link: number, taxa: string, idToIndexMap: Map<number, number>): DestinationResolution {
-    // Case A: The destination is actively configured to point to an internal step ID
-    if (link !== 0) {
-        const index = idToIndexMap.get(link);
-        if (index !== undefined) {
-            const stepNumStr = (index + 1).toString();
-            return {
-                inputValue: stepNumStr,
-                printText: stepNumStr,
-                printClass: 'print-dest-strong',
-                isUnresolved: false
-            };
+export function resolveDestination(branch: Branch, idToIndexMap: Map<number, number>): DestinationResolution {
+    switch (branch.kind) {
+        // Points at an internal step ID — resolve it to a 1-based step number
+        case 'linked': {
+            const index = idToIndexMap.get(branch.targetId);
+            if (index !== undefined) {
+                const stepNumStr = (index + 1).toString();
+                return { inputValue: stepNumStr, printText: stepNumStr, printClass: 'print-dest-strong', isUnresolved: false };
+            }
+            // Broken: the pointer exists but the target card was deleted
+            return { inputValue: '?', printText: '?', printClass: 'error-text', isUnresolved: true };
         }
-        // Broken Link Fallback: The step pointer exists but the target card was deleted
-        const fallback = taxa || '?';
-        return {
-            inputValue: fallback,
-            printText: fallback,
-            printClass: 'error-text',
-            isUnresolved: true
-        };
-    }
 
-    // Case B: Link is 0 (unlinked). Check if it's completely blank
-    if (!taxa) {
-        return {
-            inputValue: '',
-            printText: '...',
-            printClass: '',
-            isUnresolved: false
-        };
-    }
+        // A step number was typed before that step exists
+        case 'unresolved': {
+            const stepStr = branch.couplet.toString();
+            return { inputValue: stepStr, printText: stepStr, printClass: 'error-text', isUnresolved: true };
+        }
 
-    // Case C: Link is 0, but user typed a raw step number that doesn't exist yet
-    if (/^\d+$/.test(taxa)) {
-        return {
-            inputValue: taxa,
-            printText: taxa,
-            printClass: 'error-text',
-            isUnresolved: true
-        };
-    }
+        // Standard descriptive taxon string (e.g., "Homo sapiens")
+        case 'taxon':
+            return { inputValue: branch.name, printText: branch.name, printClass: 'print-dest-taxon', isUnresolved: false };
 
-    // Case D: Standard descriptive taxon string (e.g., "Homo sapiens")
-    return {
-        inputValue: taxa,
-        printText: taxa,
-        printClass: 'print-dest-taxon',
-        isUnresolved: false
-    };
+        // Nothing entered yet
+        case 'empty':
+            return { inputValue: '', printText: '...', printClass: '', isUnresolved: false };
+    }
 }
 
 /**
- * Robust input parser for editing. Determines if typed characters represent
- * a valid step connection, an unresolved step reference, or a plain taxon name.
+ * Robust input parser for editing. Determines whether typed characters represent
+ * a valid step connection, an unresolved step reference, or a plain taxon name,
+ * and returns the corresponding Branch.
  */
-export function parseDestinationInput(input: string, key: readonly Couplet[]): { link: number; taxa: string } {
+export function parseDestinationInput(input: string, key: readonly Couplet[]): Branch {
     const trimmed = input.trim();
+
+    if (trimmed === '') return { kind: 'empty' };
 
     if (/^\d+$/.test(trimmed)) {
         const stepNum = parseInt(trimmed, 10);
@@ -265,12 +275,27 @@ export function parseDestinationInput(input: string, key: readonly Couplet[]): {
 
         if (index >= 0 && index < key.length) {
             // Target step is active in canvas: secure stable pointer connection
-            return { link: key[index].id, taxa: '' };
+            return { kind: 'linked', targetId: key[index].id };
         }
-        // Target step doesn't exist yet: store raw number as an unresolved string in taxa
-        return { link: 0, taxa: trimmed };
+        // Target step doesn't exist yet: keep the raw number as an unresolved reference
+        return { kind: 'unresolved', couplet: stepNum };
     }
 
-    // Is descriptive textual taxon identification
-    return { link: 0, taxa: trimmed };
+    // Descriptive textual taxon identification
+    return { kind: 'taxon', name: trimmed };
+}
+
+export function sanitizeFilename(title: string, extension = '.tskey'): string {
+    const slug = title
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9_\-]/gi, '_') // Replace spaces and special characters with underscores
+        .replace(/_+/g, '_')            // Collapse consecutive underscores
+        .replace(/_$/, '');             // NEW: Strip trailing underscore
+
+    return `${slug || 'untitled_key'}${extension}`;
+}
+
+export function isRecord(v: unknown): v is Record<string, unknown> {
+    return typeof v === 'object' && v !== null;
 }

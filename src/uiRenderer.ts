@@ -2,11 +2,13 @@
 import { KeyStore, APP_NAME, APP_VERSION } from './store.ts';
 import { UIStateStore } from './uiState.ts';
 import { escapeHTML, buildIdToIndexMap, resolveDestination, IS_MAC, buildFigureIdToDisplayNumMap } from './utils.ts';
-import { figureStorage, activeObjectURLs } from './db.ts';
+import { workspaceStorage, activeObjectURLs } from './db.ts';
 
 // ==========================================
 // CORE LAYOUT HELPERS
 // ==========================================
+
+let pendingFigureRefresh: number | null = null;
 
 /** Helper to target and patch changing attributes safely without dropping cursor focus */
 function syncField(parent: HTMLElement, selector: string, value: string, forceUpdate = false): HTMLInputElement | HTMLTextAreaElement | null {
@@ -30,7 +32,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
     appDiv.innerHTML = `
     <div class="app-shell">
       <div class="app-menu-bar" role="menubar" aria-label="Application Menu">
-        
+
         <div class="menu-item" role="none">
           <button id="menu-file-trigger" class="menu-trigger" 
                   role="menuitem" 
@@ -38,20 +40,36 @@ export function initializeShell(appDiv: HTMLDivElement) {
                   aria-expanded="false">File</button>
           
           <div class="menu-dropdown" role="menu" aria-labelledby="menu-file-trigger">
+            <button id="cmd-new" class="dropdown-action" role="menuitem" tabindex="-1">
+              <span>📄 New Key</span>
+              <span class="menu-shortcut">${IS_MAC ? '⌘⌥N' : 'Ctrl+Alt+N'}</span>
+            </button>
+            <button id="cmd-open-dialog" class="dropdown-action" role="menuitem" tabindex="-1">
+              <span>📂 Open Key Workspace...</span>
+              <span class="menu-shortcut">${IS_MAC ? '⌘O' : 'Ctrl+O'}</span>
+            </button>
+            <div class="menu-divider" role="separator"></div>
             <button id="cmd-save" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>💾 Save to local Browser Memory</span>
+              <span>💾 Save</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘S' : 'Ctrl+S'}</span>
+            </button>
+            <button id="cmd-save-as" class="dropdown-action" role="menuitem" tabindex="-1">
+              <span>💾 Save As...</span>
+              <span class="menu-shortcut">${IS_MAC ? '⇧⌘S' : 'Ctrl+Shift+S'}</span>
             </button>
             <div class="menu-divider" role="separator"></div>
             <button id="cmd-trigger-import" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>📤 Import JSON Dataset...</span>
+              <span>📤 Import Native File (.tskey)...</span>
             </button>
             <button id="cmd-export-json" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>📥 Export Native JSON File...</span>
+              <span>📥 Export Native File (.tskey)</span>
             </button>
             <div class="menu-divider"></div>
+            <button id="cmd-import-text" class="dropdown-action" role="menuitem" tabindex="-1">
+              <span>📋 Import from Plain Text...</span>
+            </button>
             <button id="cmd-export-text" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>📄 Export to Plain Text file(.txt)</span>
+              <span>📄 Export to Plain Text (.txt)</span>
             </button>
             <button id="cmd-export-html" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🌐 Export to Web Page (.html)</span>
@@ -75,11 +93,11 @@ export function initializeShell(appDiv: HTMLDivElement) {
             </button>
             <div class="menu-divider" role="separator"></div>
             <button id="cmd-cut" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>✂️ Cut Selected Cards</span>
+              <span>✂️ Cut Selected Steps</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘X' : 'Ctrl+X'}</span>
             </button>
             <button id="cmd-copy" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>📋 Copy Selected Cards</span>
+              <span>📋 Copy Selected Steps</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘C' : 'Ctrl+C'}</span>
             </button>
             <button id="cmd-paste-below" class="dropdown-action" role="menuitem" tabindex="-1">
@@ -91,7 +109,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
               <span class="menu-shortcut">${IS_MAC ? 'Shift+⌘V' : 'Shift+Ctrl+V'}</span>
             </button>
             <button id="cmd-delete" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>🗑️ Delete Selected Cards</span>
+              <span>🗑️ Delete Selected steps and figures</span>
               <span class="menu-shortcut">Delete</span>
             </button>
             <button id="cmd-swap" class="dropdown-action" role="menuitem" tabindex="-1">
@@ -127,7 +145,6 @@ export function initializeShell(appDiv: HTMLDivElement) {
               <span>🖨️ Hide Print Preview</span>
               <span class="menu-shortcut">Ctrl+Shift+P</span>
             </button>
-           
           </div>
         </div>
 
@@ -159,20 +176,31 @@ export function initializeShell(appDiv: HTMLDivElement) {
           </div>
         </div>
 
-        <input type="file" id="file-import-hidden" accept=".json" />
+        <div class="menu-title-container" style="margin-left: auto; display: flex; align-items: center; padding-right: 12px;">
+          <label for="key-title-input" style="color: #fff; font-size: 12px; margin-right: 8px; font-weight: 500;">Title:</label>
+          <input 
+            type="text" 
+            id="key-title-input" 
+            class="key-title-input" 
+            placeholder="Untitled Key"
+           style="background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); color: black; padding: 4px 8px; border-radius: 4px; font-size: 13px; width: 220px;" 
+        />
+    </div>
+
+        <input type="file" id="file-import-hidden" accept=".tskey,.json" />
       </div>
     
       <div class="main-layout">
         <div class="editor-column">
-          <h2 class="heading-editor">Key Editor</h2>
+          <h2>Key Editor: <span id="active-project-title">Untitled Key</span></h2>
           <div id="editor-container"></div>
-          <button id="add-couplet-btn" class="btn-add-block">+ Add New Step Block (Alt+N)</button>
+          <button id="add-couplet-btn" class="btn-add-block">+ Add New Step (Alt+N)</button>
         </div>
 
         <div class="figure-column">
           <h2>Figure References</h2>
           <div id="figure-container"></div>
-          <button id="add-figure-btn" class="btn-add-block">+ Add New Figure Attachment</button>
+          <button id="add-figure-btn" class="btn-add-block">+ Add New Figure</button>
         </div>
 
         <div class="print-column">
@@ -181,6 +209,23 @@ export function initializeShell(appDiv: HTMLDivElement) {
           <div id="print-view-container" class="print-grid"></div>
         </div>
        
+      </div>
+    </div>
+
+    <div id="modal-open-project" class="modal-overlay" style="display: none;">
+      <div class="modal-window" style="max-width: 520px;">
+        <div class="modal-header">
+          <h3>📂 Open Key Workspace</h3>
+          <button id="modal-project-close" class="modal-close-x">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <span style="font-size: 13px; color: var(--color-text-muted);">Stored browser keys:</span>
+            <button id="btn-hub-import" class="btn btn-secondary" style="font-size: 12px; padding: 4px 10px;">+ Import File</button>
+          </div>
+          <div id="project-hub-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto; padding-right: 4px;">
+             </div>
+        </div>
       </div>
     </div>
 
@@ -196,17 +241,21 @@ export function initializeShell(appDiv: HTMLDivElement) {
               <tr><th>Action</th><th>Shortcut Command</th></tr>
             </thead>
             <tbody>
-              <tr><td>Select All Step Cards</td><td><code>${IS_MAC ? '⌘ + A' : 'Ctrl + A'}</code></td></tr>
-              <tr><td>Cut Selected Step Cards</td><td><code>${IS_MAC ? '⌘ + X' : 'Ctrl + X'}</code></td></tr>
-              <tr><td>Copy Selected Step Cards</td><td><code>${IS_MAC ? '⌘ + C' : 'Ctrl + C'}</code></td></tr>
-              <tr><td>Paste Step Cards Below selected steps</td><td><code>${IS_MAC ? '⌘ + V' : 'Ctrl + V'}</code></td></tr>
-              <tr><td>Paste Step Cards Above selected steps</td><td><code>${IS_MAC ? 'Shift + ⌘ + V' : 'Shift + Ctrl + V'}</code></td></tr>
-              <tr><td>Append New Step Card</td><td><code>Alt + N</code></td></tr>
-              <tr><td>Swap Alternative Rows in selected steps</td><td><code>Alt + S</code></td></tr>
+              <tr><td>Create Brand New Project Workspace</td><td><code>${IS_MAC ? '⌘ + Option + N' : 'Ctrl + Alt + N'}</code></td></tr>
+              <tr><td>Open Local Workspace Hub Window</td><td><code>${IS_MAC ? '⌘ + O' : 'Ctrl + O'}</code></td></tr>
+              <tr><td>Save Current Key changes</td><td><code>${IS_MAC ? '⌘ + S' : 'Ctrl + S'}</code></td></tr>
+              <tr><td>Save Current Key under alternative title</td><td><code>Shift + ${IS_MAC ? '⌘ + S' : 'Ctrl + S'}</code></td></tr>
+              <tr><td>Select All Key  Steps</td><td><code>${IS_MAC ? '⌘ + A' : 'Ctrl + A'}</code></td></tr>
+              <tr><td>Cut Selected Key Step</td><td><code>${IS_MAC ? '⌘ + X' : 'Ctrl + X'}</code></td></tr>
+              <tr><td>Copy Selected Key Steps</td><td><code>${IS_MAC ? '⌘ + C' : 'Ctrl + C'}</code></td></tr>
+              <tr><td>Paste Key Step Below selected steps</td><td><code>${IS_MAC ? '⌘ + V' : 'Ctrl + V'}</code></td></tr>
+              <tr><td>Paste Key Step Above selected steps</td><td><code>Shift + ${IS_MAC ? 'Shift + ⌘ + V' : 'Shift + Ctrl + V'}</code></td></tr>
+              <tr><td>Append New Key Step</td><td><code>Alt + N</code></td></tr>
+              <tr><td>Swap Alternative Rows in selected key steps</td><td><code>Alt + S</code></td></tr>
               <tr><td>Undo Last Action</td><td><code>${IS_MAC ? '⌘ + Z' : 'Ctrl + Z'}</code></td></tr>
               <tr><td>Redo Action</td><td><code>${IS_MAC ? '⌘ + Y' : 'Ctrl + Y'}</code></td></tr>
-              <tr><td>Delete Selected step cards</td><td><code>Delete</code> / <code>Backspace</code></td></tr>
-              <tr><td>Deselect all step cards</td><td><code>Escape</code></td></tr>
+              <tr><td>Delete Selected Key Steps</td><td><code>Delete</code> / <code>Backspace</code></td></tr>
+              <tr><td>Deselect all key step and figure references</td><td><code>Escape</code></td></tr>
             </tbody>
           </table>
         </div>
@@ -249,6 +298,77 @@ export function initializeShell(appDiv: HTMLDivElement) {
         </div>
       </div>
     </div>
+
+    <div id="plain-text-import-view" class="fullscreen-view" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="pt-import-title-label" tabindex="-1">
+      <div class="fullscreen-view-header">
+        <h3 id="pt-import-title-label">📋 Import Key from Plain Text</h3>
+        <button id="pt-import-close" class="modal-close-x" aria-label="Close import view">&times;</button>
+      </div>
+
+      <div class="import-options-bar" role="group" aria-label="Parsing options">
+        <span class="import-options-title">Parsing options</span>
+        <label class="import-option"><input type="checkbox" id="pt-opt-join" checked /> Join wrapped lines</label>
+        <label class="import-option"><input type="checkbox" id="pt-opt-dehyphen" checked /> De-hyphenate breaks</label>
+        <label class="import-option"><input type="checkbox" id="pt-opt-ws" checked /> Spaces/Tab separator</label>
+        <label class="import-option"><input type="checkbox" id="pt-opt-lettered" checked /> Lettered (1a/1b)</label>
+        <label class="import-option"><input type="checkbox" id="pt-opt-dash" checked /> Dash second line</label>
+        <label class="import-option"><input type="checkbox" id="pt-opt-fill" checked /> Fill missing key steps</label>
+        <label class="import-option import-option-num">Min leader dots
+          <input type="number" id="pt-opt-min-dots" min="2" max="10" step="1" value="3" />
+        </label>
+      </div>
+
+      <div class="fullscreen-view-body import-view-body">
+        <section class="import-input-pane">
+          <div class="import-pane-toolbar">
+            <label for="pt-import-source" class="import-pane-label">Paste your key, or load a text file</label>
+            <div class="import-toolbar-actions">
+              <label class="import-encoding-field" for="pt-import-encoding">Encoding
+                <select id="pt-import-encoding">
+                  <option value="auto" selected>Auto-detect</option>
+                  <option value="utf-8">UTF-8</option>
+                  <option value="utf-16le">UTF-16 LE</option>
+                  <option value="utf-16be">UTF-16 BE</option>
+                  <option value="windows-1252">Windows-1252 / Latin-1</option>
+                </select>
+              </label>
+              <button id="pt-import-load-file" class="btn btn-secondary">📂 Load .txt File...</button>
+              <button id="pt-import-clear" class="btn btn-outline">Clear</button>
+            </div>
+          </div>
+          <textarea id="pt-import-source" class="import-source-textarea" spellcheck="false"
+            placeholder="1.&#9;Has feathers&#9;Bird&#10;&#8212;&#9;Lacks feathers&#9;2&#10;&#10;2.&#9;Has fur&#9;Mammal&#10;&#8212;&#9;Has scales&#9;Reptile"></textarea>
+          <input type="file" id="pt-import-file-hidden" accept=".txt,text/plain" style="display: none;" />
+          <p class="import-hint">
+            Paste a key in almost any layout. Each step starts with a number (<code>1</code>, <code>1.</code>, <code>1a</code>/<code>1b</code>)
+            and the second alternative may start with a dash (<code>-</code> <code>–</code> <code>—</code>). The destination — a step number
+            or a taxon name — is whatever follows a dotted leader (<code>……</code>), a tab, or wide spacing at the end of the lead.
+            Lines wrapped across a page (common in PDFs) are stitched back together. Tune the options above and watch the preview.
+            File encoding is auto-detected (UTF-8, UTF-16, and legacy Windows-1252/Latin-1); pick it manually if accented characters look wrong.
+            The result is best-effort and may need a little manual cleanup.
+          </p>
+        </section>
+
+        <section class="import-preview-pane">
+          <div class="import-pane-toolbar">
+            <span class="import-pane-label">Preview</span>
+            <span id="pt-import-status" class="import-status"></span>
+          </div>
+          <div id="pt-import-preview" class="import-preview-content"></div>
+        </section>
+      </div>
+
+      <div class="fullscreen-view-footer">
+        <label class="import-title-field">
+          Import as:
+          <input type="text" id="pt-import-title" placeholder="Imported Key" />
+        </label>
+        <div class="import-footer-actions">
+          <button id="pt-import-cancel" class="btn btn-secondary">Cancel</button>
+          <button id="pt-import-confirm" class="btn btn-primary" disabled>Import into Workspace</button>
+        </div>
+      </div>
+    </div>
     `;
 }
 
@@ -277,14 +397,25 @@ export function renderMenu(store: KeyStore, uiState: UIStateStore) {
     const hasKeyElements = store.getKey().length > 0;
     const hasClipboard = store.hasClipboardData();
 
-    // File submenu
+    // Contextual Sync for current key title & modification indicators
+    const currentTitle = store.getProjectName();
+    const isUnsaved = store.hasUnsavedChanges();
+    const formattedTitleText = `${currentTitle}${isUnsaved ? ' *' : ''}`;
+
+    document.title = `${formattedTitleText} - ${APP_NAME}`;
+    const headerTitleEl = document.getElementById('active-project-title');
+    if (headerTitleEl && headerTitleEl.textContent !== formattedTitleText) {
+        headerTitleEl.textContent = formattedTitleText;
+    }
+
+    // File Submenu Action items
     const saveBtn = getBtn('cmd-save');
     const expJsonBtn = getBtn('cmd-export-json');
     const expTextBtn = getBtn('cmd-export-text');
     const expHtmlBtn = getBtn('cmd-export-html');
     const expLatexBtn = getBtn('cmd-export-latex');
 
-    // Edit submenu
+    // Edit Submenu Action items
     const undoBtn = getBtn('cmd-undo');
     const redoBtn = getBtn('cmd-redo');
     const cutBtn = getBtn('cmd-cut');
@@ -295,12 +426,11 @@ export function renderMenu(store: KeyStore, uiState: UIStateStore) {
     const swapBtn = getBtn('cmd-swap');
     const clearBtn = getBtn('cmd-clear');
 
-    // Tools submenu
+    // Tools Submenu Action items
     const reorderBtn = getBtn('cmd-reorder-couplets');
 
-    // Mutate UI elements according to live state rules safely
     if (saveBtn) {
-        saveBtn.classList.toggle('has-unsaved-changes', store.hasUnsavedChanges());
+        saveBtn.classList.toggle('has-unsaved-changes', isUnsaved);
     }
 
     if (expJsonBtn) expJsonBtn.disabled = !hasKeyElements;
@@ -313,22 +443,16 @@ export function renderMenu(store: KeyStore, uiState: UIStateStore) {
 
     if (cutBtn) cutBtn.disabled = !hasCoupletSelection;
     if (copyBtn) copyBtn.disabled = !hasCoupletSelection;
-    if (deleteBtn) {
-        deleteBtn.disabled = !hasSelection;
-    }
-    if (swapBtn) {
-        swapBtn.disabled = !hasCoupletSelection;
-    }
-    if (clearBtn) {
-        clearBtn.disabled = !hasSelection;
-    }
+    if (deleteBtn) deleteBtn.disabled = !hasSelection;
+    if (swapBtn) swapBtn.disabled = !hasCoupletSelection;
+    if (clearBtn) clearBtn.disabled = !hasSelection;
 
     if (pasteBtnBelow) pasteBtnBelow.disabled = !hasClipboard;
     if (pasteBtnAbove) pasteBtnAbove.disabled = !hasClipboard;
 
     if (reorderBtn) reorderBtn.disabled = !hasKeyElements;
 
-    // View menu synchronization — read from UIStateStore, not from the DOM
+    // View submenus
     const toggleFiguresBtn = getBtn('cmd-toggle-figures');
     const toggleImagesBtn = getBtn('cmd-toggle-images');
     const togglePrintBtn = getBtn('cmd-toggle-print');
@@ -353,6 +477,57 @@ export function renderMenu(store: KeyStore, uiState: UIStateStore) {
             label.textContent = uiState.isPrintHidden ? '🖨️ Show Print Preview' : '🖨️ Hide Print Preview';
         }
     }
+
+    // update key title from the menu bar #key-title-input
+    // where should it be in the code?
+    const appShell = document.querySelector('.app-shell') as HTMLElement;
+    if (appShell) {
+        syncField(appShell, '#key-title-input', store.getTitle());
+    }
+}
+
+/**
+ * Populates and updates rows inside the asynchronous Project Hub Modal view template.
+ */
+export function renderProjectHubList(projects: Array<{ name: string; lastModified: number }>, currentProjectName: string) {
+    const container = document.getElementById('project-hub-list');
+    if (!container) return;
+
+    if (projects.length === 0) {
+        container.innerHTML = `
+            <div style="text-align: center; color: var(--color-text-muted); padding: 24px 12px; font-size: 13px; border: 1px dashed var(--color-border); border-radius: var(--radius-md);">
+                No keys saved inside local browser memory yet.
+            </div>`;
+        return;
+    }
+
+    container.innerHTML = projects.map(proj => {
+        const isCurrent = proj.name === currentProjectName;
+        const dateString = new Date(proj.lastModified).toLocaleString();
+
+        return `
+            <div class="project-hub-item" data-name="${escapeHTML(proj.name)}" 
+                 style="display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; 
+                        border: 1px solid ${isCurrent ? 'var(--color-primary)' : 'var(--color-border-light)'}; 
+                        background: ${isCurrent ? 'var(--color-primary-light)' : 'var(--color-bg)'}; 
+                        border-radius: var(--radius-md); transition: var(--transition-base);">
+                <div class="hub-item-clickable-zone" data-action="load" data-name="${escapeHTML(proj.name)}"
+                     style="cursor: pointer; flex: 1; display: flex; flex-direction: column; gap: 2px;">
+                    <span style="font-weight: ${isCurrent ? '700' : '500'}; color: var(--color-text); font-size: 14px;">
+                        ${escapeHTML(proj.name)} ${isCurrent ? '<small style="color: var(--color-primary); margin-left: 4px; font-weight: normal;">(active)</small>' : ''}
+                    </span>
+                    <span style="font-size: 11px; color: var(--color-text-muted);">Last saved: ${dateString}</span>
+                </div>
+                <button class="btn-hub-delete" data-action="delete" data-name="${escapeHTML(proj.name)}" 
+                        style="background: transparent; border: none; color: var(--color-text-muted); 
+                               cursor: pointer; font-size: 18px; padding: 4px 8px; line-height: 1; 
+                               border-radius: var(--radius-sm); transition: var(--transition-base);" 
+                        title="Delete from local database"
+                        onmouseover="this.style.color='var(--color-danger)';this.style.backgroundColor='var(--color-danger-light)'"
+                        onmouseout="this.style.color='var(--color-text-muted)';this.style.backgroundColor='transparent'">&times;</button>
+            </div>
+        `;
+    }).join('');
 }
 
 /**
@@ -382,8 +557,8 @@ export function renderEditorCards(store: KeyStore) {
         const displayNum = index + 1;
         const isSelected = selectedIds.has(couplet.id);
         const inboundLinks = inboundLinksMap.get(couplet.id) || [];
-        const dest1 = resolveDestination(couplet.link1, couplet.taxa1, idToIndexMap);
-        const dest2 = resolveDestination(couplet.link2, couplet.taxa2, idToIndexMap);
+        const dest1 = resolveDestination(couplet.branch1, idToIndexMap);
+        const dest2 = resolveDestination(couplet.branch2, idToIndexMap);
         const cardErrors = activeDiagnostics.get(couplet.id) || [];
         const computedTitle = `${displayNum}.`;
         const badgeClass = inboundLinks.length ? 'badge badge-linked' : (index === 0 ? 'badge badge-linked' : 'badge badge-isolated');
@@ -392,7 +567,6 @@ export function renderEditorCards(store: KeyStore) {
         let warningInnerHtml = '';
         cardErrors.forEach(err => {
             const modifierClass = err.severity === 'error' ? 'error-text' : 'warning-text';
-            // Changed <span> to <div> for block-level stacking
             warningInnerHtml += `<div class="${modifierClass}">⚠️ ${escapeHTML(err.message)}</div>`;
         });
         const warningBlockHtml = cardErrors.length > 0 ? `<div class="warning-block">${warningInnerHtml}</div>` : '';
@@ -449,7 +623,7 @@ export function renderEditorCards(store: KeyStore) {
                   <span class="drag-handle">☰</span>
                 </div>
                 <div class="card-row">
-                  <textarea class="input-sync card-textarea" data-field="alt1" placeholder="Enter diagnostic trait details...">${escapeHTML(store.decodeTextReferencesForEditor(couplet.alt1))}</textarea>
+                  <textarea class="input-sync card-textarea" data-field="alt1" placeholder="Enter diagnostic trait details [fig:1]...">${escapeHTML(store.decodeTextReferencesForEditor(couplet.alt1))}</textarea>
                   <div class="card-meta-pane">
                     <label class="meta-label">→
                       <input type="text" class="input-sync input-destination ${dest1.isUnresolved ? 'input-error' : ''}" data-field="dest1" placeholder="Taxon or Step #" value="${escapeHTML(dest1.inputValue)}" />
@@ -536,18 +710,15 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
         const previewWrapper = block.querySelector('.figure-preview-wrapper') as HTMLElement;
         const previewImg = block.querySelector('.figure-preview-img') as HTMLImageElement;
 
-        // --- ASYNC BINARY PREVIEW SYNCHRONIZATION LOOP ---
         if (uiState.isImagesHidden) {
-            // Hide the entire preview slot to create a compact, text-only layout view
             if (previewWrapper) previewWrapper.style.display = 'none';
             if (previewImg) previewImg.style.display = 'none';
         } else {
-            // Restore default CSS layout when visible
             if (previewWrapper) previewWrapper.style.display = '';
 
             const cachedUrl = activeObjectURLs.get(fig.id);
             const removeBtn = block.querySelector('.btn-remove-image') as HTMLButtonElement | null;
-            
+
             if (cachedUrl) {
                 if (previewImg.src !== cachedUrl) {
                     previewImg.src = cachedUrl;
@@ -557,17 +728,24 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
             } else {
                 if (!previewImg.hasAttribute('data-loading-state')) {
                     previewImg.setAttribute('data-loading-state', 'pending');
-                    figureStorage.getFigureBinary(fig.id).then(blob => {
+
+                    workspaceStorage.getFigureBinary(store.getActiveProjectUid(), fig.id).then(blob => {
                         previewImg.removeAttribute('data-loading-state');
                         if (blob) {
                             const newUrl = URL.createObjectURL(blob);
                             activeObjectURLs.set(fig.id, newUrl);
-                            refreshAll(); 
+                            if (pendingFigureRefresh === null) {
+                                pendingFigureRefresh = requestAnimationFrame(() => {
+                                    pendingFigureRefresh = null;
+                                    refreshAll();
+                                });
+                            }
                         } else {
                             previewImg.style.display = 'none';
                             if (removeBtn) removeBtn.style.display = 'none';
                         }
-                    }).catch(() => {
+                    }).catch((err) => {
+                        console.error("Failed to load binary thumbnail:", err);
                         previewImg.removeAttribute('data-loading-state');
                         if (removeBtn) removeBtn.style.display = 'none';
                     });
@@ -575,7 +753,6 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
             }
         }
 
-        // Sync standard form inputs
         const fileInput = block.querySelector('.figure-input-filename') as HTMLInputElement;
         if (fileInput && document.activeElement !== fileInput && fileInput.value !== fig.filename) {
             fileInput.value = fig.filename;
@@ -592,10 +769,22 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
 
     for (const [id, url] of activeObjectURLs.entries()) {
         if (!currentFigIds.has(id)) {
-            URL.revokeObjectURL(url);   
-            activeObjectURLs.delete(id); 
+            URL.revokeObjectURL(url);
+            activeObjectURLs.delete(id);
         }
     }
+}
+
+/**
+ * Escapes resolved print text and renders any unresolved figure markers
+ * ([Broken Fig: …], produced by resolveTextReferences) in red. The red colour
+ * conveys the problem, so the word "Broken" is dropped from the label here.
+ */
+function highlightBrokenFigures(resolvedText: string): string {
+    return escapeHTML(resolvedText).replace(
+        /\[Broken Fig:([^\]]*)\]/g,
+        (_match, value) => `<span class="error-text">[Fig:${value}]</span>`
+    );
 }
 
 /**
@@ -622,11 +811,13 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
     key.forEach((c, index) => {
         const currentDisplayNum = index + 1;
 
-        const dest1 = resolveDestination(c.link1, c.taxa1, idToIndexMap);
-        const dest2 = resolveDestination(c.link2, c.taxa2, idToIndexMap);
+        const dest1 = resolveDestination(c.branch1, idToIndexMap);
+        const dest2 = resolveDestination(c.branch2, idToIndexMap);
 
         const val1 = store.resolveTextReferences(c.alt1, figDisplayMap) || '___';
         const val2 = store.resolveTextReferences(c.alt2, figDisplayMap) || '___';
+        const html1 = highlightBrokenFigures(val1);
+        const html2 = highlightBrokenFigures(val2);
 
         let block = existingMap.get(c.id);
 
@@ -639,7 +830,7 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
             }
 
             const txt1 = block.querySelector('.print-row[data-choice="1"] .print-text');
-            if (txt1 && txt1.textContent !== val1) txt1.textContent = val1;
+            if (txt1 && txt1.innerHTML !== html1) txt1.innerHTML = html1;
 
             const dest1El = block.querySelector('.print-row[data-choice="1"] .print-dest');
             if (dest1El) {
@@ -649,7 +840,7 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
             }
 
             const txt2 = block.querySelector('.print-row[data-choice="2"] .print-text');
-            if (txt2 && txt2.textContent !== val2) txt2.textContent = val2;
+            if (txt2 && txt2.innerHTML !== html2) txt2.innerHTML = html2;
 
             const dest2El = block.querySelector('.print-row[data-choice="2"] .print-dest');
             if (dest2El) {
@@ -684,7 +875,7 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
             if (stepNumEl) stepNumEl.textContent = `${currentDisplayNum}.`;
 
             const txt1 = block.querySelector('.print-row[data-choice="1"] .print-text');
-            if (txt1) txt1.textContent = val1;
+            if (txt1) txt1.innerHTML = html1;
 
             const dest1El = block.querySelector('.print-row[data-choice="1"] .print-dest');
             if (dest1El) {
@@ -693,7 +884,7 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
             }
 
             const txt2 = block.querySelector('.print-row[data-choice="2"] .print-text');
-            if (txt2) txt2.textContent = val2;
+            if (txt2) txt2.innerHTML = html2;
 
             const dest2El = block.querySelector('.print-row[data-choice="2"] .print-dest');
             if (dest2El) {
@@ -714,13 +905,10 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
 export function showToast(message: string, type: 'success' | 'error' = 'success') {
     let container = document.querySelector('.toast-container') as HTMLDivElement;
 
-    // If the wrapper container doesn't exist, build it and register the live region defaults
     if (!container) {
         container = document.createElement('div');
         container.className = 'toast-container';
-
         container.setAttribute('aria-live', 'polite');
-
         document.body.appendChild(container);
     }
 
@@ -736,7 +924,6 @@ export function showToast(message: string, type: 'success' | 'error' = 'success'
 
     container.appendChild(toast);
 
-    // Completely clean up the DOM node after its fade-out animation finishes
     setTimeout(() => {
         toast.remove();
         if (container && container.childElementCount === 0) {

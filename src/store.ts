@@ -1,19 +1,41 @@
 // store.ts
-import { isValidCoupletArray, isValidFigureArray } from './utils.ts';
+import { isValidCoupletArray, isValidFigureArray, isRecord, branchTarget, classifyBranch, EMPTY_BRANCH } from './utils.ts';
+import { figIdTokenRegex, figRawTokenRegex, buildFigureLookups } from './figureTokens.ts';
+import { workspaceStorage } from './db.ts';
 
 export const APP_NAME = 'TSKey';
 export const APP_VERSION = '0.0.1';
-export const STORAGE_KEY = 'dichotomous_key';
-export const FIGURES_STORAGE_KEY = 'dichotomous_key_figures';
+
+/** Stable, rename-proof project identity used to key figure blobs in storage. */
+function newProjectUid(): string {
+    return crypto.randomUUID();
+}
+
+/**
+ * A couplet choice's destination. 
+ * Exactly one of:
+ *
+ *   linked     — points at another couplet's permanent id
+ *   unresolved — a step number was typed before that step exists
+ *   taxon      — a terminal taxon name (the branch ends here)
+ *   empty      — nothing entered yet
+ *
+ * A "broken" destination (a `linked` branch whose target no longer exists) is
+ * NOT a stored kind — it is derived at read time via classifyBranch(), since it
+ * depends on the rest of the key rather than on the branch itself.
+ */
+export type Branch =
+    | { kind: 'linked'; targetId: number }
+    | { kind: 'unresolved'; couplet: number }
+    | { kind: 'taxon'; name: string }
+    | { kind: 'empty' };
 
 export interface Couplet {
-    id: number;    // Permanent internal unique ID
+    id: number;        // Permanent internal unique ID
     alt1: string;
     alt2: string;
-    link1: number; // Links to the internal ID of another couplet
-    link2: number;
-    taxa1: string; // taxon name or an unresolved link to an step
-    taxa2: string;
+    branch1: Branch;   // destination for the first alternative
+    branch2: Branch;   // destination for the second alternative
 }
 
 export interface Figure {
@@ -22,12 +44,17 @@ export interface Figure {
     caption: string;
 }
 
+export interface FigureWithBinary extends Figure {
+    binaryData?: string;
+}
+
 export interface KeyValidationError {
     severity: 'warning' | 'error';
     message: string;
 }
 
 interface AppState {
+    title: string;
     dichotomousKey: Couplet[];
     figures: Figure[];
 }
@@ -35,12 +62,188 @@ interface AppState {
 export interface ImportResult {
     success: boolean;
     errors: string[];
-    importedFigures?: any[];
+    importedFigures?: FigureWithBinary[];
+}
+
+/**
+ * Computes the set of couplet ids reachable from the first step by following
+ * branch links. Pure: operates only on the supplied key. Shared by the store's
+ * live editor and by pre-commit checks such as the plain-text importer.
+ */
+export function computeReachableNodes(key: Couplet[], idMap?: Map<number, Couplet>): Set<number> {
+    const reachable = new Set<number>();
+    if (key.length === 0) return reachable;
+
+    const lookupMap = idMap || new Map<number, Couplet>(key.map(c => [c.id, c]));
+    const stack: number[] = [key[0].id];
+
+    while (stack.length > 0) {
+        const activeId = stack.pop()!;
+        if (!reachable.has(activeId)) {
+            reachable.add(activeId);
+            const match = lookupMap.get(activeId);
+            if (match) {
+                const t2 = branchTarget(match.branch2);
+                if (t2 !== null) stack.push(t2);
+                const t1 = branchTarget(match.branch1);
+                if (t1 !== null) stack.push(t1);
+            }
+        }
+    }
+    return reachable;
+}
+
+/**
+ * Runs the full real-time diagnostics pass over a key, returning issues keyed by
+ * couplet id. Pure: takes the key and figure list explicitly so callers can vet
+ * a candidate key (e.g. a freshly parsed import) without first loading it into
+ * the store. The store's runDiagnostics() delegates here against live state.
+ */
+export function diagnoseKey(key: Couplet[], figures: Figure[]): Map<number, KeyValidationError[]> {
+    const diagnostics = new Map<number, KeyValidationError[]>();
+    if (key.length === 0) return diagnostics;
+
+    const idMap = new Map<number, Couplet>();
+    const idToIndexMap = new Map<number, number>();
+    const inboundParentMap = new Map<number, Set<number>>();
+
+    const figureIds = new Set(figures.map(f => f.id));
+
+    key.forEach((c, index) => {
+        idMap.set(c.id, c);
+        idToIndexMap.set(c.id, index);
+
+        const t1 = branchTarget(c.branch1);
+        if (t1 !== null) {
+            let parentSet = inboundParentMap.get(t1);
+            if (!parentSet) inboundParentMap.set(t1, (parentSet = new Set()));
+            parentSet.add(c.id);
+        }
+        const t2 = branchTarget(c.branch2);
+        if (t2 !== null) {
+            let parentSet = inboundParentMap.get(t2);
+            if (!parentSet) inboundParentMap.set(t2, (parentSet = new Set()));
+            parentSet.add(c.id);
+        }
+    });
+
+    const reachableNodes = computeReachableNodes(key, idMap);
+
+    // Created once and reused: matchAll clones the regex per call, so the shared
+    // lastIndex is never mutated across couplets.
+    const FIG_ID_REGEX = figIdTokenRegex();
+    const FIG_RAW_REGEX = figRawTokenRegex();
+
+    key.forEach((c, index) => {
+        const issues: KeyValidationError[] = [];
+
+        if (c.branch1.kind === 'unresolved') {
+            issues.push({ severity: 'error', message: `Choice A points to step '${c.branch1.couplet}' which does not exist yet.` });
+        } else if (c.branch1.kind === 'empty') {
+            issues.push({ severity: 'warning', message: 'Choice A is incomplete. Assign a Taxa or destination step.' });
+        }
+
+        if (c.branch2.kind === 'unresolved') {
+            issues.push({ severity: 'error', message: `Choice B points to step '${c.branch2.couplet}' which does not exist yet.` });
+        } else if (c.branch2.kind === 'empty') {
+            issues.push({ severity: 'warning', message: 'Choice B is incomplete. Assign a Taxa or destination step.' });
+        }
+
+        // --- Unresolved Figure Reference Diagnostics ---
+        // Check Choice A
+        if (c.alt1) {
+            const missingIds1: number[] = [];
+            for (const match of c.alt1.matchAll(FIG_ID_REGEX)) {
+                const figId = parseInt(match[1], 10);
+                if (!figureIds.has(figId) && !missingIds1.includes(figId)) {
+                    missingIds1.push(figId);
+                }
+            }
+            missingIds1.forEach(id => {
+                issues.push({ severity: 'warning', message: `Choice A references a missing or deleted figure (Internal ID: ${id}).` });
+            });
+
+            const unresolved1: string[] = [];
+            for (const match of c.alt1.matchAll(FIG_RAW_REGEX)) {
+                const token = match[1].trim();
+                if (!unresolved1.includes(token)) {
+                    unresolved1.push(token);
+                }
+            }
+            unresolved1.forEach(token => {
+                issues.push({ severity: 'warning', message: `Choice A references an unresolved figure reference '[fig: ${token}]'.` });
+            });
+        }
+
+        // Check Choice B
+        if (c.alt2) {
+            const missingIds2: number[] = [];
+            for (const match of c.alt2.matchAll(FIG_ID_REGEX)) {
+                const figId = parseInt(match[1], 10);
+                if (!figureIds.has(figId) && !missingIds2.includes(figId)) {
+                    missingIds2.push(figId);
+                }
+            }
+            missingIds2.forEach(id => {
+                issues.push({ severity: 'warning', message: `Choice B references a missing or deleted figure (Internal ID: ${id}).` });
+            });
+
+            const unresolved2: string[] = [];
+            for (const match of c.alt2.matchAll(FIG_RAW_REGEX)) {
+                const token = match[1].trim();
+                if (!unresolved2.includes(token)) {
+                    unresolved2.push(token);
+                }
+            }
+            unresolved2.forEach(token => {
+                issues.push({ severity: 'warning', message: `Choice B references an unresolved figure reference '[fig: ${token}]'.` });
+            });
+        }
+
+        if (index > 0 && !reachableNodes.has(c.id)) {
+            issues.push({ severity: 'warning', message: 'Orphaned: This step is unreachable from Step #1.' });
+        }
+        if (c.branch1.kind === 'linked') {
+            if (c.branch1.targetId === c.id) issues.push({ severity: 'error', message: 'Choice A loops directly into its own key step.' });
+            else if (!idMap.has(c.branch1.targetId)) issues.push({ severity: 'error', message: 'Choice A points to an invalid or deleted step.' });
+        }
+        if (c.branch2.kind === 'linked') {
+            if (c.branch2.targetId === c.id) issues.push({ severity: 'error', message: 'Choice B loops directly into its own key step.' });
+            else if (!idMap.has(c.branch2.targetId)) issues.push({ severity: 'error', message: 'Choice B points to an invalid or deleted step.' });
+        }
+
+        const uniqueParents = inboundParentMap.get(c.id);
+        if (uniqueParents && uniqueParents.size > 1) {
+            const parentStepLabels: string[] = [];
+            uniqueParents.forEach(parentId => {
+                const parentIdx = idToIndexMap.get(parentId);
+                if (parentIdx !== undefined && parentIdx !== -1) {
+                    parentStepLabels.push(`#${parentIdx + 1}`);
+                }
+            });
+            issues.push({
+                severity: 'warning',
+                message: `Convergence: Multiple steps (${parentStepLabels.join(', ')}) link here.`
+            });
+        }
+
+        if (issues.length > 0) diagnostics.set(c.id, issues);
+    });
+
+    return diagnostics;
 }
 
 export class KeyStore {
     private state: AppState;
     private hasUncommittedChanges: boolean = false;
+    // Which entity the open typing session is editing. Couplet and figure text
+    // edits only batch into one undo step while the scope matches; switching
+    // entity (or any session boundary) forces a fresh checkpoint so a key edit
+    // and a figure edit never collapse into a single undo.
+    private editScope: 'key' | 'figures' | null = null;
+    private persistedTitle: string = '';
+    private activeProjectUid: string = newProjectUid();
+    private onProjectPersisted?: (title: string) => void;
 
     private undoStack: AppState[] = [];
     private redoStack: AppState[] = [];
@@ -55,23 +258,46 @@ export class KeyStore {
     // Shared clipboard state structure
     private clipboardBuffer: Couplet[] = [];
     private clipboardMode: 'copy' | 'cut' = 'copy';
-    private cutIncomingLinksBuffer: Array<{ sourceId: number, field: 'link1' | 'link2', targetOldId: number }> = [];
+    private cutIncomingLinksBuffer: Array<{ sourceId: number, field: 'branch1' | 'branch2', targetOldId: number }> = [];
 
-    //Figures
+    // Figures
     private selectedFigureIds: Set<number> = new Set();
 
-    constructor(initialKey: Couplet[], initialFigures: Figure[] = [], maxHistoryLimit = 100) {
+    constructor(initialKey: Couplet[], initialFigures: Figure[] = [], initialTitle = 'Untitled Key', maxHistoryLimit = 100) {
         this.state = {
+            title: initialTitle,
             dichotomousKey: initialKey,
             figures: initialFigures
         };
         this.maxHistoryLimit = maxHistoryLimit;
         this.hasUncommittedChanges = false;
+        this.persistedTitle = initialTitle;
     }
 
     // ==========================================
     // GETTERS and Setters
     // ==========================================
+
+    public getTitle(): string {
+        return this.state.title;
+    }
+
+    public getPersistedTitle(): string {
+        return this.persistedTitle;
+    }
+
+    public getActiveProjectUid(): string {
+        return this.activeProjectUid;
+    }
+
+    public setTitle(newTitle: string): void {
+        const trimmed = newTitle.trim();
+        if (this.state.title === trimmed) return;
+
+        this.saveCheckpoint();
+        this.state.title = trimmed || 'Untitled Key';
+        this.hasUncommittedChanges = true;
+    }
 
     public getKey(): readonly Couplet[] {
         return this.state.dichotomousKey;
@@ -93,10 +319,6 @@ export class KeyStore {
         this.activeCoupletId = null;
     }
 
-    public getActiveCoupletId(): number | null {
-        return this.activeCoupletId;
-    }
-
     public get draggedCoupletId(): number | null {
         return this._draggedId;
     }
@@ -112,6 +334,7 @@ export class KeyStore {
     public markSaved() {
         this.savedHistoryIndex = this.currentHistoryIndex;
         this.hasUncommittedChanges = false;
+        this.editScope = null;
     }
 
     public hasUnsavedChanges(): boolean {
@@ -127,6 +350,7 @@ export class KeyStore {
         this.currentHistoryIndex = 0;
         this.savedHistoryIndex = 0;
         this.hasUncommittedChanges = false;
+        this.editScope = null;
         this.selectedCoupletIds.clear();
         this.activeCoupletId = null;
         this._draggedId = null;
@@ -143,12 +367,14 @@ export class KeyStore {
 
         this.redoStack = [];
         this.undoStack.push({
+            title: this.state.title,
             dichotomousKey: this.state.dichotomousKey.map(c => ({ ...c })),
             figures: (this.state.figures || []).map(f => ({ ...f }))
         });
 
         if (this.undoStack.length > this.maxHistoryLimit) {
             this.undoStack.shift();
+            this.currentHistoryIndex--;
             if (this.savedHistoryIndex > 0) {
                 this.savedHistoryIndex--;
             } else {
@@ -158,12 +384,14 @@ export class KeyStore {
 
         this.currentHistoryIndex++;
         this.hasUncommittedChanges = false;
+        this.editScope = null;
     }
 
     public undo(): boolean {
         if (this.undoStack.length === 0) return false;
 
         this.redoStack.push({
+            title: this.state.title,
             dichotomousKey: this.state.dichotomousKey.map(c => ({ ...c })),
             figures: (this.state.figures || []).map(f => ({ ...f }))
         });
@@ -177,6 +405,7 @@ export class KeyStore {
 
         this.currentHistoryIndex--;
         this.hasUncommittedChanges = false;
+        this.editScope = null;
 
         if (this.clipboardMode === 'cut') {
             this.clipboardMode = 'copy';
@@ -190,6 +419,7 @@ export class KeyStore {
         if (this.redoStack.length === 0) return false;
 
         this.undoStack.push({
+            title: this.state.title,
             dichotomousKey: this.state.dichotomousKey.map(c => ({ ...c })),
             figures: (this.state.figures || []).map(f => ({ ...f }))
         });
@@ -201,6 +431,7 @@ export class KeyStore {
         this.currentHistoryIndex++;
         this.state = this.redoStack.pop()!;
         this.hasUncommittedChanges = false;
+        this.editScope = null;
 
         if (this.clipboardMode === 'cut') {
             this.clipboardMode = 'copy';
@@ -248,13 +479,15 @@ export class KeyStore {
         key.forEach((couplet, index) => {
             const humanLabel = index + 1;
 
-            if (couplet.link1) {
-                if (!map.has(couplet.link1)) map.set(couplet.link1, []);
-                map.get(couplet.link1)!.push(`${humanLabel}a`);
+            const t1 = branchTarget(couplet.branch1);
+            if (t1 !== null) {
+                if (!map.has(t1)) map.set(t1, []);
+                map.get(t1)!.push(`${humanLabel}a`);
             }
-            if (couplet.link2) {
-                if (!map.has(couplet.link2)) map.set(couplet.link2, []);
-                map.get(couplet.link2)!.push(`${humanLabel}b`);
+            const t2 = branchTarget(couplet.branch2);
+            if (t2 !== null) {
+                if (!map.has(t2)) map.set(t2, []);
+                map.get(t2)!.push(`${humanLabel}b`);
             }
         });
 
@@ -266,28 +499,7 @@ export class KeyStore {
      * Returns a Set containing all unique, reachable internal IDs.
      */
     public getReachableNodes(idMap?: Map<number, Couplet>): Set<number> {
-        const reachable = new Set<number>();
-        const key = this.state.dichotomousKey;
-        if (key.length === 0) return reachable;
-
-        const lookupMap = idMap || new Map<number, Couplet>(key.map(c => [c.id, c]));
-
-        const stack: number[] = [key[0].id];
-
-        while (stack.length > 0) {
-            const activeId = stack.pop()!;
-
-            if (!reachable.has(activeId)) {
-                reachable.add(activeId);
-
-                const match = lookupMap.get(activeId);
-                if (match) {
-                    if (match.link2) stack.push(match.link2);
-                    if (match.link1) stack.push(match.link1);
-                }
-            }
-        }
-        return reachable;
+        return computeReachableNodes(this.state.dichotomousKey, idMap);
     }
 
     // ==========================================
@@ -297,12 +509,16 @@ export class KeyStore {
     public endTypingSession() {
         if (!this.hasUncommittedChanges) return;
         this.hasUncommittedChanges = false;
+        this.editScope = null;
     }
 
     public updateCouplet(id: number, fields: Partial<Omit<Couplet, 'id'>>) {
-        if (!this.hasUncommittedChanges) {
+        // Open a fresh checkpoint unless we're already mid-edit on the key, so
+        // couplet edits batch together but never merge with a figure edit.
+        if (this.editScope !== 'key') {
             this.saveCheckpoint();
         }
+        this.editScope = 'key';
 
         const index = this.state.dichotomousKey.findIndex(c => c.id === id);
         if (index === -1) return;
@@ -324,42 +540,41 @@ export class KeyStore {
         }, 100);
 
         const nextInternalId = maxId + 1;
-        // Determine what the 1-based step number string will be for the new card
-        const newStepNumberStr = (this.state.dichotomousKey.length + 1).toString();
+        // Determine what the 1-based step number will be for the new step
+        const newStepNumber = this.state.dichotomousKey.length + 1;
 
         // Find which slot we want to auto-link (searching backwards)
         let targetLinkIndex = -1;
-        let targetField: 'link1' | 'link2' | null = null;
+        let targetField: 'branch1' | 'branch2' | null = null;
 
         for (let i = this.state.dichotomousKey.length - 1; i >= 0; i--) {
             const couplet = this.state.dichotomousKey[i];
-            if (!couplet.link1 && !couplet.taxa1) {
+            if (couplet.branch1.kind === 'empty') {
                 targetLinkIndex = i;
-                targetField = 'link1';
+                targetField = 'branch1';
                 break;
-            } else if (!couplet.link2 && !couplet.taxa2) {
+            } else if (couplet.branch2.kind === 'empty') {
                 targetLinkIndex = i;
-                targetField = 'link2';
+                targetField = 'branch2';
                 break;
             }
         }
 
+        const linkedToNew: Branch = { kind: 'linked', targetId: nextInternalId };
+
+        // An unresolved branch that was waiting for this exact step now resolves to it
+        const resolveIfWaiting = (branch: Branch): Branch =>
+            branch.kind === 'unresolved' && branch.couplet === newStepNumber ? linkedToNew : branch;
+
         const updatedKey = this.state.dichotomousKey.map((couplet, index) => {
             let updated = { ...couplet };
 
-            // Apply standard backward auto-linking if this card matched an open slot
-            if (index === targetLinkIndex && targetField) {
-                updated[targetField] = nextInternalId;
-            }
+            updated.branch1 = resolveIfWaiting(updated.branch1);
+            updated.branch2 = resolveIfWaiting(updated.branch2);
 
-            // Scan for unresolved text entries pointing to the new step number and link them
-            if (!updated.link1 && updated.taxa1.trim() === newStepNumberStr) {
-                updated.link1 = nextInternalId;
-                updated.taxa1 = "";
-            }
-            if (!updated.link2 && updated.taxa2.trim() === newStepNumberStr) {
-                updated.link2 = nextInternalId;
-                updated.taxa2 = "";
+            // Apply standard backward auto-linking if this step matched an open slot
+            if (index === targetLinkIndex && targetField) {
+                updated[targetField] = linkedToNew;
             }
 
             return updated;
@@ -371,8 +586,7 @@ export class KeyStore {
             {
                 id: nextInternalId,
                 alt1: "", alt2: "",
-                link1: 0, link2: 0,
-                taxa1: "", taxa2: ""
+                branch1: EMPTY_BRANCH, branch2: EMPTY_BRANCH
             }
         ];
         this.hasUncommittedChanges = true;
@@ -382,7 +596,7 @@ export class KeyStore {
 
 
     /**
-    * Pastes cards from the clipboard buffer.
+    * Pastes couplets from the clipboard buffer.
     */
     public pasteCouplets(targetId?: number, position: 'above' | 'below' = 'below'): boolean {
         if (this.clipboardBuffer.length === 0) return false;
@@ -409,35 +623,38 @@ export class KeyStore {
             idTranslationMap.set(item.id, newId);
         });
 
-        const newCards: Couplet[] = this.clipboardBuffer.map((item) => {
-            const mappedId = idTranslationMap.get(item.id)!;
-            const mappedLink1 = idTranslationMap.has(item.link1) ? idTranslationMap.get(item.link1)! : item.link1;
-            const mappedLink2 = idTranslationMap.has(item.link2) ? idTranslationMap.get(item.link2)! : item.link2;
+        // Re-point a linked branch to the pasted copy of its target when that target
+        // was part of the same paste; external links keep their original id.
+        const remapBranch = (branch: Branch): Branch =>
+            branch.kind === 'linked' && idTranslationMap.has(branch.targetId)
+                ? { kind: 'linked', targetId: idTranslationMap.get(branch.targetId)! }
+                : branch;
 
+        const newCouplets: Couplet[] = this.clipboardBuffer.map((item) => {
             return {
                 ...item,
-                id: mappedId,
-                link1: mappedLink1,
-                link2: mappedLink2
+                id: idTranslationMap.get(item.id)!,
+                branch1: remapBranch(item.branch1),
+                branch2: remapBranch(item.branch2)
             };
         });
 
         // Splice items into a new shallow copy of the key array
         let newKey = [...this.state.dichotomousKey];
-        newKey.splice(insertIndex, 0, ...newCards);
+        newKey.splice(insertIndex, 0, ...newCouplets);
 
         // Restore incoming links if this was a Cut operation
         if (this.clipboardMode === 'cut' && this.cutIncomingLinksBuffer.length > 0) {
             newKey = newKey.map(couplet => {
                 let updated = { ...couplet };
 
-                // Find any broken links in the buffer that belong to this specific card
+                // Find any broken links in the buffer that belong to this specific couplet
                 const linksToRestore = this.cutIncomingLinksBuffer.filter(b => b.sourceId === couplet.id);
 
                 linksToRestore.forEach(b => {
                     const newTargetId = idTranslationMap.get(b.targetOldId);
                     if (newTargetId !== undefined) {
-                        updated[b.field] = newTargetId;
+                        updated[b.field] = { kind: 'linked', targetId: newTargetId };
                     }
                 });
 
@@ -449,7 +666,7 @@ export class KeyStore {
         }
 
         this.state.dichotomousKey = newKey;
-        this.setSelectionBatch(newCards.map(c => c.id));
+        this.setSelectionBatch(newCouplets.map(c => c.id));
         this.hasUncommittedChanges = true;
 
         return true;
@@ -474,18 +691,20 @@ export class KeyStore {
         this.cutIncomingLinksBuffer = [];
 
         //  Identify incoming links, buffer them in memory, and safely sever them
-        //    while removing the selected cards from the key array.
+        //    while removing the selected couplets from the key array.
         this.state.dichotomousKey = this.state.dichotomousKey
             .filter(c => !selectedIds.has(c.id))
             .map(c => {
                 let updated = { ...c };
-                if (selectedIds.has(c.link1)) {
-                    this.cutIncomingLinksBuffer.push({ sourceId: c.id, field: 'link1', targetOldId: c.link1 });
-                    updated.link1 = 0;
+                const t1 = branchTarget(c.branch1);
+                if (t1 !== null && selectedIds.has(t1)) {
+                    this.cutIncomingLinksBuffer.push({ sourceId: c.id, field: 'branch1', targetOldId: t1 });
+                    updated.branch1 = EMPTY_BRANCH;
                 }
-                if (selectedIds.has(c.link2)) {
-                    this.cutIncomingLinksBuffer.push({ sourceId: c.id, field: 'link2', targetOldId: c.link2 });
-                    updated.link2 = 0;
+                const t2 = branchTarget(c.branch2);
+                if (t2 !== null && selectedIds.has(t2)) {
+                    this.cutIncomingLinksBuffer.push({ sourceId: c.id, field: 'branch2', targetOldId: t2 });
+                    updated.branch2 = EMPTY_BRANCH;
                 }
                 return updated;
             });
@@ -504,12 +723,18 @@ export class KeyStore {
             this.activeCoupletId = null;
         }
 
+        // Any branch pointing at a removed couplet is reset to empty.
+        const severIfRemoved = (branch: Branch): Branch => {
+            const target = branchTarget(branch);
+            return target !== null && removedIds.has(target) ? EMPTY_BRANCH : branch;
+        };
+
         this.state.dichotomousKey = this.state.dichotomousKey
             .filter(c => !removedIds.has(c.id))
             .map(c => ({
                 ...c,
-                link1: removedIds.has(c.link1) ? 0 : c.link1,
-                link2: removedIds.has(c.link2) ? 0 : c.link2,
+                branch1: severIfRemoved(c.branch1),
+                branch2: severIfRemoved(c.branch2),
             }));
 
         this.selectedCoupletIds = new Set();
@@ -517,7 +742,7 @@ export class KeyStore {
     }
 
     /**
-    * Swaps alternative choices, target links, and taxa fields for all selected cards.
+    * Swaps alternative choices, target links, and taxa fields for all selected couplets.
     */
     public swapSelectedCouplets(): boolean {
         if (this.selectedCoupletIds.size === 0) return false;
@@ -531,10 +756,8 @@ export class KeyStore {
                     ...couplet,
                     alt1: couplet.alt2,
                     alt2: couplet.alt1,
-                    link1: couplet.link2,
-                    link2: couplet.link1,
-                    taxa1: couplet.taxa2,
-                    taxa2: couplet.taxa1
+                    branch1: couplet.branch2,
+                    branch2: couplet.branch1
                 };
             }
             return couplet;
@@ -590,46 +813,39 @@ export class KeyStore {
             this.state.dichotomousKey.map(c => [c.id, c])
         );
 
-        // Helper closures to cleanly detect string and link states
-        const isValidLink = (linkId: number) => linkId !== 0 && idToCoupletMap.has(linkId);
-
-        type BranchType = 'terminal' | 'unresolved' | 'linked' | 'broken';
-
-        // Consolidated branch classifier
-        const classifyBranch = (taxaStr: string, linkId: number): BranchType => {
-            const trimmed = taxaStr.trim();
-            const isNumeric = /^\d+$/.test(trimmed);
-
-            if (trimmed !== '' && !isNumeric) return 'terminal';
-            if (isValidLink(linkId)) return 'linked';
-            if (isNumeric) return 'unresolved';
-            return 'broken';
+        // A branch that continues into an existing couplet, or null otherwise.
+        const linkTarget = (branch: Branch): number | null => {
+            const t = branchTarget(branch);
+            return t !== null && idToCoupletMap.has(t) ? t : null;
         };
 
-        // Declarative rank lookup object (replaces getChoiceRank function)
-        const rankMap: Record<BranchType, number> = {
-            terminal: 1,
+        // Declarative rank lookup keyed by the shared branch classifier.
+        // Shorter/terminal branches rank lower so they sort into Alt1.
+        const rankMap: Record<ReturnType<typeof classifyBranch>, number> = {
+            taxon: 1,
             linked: 2,
             unresolved: 2, // Both imply continuing paths
-            broken: 3      // Implies a long/broken branch
+            broken: 3,     // Implies a long/broken branch
+            empty: 3       // Treated as a long/dangling branch
         };
 
         // Compute branch depths recursively (Memoized to prevent infinite loops on cycles)
         const depthCache = new Map<number, number>();
         const dynamicVisited = new Set<number>();
 
-        // infer depth natively from strings if unresolved
-        const getEdgeDepth = (taxaStr: string, linkId: number): number => {
-            const type = classifyBranch(taxaStr, linkId);
-            if (type === 'terminal') return 0;
-            if (type === 'linked') return calculateBranchDepth(linkId);
-            // Treat the unresolved numeric string as its simulated depth (higher number = deeper branch)
-            if (type === 'unresolved') return parseInt(taxaStr.trim(), 10) || 0;  // sketchy but may be the best we can do, number only imply relative length
-            return 10000; // if link is broken, count it as an long branch
+        // infer depth natively from the branch state if unresolved
+        const getEdgeDepth = (branch: Branch): number => {
+            switch (classifyBranch(branch, idToCoupletMap)) {
+                case 'taxon': return 0;
+                case 'linked': return calculateBranchDepth((branch as { targetId: number }).targetId);
+                // Treat the unresolved step number as its simulated depth (higher number = deeper branch)
+                case 'unresolved': return (branch as { couplet: number }).couplet || 0;
+                default: return 10000; // broken/empty: count it as a long branch
+            }
         };
 
         const calculateBranchDepth = (id: number): number => {
-            if (!isValidLink(id)) return 0;
+            if (!idToCoupletMap.has(id)) return 0;
             if (depthCache.has(id)) return depthCache.get(id)!;
             if (dynamicVisited.has(id)) return 0; // Handle cyclic loops gracefully
 
@@ -637,8 +853,8 @@ export class KeyStore {
             const couplet = idToCoupletMap.get(id)!;
 
             // Compute utilizing our new edge depth evaluator
-            const d1 = getEdgeDepth(couplet.taxa1, couplet.link1);
-            const d2 = getEdgeDepth(couplet.taxa2, couplet.link2);
+            const d1 = getEdgeDepth(couplet.branch1);
+            const d2 = getEdgeDepth(couplet.branch2);
 
             dynamicVisited.delete(id);
 
@@ -652,8 +868,8 @@ export class KeyStore {
 
         // Mirror Pass: Re-map and swap alt1/alt2 fields using the Rank Engine
         const optimizedKey = this.state.dichotomousKey.map(c => {
-            const type1 = classifyBranch(c.taxa1, c.link1);
-            const type2 = classifyBranch(c.taxa2, c.link2);
+            const type1 = classifyBranch(c.branch1, idToCoupletMap);
+            const type2 = classifyBranch(c.branch2, idToCoupletMap);
 
             const rank1 = rankMap[type1];
             const rank2 = rankMap[type2];
@@ -666,8 +882,8 @@ export class KeyStore {
                 // Tie-breakers when both alternatives share the same structural rank
                 if (rank1 === 2) {
                     // Both are continuing paths (Linked vs Unresolved vs Both)
-                    const depth1 = getEdgeDepth(c.taxa1, c.link1);
-                    const depth2 = getEdgeDepth(c.taxa2, c.link2);
+                    const depth1 = getEdgeDepth(c.branch1);
+                    const depth2 = getEdgeDepth(c.branch2);
 
                     // Shorter branches (actual or inferred) go to Alt1
                     if (depth2 < depth1) {
@@ -686,10 +902,8 @@ export class KeyStore {
                     ...c,
                     alt1: c.alt2,
                     alt2: c.alt1,
-                    link1: c.link2,
-                    link2: c.link1,
-                    taxa1: c.taxa2,
-                    taxa2: c.taxa1
+                    branch1: c.branch2,
+                    branch2: c.branch1
                 };
             }
             return { ...c };
@@ -701,8 +915,10 @@ export class KeyStore {
         // Trace incoming references to identify top-level structural root items
         const incomingCounts = new Map<number, number>();
         optimizedKey.forEach(c => {
-            if (isValidLink(c.link1)) incomingCounts.set(c.link1, (incomingCounts.get(c.link1) || 0) + 1);
-            if (isValidLink(c.link2)) incomingCounts.set(c.link2, (incomingCounts.get(c.link2) || 0) + 1);
+            const t1 = linkTarget(c.branch1);
+            if (t1 !== null) incomingCounts.set(t1, (incomingCounts.get(t1) || 0) + 1);
+            const t2 = linkTarget(c.branch2);
+            if (t2 !== null) incomingCounts.set(t2, (incomingCounts.get(t2) || 0) + 1);
         });
 
         const roots = optimizedKey.filter(c => !incomingCounts.has(c.id));
@@ -727,12 +943,14 @@ export class KeyStore {
                 visited.add(currentId);
                 orderedCouplets.push(couplet);
 
-                // Push link2 first, then link1 onto the stack.
-                if (isValidLink(couplet.link2) && !visited.has(couplet.link2)) {
-                    stack.push(couplet.link2);
+                // Push branch2's target first, then branch1's, onto the stack.
+                const t2 = linkTarget(couplet.branch2);
+                if (t2 !== null && !visited.has(t2)) {
+                    stack.push(t2);
                 }
-                if (isValidLink(couplet.link1) && !visited.has(couplet.link1)) {
-                    stack.push(couplet.link1);
+                const t1 = linkTarget(couplet.branch1);
+                if (t1 !== null && !visited.has(t1)) {
+                    stack.push(t1);
                 }
             }
         };
@@ -766,19 +984,14 @@ export class KeyStore {
      * Toggles a figure's selection state. Supports multi-select via Ctrl/Cmd/Shift modifiers.
      */
     public toggleFigureSelection(id: number, multiSelect: boolean) {
-        if (!multiSelect) {
-            const wasSelected = this.selectedFigureIds.has(id);
-            const sizeBefore = this.selectedFigureIds.size;
-            this.selectedFigureIds.clear();
-            if (!wasSelected || sizeBefore > 1) {
-                this.selectedFigureIds.add(id);
-            }
-        } else {
+        if (multiSelect) {
             if (this.selectedFigureIds.has(id)) {
                 this.selectedFigureIds.delete(id);
             } else {
                 this.selectedFigureIds.add(id);
             }
+        } else {
+            this.selectedFigureIds = new Set([id]);
         }
     }
 
@@ -823,9 +1036,12 @@ export class KeyStore {
     * Patches mutating attributes inside a targeting unique figure structure.
     */
     public updateFigure(id: number, fields: Partial<Omit<Figure, 'id'>>) {
-        if (!this.hasUncommittedChanges) {
+        // Open a fresh checkpoint unless we're already mid-edit on figures, so
+        // figure edits batch together but never merge with a couplet edit.
+        if (this.editScope !== 'figures') {
             this.saveCheckpoint();
         }
+        this.editScope = 'figures';
 
         const index = this.state.figures.findIndex(f => f.id === id);
         if (index === -1) return;
@@ -857,26 +1073,24 @@ export class KeyStore {
         // Create a history checkpoint before mutating state
         this.saveCheckpoint();
 
-        // Build optimized lookup maps matching how resolveTextReferences functions
-        const idToFig = new Map<number, Figure>(figures.map(f => [f.id, f]));
-        const filenameToFig = new Map<string, Figure>(
-            figures.map(f => [f.filename.trim().toLowerCase(), f])
-        );
+        const { idToFig, displayNumToFig, filenameToFig } = buildFigureLookups(figures);
 
         const orderedFigures: Figure[] = [];
         const seenFigureIds = new Set<number>();
 
         // Scan couplets sequentially in their current key order
         for (const couplet of this.state.dichotomousKey) {
-            const fieldsToScan = [couplet.alt1, couplet.alt2, couplet.taxa1, couplet.taxa2];
+            const taxon1 = couplet.branch1.kind === 'taxon' ? couplet.branch1.name : '';
+            const taxon2 = couplet.branch2.kind === 'taxon' ? couplet.branch2.name : '';
+            const fieldsToScan = [couplet.alt1, couplet.alt2, taxon1, taxon2];
 
             for (const text of fieldsToScan) {
                 if (!text) continue;
 
                 let match: RegExpExecArray | null;
 
-                // Primary: match new storage format [figID: N] — value is always an internal ID
-                const idTokenRegex = /\[figID:\s*(\d+)\s*\]/gi;
+                // Stored references [figID: N] — value is always an internal figure ID
+                const idTokenRegex = figIdTokenRegex();
                 while ((match = idTokenRegex.exec(text)) !== null) {
                     const id = parseInt(match[1].trim(), 10);
                     const matchedFig = idToFig.get(id);
@@ -886,15 +1100,15 @@ export class KeyStore {
                     }
                 }
 
-                // Legacy: match old [fig: VALUE] format — numeric = old ID, text = filename
-                const legacyTokenRegex = /\[fig:\s*(.*?)\s*\]/gi;
-                while ((match = legacyTokenRegex.exec(text)) !== null) {
+                // Unresolved references [fig: VALUE] — numeric = 1-based display number, text = filename
+                const rawTokenRegex = figRawTokenRegex();
+                while ((match = rawTokenRegex.exec(text)) !== null) {
                     const trimmedValue = match[1].trim();
                     let matchedFig: Figure | undefined = undefined;
 
-                    const targetId = Number(trimmedValue);
-                    if (!isNaN(targetId) && idToFig.has(targetId)) {
-                        matchedFig = idToFig.get(targetId);
+                    const displayNum = parseInt(trimmedValue, 10);
+                    if (!isNaN(displayNum) && String(displayNum) === trimmedValue && displayNumToFig.has(displayNum)) {
+                        matchedFig = displayNumToFig.get(displayNum);
                     } else {
                         const lowercaseFilename = trimmedValue.toLowerCase();
                         if (filenameToFig.has(lowercaseFilename)) {
@@ -922,36 +1136,48 @@ export class KeyStore {
         this.hasUncommittedChanges = true;
     }
 
+    /**
+     * Packages the current core application status state into the unified `.tskey` JSON file format structure.
+     */
+    public exportJsonData() {
+        return {
+            type: APP_NAME,
+            version: APP_VERSION,
+            title: this.state.title,
+            data: {
+                title: this.state.title,
+                key: this.state.dichotomousKey,
+                figures: this.state.figures
+            }
+        };
+    }
+
     public importJsonData(rawData: unknown): ImportResult {
         try {
             let importedKey: Couplet[] | null = null;
             let importedFigures: Figure[] = [];
+            let importedTitle = 'Untitled Key';
 
-            if (
-                rawData &&
-                typeof rawData === 'object' &&
-                'data' in rawData &&
-                (rawData as any).data &&
-                typeof (rawData as any).data === 'object'
-            ) {
-                const payload = (rawData as any).data;
+            if (isRecord(rawData) && isRecord(rawData.data)) {
+                const payload = rawData.data;
 
-                if (
-                    'key' in payload &&
-                    isValidCoupletArray(payload.key)
-                ) {
+                if (isValidCoupletArray(payload.key)) {
                     importedKey = payload.key;
 
-                    if (
-                        'figures' in payload &&
-                        isValidFigureArray(payload.figures)
-                    ) {
+                    if (isValidFigureArray(payload.figures)) {
                         importedFigures = payload.figures;
                     }
                 }
+
+                // Extract project title if declared inside native file format
+                if (typeof payload.title === 'string') {
+                    importedTitle = payload.title;
+                } else if (typeof rawData.title === 'string') {
+                    importedTitle = rawData.title;
+                }
             }
 
-            // Legacy format
+            // Legacy format fallback
             if (!importedKey && isValidCoupletArray(rawData)) {
                 importedKey = rawData;
             }
@@ -965,20 +1191,24 @@ export class KeyStore {
                 };
             }
 
-            let extractedFiguresWithBinary: any[] = [];
-            if (importedFigures && importedFigures.length > 0) {
+            let extractedFiguresWithBinary: FigureWithBinary[] = [];
+            if (importedFigures.length > 0) {
                 extractedFiguresWithBinary = [...importedFigures];
 
                 // Strip the bulky binary data out of the application state timeline
-                importedFigures = importedFigures.map((f: any) => {
+                importedFigures = importedFigures.map((f: FigureWithBinary): Figure => {
                     const { binaryData, ...cleanFigure } = f;
-                    return cleanFigure as Figure;
+                    return cleanFigure;
                 });
             }
 
             this.saveCheckpoint();
+            this.state.title = importedTitle;
+            this.activeProjectUid = newProjectUid(); // Imported project is a new identity
             this.state.dichotomousKey = importedKey;
             this.state.figures = importedFigures;
+
+            workspaceStorage.resetActiveImageCache();
 
             this.clearSelection();
             this.activeCoupletId = null;
@@ -1002,78 +1232,122 @@ export class KeyStore {
         }
     }
 
-    public saveToStorage(): void {
-        const currentData = this.state.dichotomousKey;
+    // ==========================================
+    // WORKSPACE & PROJECT ENGINE
+    // ==========================================
 
-        if (!Array.isArray(currentData)) {
-            throw new Error("Cannot save corrupted data structure.");
-        }
-
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(currentData));
-        localStorage.setItem(FIGURES_STORAGE_KEY, JSON.stringify(this.state.figures));
-        this.markSaved();
+    public getProjectName(): string {
+        return this.state.title;
     }
 
-    public loadFromStorage(fallbackData: Couplet[] = [], fallbackFigures: Figure[] = []): boolean {
+    public setProjectName(newTitle: string): void {
+        this.setTitle(newTitle);
+    }
+
+    public setProjectPersistedListener(cb: (title: string) => void): void {
+        this.onProjectPersisted = cb;
+    }
+
+    private commitPersistedTitle(title: string): void {
+        this.persistedTitle = title;
+        this.onProjectPersisted?.(title);   // <- the single place the pointer updates
+    }
+
+    public async createNewProject(title: string): Promise<void> {
+        this.state.title = title;
+        this.activeProjectUid = newProjectUid(); // Fresh identity for a fresh project
+        this.commitPersistedTitle(title); // Sync the disk tracking name
+        this.state.dichotomousKey = [];
+        this.state.figures = [];
+        this.resetTrackingContext();
+
+        workspaceStorage.resetActiveImageCache();
+        await this.saveToStorage();
+    }
+
+    public async loadProject(title: string): Promise<boolean> {
+        const data = await workspaceStorage.loadProject(title);
+        if (data) {
+            this.state.title = data.title;
+            // Legacy records predate projectUid; mint one so figures re-key cleanly.
+            this.activeProjectUid = data.projectUid || newProjectUid();
+            this.commitPersistedTitle(data.title); // Sync the disk tracking name
+            this.state.dichotomousKey = data.dichotomousKey;
+            this.state.figures = data.figures;
+            this.resetTrackingContext();
+
+            return true;
+        }
+        return false;
+    }
+
+    public async saveToStorage(): Promise<void> {
+        const isRename = this.persistedTitle && this.persistedTitle !== this.state.title;
+        const oldTitle = this.persistedTitle;
+
         try {
-            const localKey = localStorage.getItem(STORAGE_KEY);
-            const localFigures = localStorage.getItem(FIGURES_STORAGE_KEY);
 
-            // 1. Initialize a local holding variable with our fallback figures parameter
-            let loadedFigures: Figure[] = fallbackFigures;
+            const currentData = this.state.dichotomousKey;
+            await workspaceStorage.saveProject(this.state.title, this.activeProjectUid, currentData, this.state.figures);
 
-            // 2. Safely attempt to parse the saved figures if they exist
-            if (localFigures) {
-                try {
-                    const parsedFigures = JSON.parse(localFigures);
-                    if (isValidFigureArray(parsedFigures)) {
-                        loadedFigures = parsedFigures;
-                    } else {
-                        console.warn('loadFromStorage: figures in localStorage failed schema validation; using fallback.');
-                    }
-                } catch (e) {
-                    console.error("Error parsing figures data from storage", e);
-                }
+            if (isRename && oldTitle) {
+                await workspaceStorage.deleteProjectRecord(oldTitle);
             }
 
-            // 3. If there is no key structure, apply full defaults and exit
-            if (!localKey) {
-                this.state = {
-                    dichotomousKey: fallbackData,
-                    figures: loadedFigures
-                };
-                this.resetTrackingContext();
-                return false;
-            }
+            this.commitPersistedTitle(this.state.title);
+            this.markSaved();
 
-            const parsedKey = JSON.parse(localKey);
-
-            // 4. Validate the key data structure schema before committing to state
-            if (isValidCoupletArray(parsedKey)) {
-                this.state = {
-                    dichotomousKey: parsedKey,
-                    figures: loadedFigures // Successfully assign loaded figures here
-                };
-                this.resetTrackingContext();
-                return true;
-            } else {
-                console.warn('Invalid data schema detected in localStorage. Loading fallbacks.');
-                this.state = {
-                    dichotomousKey: fallbackData,
-                    figures: fallbackFigures
-                };
-                this.resetTrackingContext();
-                return false;
-            }
         } catch (error) {
-            console.warn('Corrupted localStorage JSON format. Loading fallbacks.', error);
+            console.error("Failed to save or rename project workspace:", error);
+            if (isRename && oldTitle) {
+                this.state.title = oldTitle;
+                workspaceStorage.clearStagedChanges();
+            }
+            throw error;
+        }
+    }
+
+    public async saveAsProject(newTitle: string): Promise<void> {
+        const oldTitle = this.persistedTitle;
+        const oldUid = this.activeProjectUid;
+        const newUid = newProjectUid(); // Save As is a true duplicate — new identity
+
+        try {
+            // Copy the source project's persisted blobs to the new identity.
+            await workspaceStorage.cloneProjectFigures(oldUid, newUid);
+
+            this.state.title = newTitle;
+            this.activeProjectUid = newUid;
+
+            await workspaceStorage.saveProject(newTitle, newUid, this.state.dichotomousKey, this.state.figures);
+
+            this.commitPersistedTitle(newTitle);
+            this.markSaved();
+        } catch (error) {
+            console.error("Save As Operation Failed:", error);
+            // Rollback identity on failure
+            this.state.title = oldTitle;
+            this.activeProjectUid = oldUid;
+            throw error;
+        }
+    }
+
+    public async loadFromStorage(fallbackData: Couplet[] = [], fallbackFigures: Figure[] = [], lastActiveTitle = 'Untitled Key'): Promise<boolean> {
+        const lastActive = lastActiveTitle;
+        const success = await this.loadProject(lastActive);
+
+        if (!success) {
             this.state = {
+                title: lastActive,
                 dichotomousKey: fallbackData,
                 figures: fallbackFigures
             };
+            this.persistedTitle = lastActive;
+            this.activeProjectUid = newProjectUid();
+            workspaceStorage.resetActiveImageCache();
             this.resetTrackingContext();
-            return false;
         }
+        return success;
     }
 
     // ==========================================
@@ -1097,13 +1371,9 @@ export class KeyStore {
         this.selectedCoupletIds.clear();
     }
 
-    public setSelectionToSingle(cardId: number): void {
-        this.selectedCoupletIds.clear();
-        this.selectedCoupletIds.add(cardId);
-    }
 
-    public setSelectionBatch(cardIds: number[] | Set<number>): void {
-        this.selectedCoupletIds = new Set(cardIds);
+    public setSelectionBatch(coupletIds: number[] | Set<number>): void {
+        this.selectedCoupletIds = new Set(coupletIds);
     }
 
     public selectAll() {
@@ -1115,163 +1385,17 @@ export class KeyStore {
     // ==========================================
 
     public runDiagnostics(): Map<number, KeyValidationError[]> {
-        const diagnostics = new Map<number, KeyValidationError[]>();
-        const key = this.state.dichotomousKey;
-
-        if (key.length === 0) return diagnostics;
-
-        const idMap = new Map<number, Couplet>();
-        const idToIndexMap = new Map<number, number>();
-        const inboundParentMap = new Map<number, Set<number>>();
-
-        // Collect all valid internal figure IDs currently present in the state
-        const figureIds = new Set(this.state.figures.map(f => f.id));
-
-        key.forEach((c, index) => {
-            idMap.set(c.id, c);
-            idToIndexMap.set(c.id, index);
-
-            if (c.link1) {
-                let parentSet = inboundParentMap.get(c.link1);
-                if (!parentSet) inboundParentMap.set(c.link1, (parentSet = new Set()));
-                parentSet.add(c.id);
-            }
-            if (c.link2) {
-                let parentSet = inboundParentMap.get(c.link2);
-                if (!parentSet) inboundParentMap.set(c.link2, (parentSet = new Set()));
-                parentSet.add(c.id);
-            }
-        });
-
-        const reachableNodes = this.getReachableNodes(idMap);
-        const NUMERIC_REGEX = /^\d+$/;
-
-        key.forEach((c, index) => {
-            const issues: KeyValidationError[] = [];
-
-            const isUnresolved1 = !c.link1 && NUMERIC_REGEX.test(c.taxa1);
-            const isUnresolved2 = !c.link2 && NUMERIC_REGEX.test(c.taxa2);
-
-            if (isUnresolved1) {
-                issues.push({ severity: 'error', message: `Choice A points to step '${c.taxa1}' which does not exist yet.` });
-            } else if (!c.taxa1 && !c.link1) {
-                issues.push({ severity: 'warning', message: 'Choice A is incomplete. Assign a Taxa or destination step.' });
-            }
-
-            if (isUnresolved2) {
-                issues.push({ severity: 'error', message: `Choice B points to step '${c.taxa2}' which does not exist yet.` });
-            } else if (!c.taxa2 && !c.link2) {
-                issues.push({ severity: 'warning', message: 'Choice B is incomplete. Assign a Taxa or destination step.' });
-            }
-
-            // --- Unresolved Figure Reference Diagnostics ---
-            const FIG_ID_REGEX = /\[figID:\s*(\d+)\s*\]/gi;
-            const FIG_RAW_REGEX = /\[fig:\s*([^\]]+)\s*\]/gi;
-
-            // Check Choice A
-            if (c.alt1) {
-                const missingIds1: number[] = [];
-                for (const match of c.alt1.matchAll(FIG_ID_REGEX)) {
-                    const figId = parseInt(match[1], 10);
-                    if (!figureIds.has(figId) && !missingIds1.includes(figId)) {
-                        missingIds1.push(figId);
-                    }
-                }
-                missingIds1.forEach(id => {
-                    issues.push({ severity: 'warning', message: `Choice A references a missing or deleted figure (Internal ID: ${id}).` });
-                });
-
-                const unresolved1: string[] = [];
-                for (const match of c.alt1.matchAll(FIG_RAW_REGEX)) {
-                    const token = match[1].trim();
-                    if (!unresolved1.includes(token)) {
-                        unresolved1.push(token);
-                    }
-                }
-                unresolved1.forEach(token => {
-                    issues.push({ severity: 'warning', message: `Choice A references an unresolved figure reference '[fig: ${token}]'.` });
-                });
-            }
-
-            // Check Choice B
-            if (c.alt2) {
-                const missingIds2: number[] = [];
-                for (const match of c.alt2.matchAll(FIG_ID_REGEX)) {
-                    const figId = parseInt(match[1], 10);
-                    if (!figureIds.has(figId) && !missingIds2.includes(figId)) {
-                        missingIds2.push(figId);
-                    }
-                }
-                missingIds2.forEach(id => {
-                    issues.push({ severity: 'warning', message: `Choice B references a missing or deleted figure (Internal ID: ${id}).` });
-                });
-
-                const unresolved2: string[] = [];
-                for (const match of c.alt2.matchAll(FIG_RAW_REGEX)) {
-                    const token = match[1].trim();
-                    if (!unresolved2.includes(token)) {
-                        unresolved2.push(token);
-                    }
-                }
-                unresolved2.forEach(token => {
-                    issues.push({ severity: 'warning', message: `Choice B references an unresolved figure reference '[fig: ${token}]'.` });
-                });
-            }
-
-            if (index > 0 && !reachableNodes.has(c.id)) {
-                issues.push({ severity: 'warning', message: 'Orphaned: This step is unreachable from Step #1.' });
-            }
-            if (c.link1 === c.id) issues.push({ severity: 'error', message: 'Choice A loops directly into its own card.' });
-            if (c.link2 === c.id) issues.push({ severity: 'error', message: 'Choice B loops directly into its own card.' });
-
-            if (c.link1 && !idMap.has(c.link1)) issues.push({ severity: 'error', message: 'Choice A points to an invalid or deleted step.' });
-            if (c.link2 && !idMap.has(c.link2)) issues.push({ severity: 'error', message: 'Choice B points to an invalid or deleted step.' });
-
-            if (c.taxa1 && c.link1) issues.push({ severity: 'warning', message: 'Choice A contains both Taxa and a Goto jump (Hint Mode activated).' });
-            if (c.taxa2 && c.link2) issues.push({ severity: 'warning', message: 'Choice B contains both Taxa and a Goto jump (Hint Mode activated).' });
-
-            const uniqueParents = inboundParentMap.get(c.id);
-            if (uniqueParents && uniqueParents.size > 1) {
-                const parentStepLabels: string[] = [];
-                uniqueParents.forEach(parentId => {
-                    const parentIdx = idToIndexMap.get(parentId);
-                    if (parentIdx !== undefined && parentIdx !== -1) {
-                        parentStepLabels.push(`#${parentIdx + 1}`);
-                    }
-                });
-                issues.push({
-                    severity: 'warning',
-                    message: `Convergence: Multiple steps (${parentStepLabels.join(', ')}) link here.`
-                });
-            }
-
-            if (issues.length > 0) diagnostics.set(c.id, issues);
-        });
-
-        return diagnostics;
+        return diagnoseKey(this.state.dichotomousKey, this.state.figures);
     }
 
-    /**
-     * Converts all figure reference tokens in text to rendered print labels like (Fig. 3).
-     * Handles two formats:
-     *   [figID: 106]  — new storage format (internal ID, always stable)
-     *   [fig: value]  — legacy format (numeric value treated as old ID, text as filename)
-     */
     public resolveTextReferences(text: string, idToDisplayNum: Map<number, number>): string {
         if (!text) return text;
 
+        const figureCount = this.state.figures.length;
+        const { filenameToFig } = buildFigureLookups(this.state.figures);
 
-        const filenameToDisplayNum = new Map<string, number>();
-        this.state.figures.forEach(fig => {
-            if (!fig.filename) return;
-            const displayNum = idToDisplayNum.get(fig.id);
-            if (displayNum !== undefined) {
-                filenameToDisplayNum.set(fig.filename.trim().toLowerCase(), displayNum);
-            }
-        });
-
-        // resolve new storage format [figID: N] — value is always an internal ID
-        text = text.replace(/\[figID:\s*(\d+)\s*\]/gi, (_match, value) => {
+        // Stored references [figID: N] — value is always an internal figure ID.
+        text = text.replace(figIdTokenRegex(), (_match, value) => {
             const id = parseInt(value.trim(), 10);
             const displayNum = idToDisplayNum.get(id);
             return displayNum !== undefined
@@ -1279,19 +1403,19 @@ export class KeyStore {
                 : `[Broken Fig: ID ${id}]`;
         });
 
-        // remove?
-        // resolve legacy format [fig: value] — numeric = old ID, text = filename
-        text = text.replace(/\[fig:\s*(.*?)\s*\]/gi, (_match, value) => {
+        // Unresolved references [fig: value] — numeric = 1-based display number, text = filename.
+        text = text.replace(figRawTokenRegex(), (_match, value) => {
             const trimmedValue = value.trim();
 
-            const targetId = Number(trimmedValue);
-            if (!isNaN(targetId) && idToDisplayNum.has(targetId)) {
-                return `(Fig. ${idToDisplayNum.get(targetId)})`;
+            const displayNum = parseInt(trimmedValue, 10);
+            if (!isNaN(displayNum) && String(displayNum) === trimmedValue && displayNum >= 1 && displayNum <= figureCount) {
+                return `(Fig. ${displayNum})`;
             }
 
-            const lowercaseFilename = trimmedValue.toLowerCase();
-            if (filenameToDisplayNum.has(lowercaseFilename)) {
-                return `(Fig. ${filenameToDisplayNum.get(lowercaseFilename)})`;
+            const fig = filenameToFig.get(trimmedValue.toLowerCase());
+            if (fig) {
+                const fileDisplayNum = idToDisplayNum.get(fig.id);
+                if (fileDisplayNum !== undefined) return `(Fig. ${fileDisplayNum})`;
             }
 
             return `[Broken Fig: ${trimmedValue}]`;
@@ -1306,28 +1430,23 @@ export class KeyStore {
      * Incomplete or unresolvable tokens are left unchanged.
      */
     public encodeFigureTokens(text: string): string {
-        const figures = this.state.figures;
-        const displayNumToId = new Map<number, number>();
-        const filenameToId = new Map<string, number>();
+        if (!text) return '';
 
-        figures.forEach((fig, index) => {
-            displayNumToId.set(index + 1, fig.id);
-            filenameToId.set(fig.filename.trim().toLowerCase(), fig.id);
-        });
+        const { displayNumToFig, filenameToFig } = buildFigureLookups(this.state.figures);
 
-        return text.replace(/\[fig:\s*(.*?)\s*\]/gi, (match, value) => {
+        return text.replace(figRawTokenRegex(), (match, value) => {
             const trimmed = value.trim();
 
             // Try as a 1-based display number (the primary user-facing format)
             const displayNum = parseInt(trimmed, 10);
-            if (!isNaN(displayNum) && String(displayNum) === trimmed && displayNumToId.has(displayNum)) {
-                return `[figID: ${displayNumToId.get(displayNum)!}]`;
+            if (!isNaN(displayNum) && String(displayNum) === trimmed && displayNumToFig.has(displayNum)) {
+                return `[figID: ${displayNumToFig.get(displayNum)!.id}]`;
             }
 
             // Try as a filename (case-insensitive)
-            const fig = filenameToId.get(trimmed.toLowerCase());
-            if (fig !== undefined) {
-                return `[figID: ${fig}]`;
+            const fig = filenameToFig.get(trimmed.toLowerCase());
+            if (fig) {
+                return `[figID: ${fig.id}]`;
             }
 
             // Cannot resolve — keep the original token so the user sees the problem
@@ -1341,14 +1460,11 @@ export class KeyStore {
      * current position and automatically updates when figures are reordered.
      */
     public decodeTextReferencesForEditor(text: string): string {
-        const figures = this.state.figures;
+        if (!text) return '';
 
-        const idToDisplayNum = new Map<number, number>();
-        figures.forEach((fig, index) => {
-            idToDisplayNum.set(fig.id, index + 1);
-        });
+        const { idToDisplayNum } = buildFigureLookups(this.state.figures);
 
-        return text.replace(/\[figID:\s*(\d+)\s*\]/gi, (match, value) => {
+        return text.replace(figIdTokenRegex(), (match, value) => {
             const id = parseInt(value.trim(), 10);
             const displayNum = idToDisplayNum.get(id);
             return displayNum !== undefined

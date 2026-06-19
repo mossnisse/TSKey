@@ -1,109 +1,334 @@
-// db.ts - Simple client-side binary storage engine
+// db.ts - Complete zero-dependency client-side storage engine
+import type { Couplet, Figure } from './store.ts';
 
-export class FigureStorageEngine {
-    private dbName = 'TSKey_Binary_Store';
-    private storeName = 'figures';
-    private dbPromise: Promise<IDBDatabase> | null = null; 
-    private pendingUploads = new Map<number, Blob>();
-    private pendingDeletes = new Set<number>();
-    private isCommitting = false; // Lock flag preventing concurrent database writes
+export interface ProjectRecord {
+    title: string;
+    projectUid: string;   // Stable identity; figure blobs are keyed by this, not the title
+    dichotomousKey: Couplet[];
+    figures: Figure[];
+    lastModified: number;
+}
+
+/**
+ * Resolves when a transaction commits; rejects on error or abort.
+ * `abortMessage` gives the abort path a contextual error for debugging.
+ */
+function txDone(tx: IDBTransaction, abortMessage: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(new Error(abortMessage));
+    });
+}
+
+/** Resolves with a single IDBRequest's result; rejects on error. */
+function reqValue<T>(request: IDBRequest<T>): Promise<T> {
+    return new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+}
+
+/**
+ * PERSISTENT DISK LAYER (IndexedDB Engine)
+ * Handles low-level raw browser transactions wrapped cleanly in native Promises.
+ */
+class IndexedDBEngine {
+    private dbName = 'TSKey_Workspace_DB';
+    private projectsStoreName = 'projects';
+    private figuresStoreName = 'figures';
+    private dbPromise: Promise<IDBDatabase> | null = null;
 
     private getDB(): Promise<IDBDatabase> {
         if (this.dbPromise) return this.dbPromise;
 
         this.dbPromise = new Promise((resolve, reject) => {
-            const request = indexedDB.open(this.dbName, 1);
+            const request = indexedDB.open(this.dbName, 2);
             request.onupgradeneeded = () => {
-                request.result.createObjectStore(this.storeName);
+                const db = request.result;
+                if (!db.objectStoreNames.contains(this.projectsStoreName)) {
+                    db.createObjectStore(this.projectsStoreName, { keyPath: 'title' });
+                }
+                if (!db.objectStoreNames.contains(this.figuresStoreName)) {
+                    db.createObjectStore(this.figuresStoreName);
+                }
             };
             request.onsuccess = () => resolve(request.result);
             request.onerror = () => reject(request.error);
+            request.onblocked = () => reject(new Error('IndexedDB open blocked by another open connection.'));
+        });
+
+        this.dbPromise.catch(() => {
+            this.dbPromise = null;
         });
 
         return this.dbPromise;
     }
 
-    /**
-     * Persists all memory-staged binary uploads and deletions to IndexedDB.
-     */
-    public async commitStagedChanges(): Promise<void> {
-        if (this.isCommitting) return;
-        if (this.pendingUploads.size === 0 && this.pendingDeletes.size === 0) return;
+    private getFigureKey(projectUid: string, id: number): string {
+        return `${projectUid}::${id}`;
+    }
 
-        this.isCommitting = true;
+    private parseFigureId(key: string): number {
+        return parseInt(key.substring(key.lastIndexOf('::') + 2), 10);
+    }
+
+    private getProjectKeyRange(projectUid: string): IDBKeyRange {
+        const prefix = `${projectUid}::`;
+        const upper = prefix.substring(0, prefix.length - 1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
+        return IDBKeyRange.bound(prefix, upper, false, true);
+    }
+
+    public async getProjectList(): Promise<{ name: string, lastModified: number }[]> {
         const db = await this.getDB();
+        const tx = db.transaction(this.projectsStoreName, 'readonly');
+        const records = await reqValue(tx.objectStore(this.projectsStoreName).getAll() as IDBRequest<ProjectRecord[]>);
 
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(this.storeName, 'readwrite');
-            const store = tx.objectStore(this.storeName);
+        return records
+            .map((p) => ({ name: p.title, lastModified: p.lastModified }))
+            .sort((a, b) => b.lastModified - a.lastModified);
+    }
 
-            this.pendingUploads.forEach((blob, id) => store.put(blob, id));
-            this.pendingDeletes.forEach(id => store.delete(id));
+    public async saveProject(title: string, projectUid: string, key: Couplet[], figures: Figure[]): Promise<void> {
+        const db = await this.getDB();
+        const tx = db.transaction(this.projectsStoreName, 'readwrite');
 
-            tx.oncomplete = () => {
-                this.pendingUploads.clear();
-                this.pendingDeletes.clear();
-                this.isCommitting = false;
-                resolve();
-            };
-            
-            tx.onerror = () => {
-                this.isCommitting = false;
-                reject(tx.error);
-            };
+        tx.objectStore(this.projectsStoreName).put({
+            title,
+            projectUid,
+            dichotomousKey: key,
+            figures,
+            lastModified: Date.now()
         });
+
+        // Resolving on complete ensures that data is successfully committed to disk
+        return txDone(tx, `Transaction aborted while saving project: ${title}`);
+    }
+
+    public async loadProject(title: string): Promise<ProjectRecord | null> {
+        const db = await this.getDB();
+        const tx = db.transaction(this.projectsStoreName, 'readonly');
+        const result = await reqValue(tx.objectStore(this.projectsStoreName).get(title) as IDBRequest<ProjectRecord | undefined>);
+        return result || null;
+    }
+
+    public async deleteProject(title: string, projectUid: string): Promise<void> {
+        const db = await this.getDB();
+        const tx = db.transaction([this.projectsStoreName, this.figuresStoreName], 'readwrite');
+
+        tx.objectStore(this.projectsStoreName).delete(title);
+
+        const fStore = tx.objectStore(this.figuresStoreName);
+        const cursorReq = fStore.openCursor(this.getProjectKeyRange(projectUid));
+        cursorReq.onsuccess = (e) => {
+            const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
+            if (cursor) {
+                cursor.delete();
+                cursor.continue();
+            }
+        };
+
+        return txDone(tx, `Project deletion aborted for: ${title}`);
     }
 
     /**
-     * Empties the staging areas without writing anything to the database.
-     * Call this when a user explicitly discards or cancels their unsaved session work.
+     * Deletes only the project metadata record, leaving its figure blobs intact.
+     * Used by rename, where the new-title record keeps the same projectUid.
      */
+    public async deleteProjectRecordOnly(title: string): Promise<void> {
+        const db = await this.getDB();
+        const tx = db.transaction(this.projectsStoreName, 'readwrite');
+        tx.objectStore(this.projectsStoreName).delete(title);
+        return txDone(tx, `Project record deletion aborted for: ${title}`);
+    }
+
+    public async saveFigure(projectUid: string, id: number, blob: Blob): Promise<void> {
+        const db = await this.getDB();
+        const tx = db.transaction(this.figuresStoreName, 'readwrite');
+        tx.objectStore(this.figuresStoreName).put(blob, this.getFigureKey(projectUid, id));
+        return txDone(tx, `Transaction aborted while saving figure ID ${id}`);
+    }
+
+    public async deleteFigure(projectUid: string, id: number): Promise<void> {
+        const db = await this.getDB();
+        const tx = db.transaction(this.figuresStoreName, 'readwrite');
+        tx.objectStore(this.figuresStoreName).delete(this.getFigureKey(projectUid, id));
+        return txDone(tx, `Transaction aborted while deleting figure ID ${id}`);
+    }
+
+    /**
+     * Garbage Collection Engine: Deletes binary objects from IndexedDB 
+     * whose IDs are no longer tracked in the active project metadata.
+     */
+    public async cleanupOrphanFigures(projectUid: string, activeIds: Set<number>): Promise<void> {
+        const db = await this.getDB();
+        const tx = db.transaction(this.figuresStoreName, 'readwrite');
+        const cursorReq = tx.objectStore(this.figuresStoreName).openCursor(this.getProjectKeyRange(projectUid));
+
+        cursorReq.onsuccess = (e) => {
+            const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
+            if (cursor) {
+                const id = this.parseFigureId(cursor.key as string);
+
+                if (!activeIds.has(id)) {
+                    cursor.delete();
+                }
+                cursor.continue();
+            }
+        };
+
+        return txDone(tx, `Orphan cleanup transaction aborted for project: ${projectUid}`);
+    }
+
+    public async getFigure(projectUid: string, id: number): Promise<Blob | null> {
+        const db = await this.getDB();
+        const tx = db.transaction(this.figuresStoreName, 'readonly');
+        const result = await reqValue(tx.objectStore(this.figuresStoreName).get(this.getFigureKey(projectUid, id)) as IDBRequest<Blob | undefined>);
+        return result || null;
+    }
+
+    public async cloneProjectFigures(oldUid: string, newUid: string): Promise<void> {
+        const db = await this.getDB();
+        const tx = db.transaction(this.figuresStoreName, 'readwrite');
+        const store = tx.objectStore(this.figuresStoreName);
+        const cursorReq = store.openCursor(this.getProjectKeyRange(oldUid));
+
+        cursorReq.onsuccess = (e) => {
+            const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
+            if (cursor) {
+                const id = this.parseFigureId(cursor.key as string);
+                const blob = cursor.value as Blob;
+
+                store.put(blob, this.getFigureKey(newUid, id));
+                cursor.continue();
+            }
+        };
+
+        return txDone(tx, `Cloning figures transaction aborted from "${oldUid}" to "${newUid}"`);
+    }
+
+}
+
+/**
+ * VOLATILE MEMORY LAYER & FACADE (Workspace Manager)
+ */
+export class WorkspaceManager {
+    private storage = new IndexedDBEngine();
+    private pendingUploads = new Map<number, Blob>();
+    private pendingDeletes = new Set<number>();
+    private commitPromise: Promise<void> | null = null;
+
+    public async getProjectList(): Promise<{ name: string, lastModified: number }[]> {
+        return this.storage.getProjectList();
+    }
+
+    public async saveProject(title: string, projectUid: string, key: Couplet[], figures: Figure[]): Promise<void> {
+        await this.storage.saveProject(title, projectUid, key, figures);
+        await this.commitStagedChanges(projectUid, figures);
+    }
+
+    public async loadProject(title: string): Promise<ProjectRecord | null> {
+        this.resetActiveImageCache();
+
+        const project = await this.storage.loadProject(title);
+        if (project?.projectUid) {
+            await this.storage.cleanupOrphanFigures(project.projectUid, new Set(project.figures.map(f => f.id)));
+        }
+        return project;
+    }
+
+    public async deleteProject(title: string): Promise<void> {
+        this.clearStagedChanges();
+        // Resolve the project's stable uid so its figure blobs can be removed too.
+        const project = await this.storage.loadProject(title);
+        if (!project) return;
+        return this.storage.deleteProject(title, project.projectUid);
+    }
+
+    /** Removes only the metadata record (rename) — figure blobs stay under their uid. */
+    public async deleteProjectRecord(title: string): Promise<void> {
+        return this.storage.deleteProjectRecordOnly(title);
+    }
+
+    public async cloneProjectFigures(oldUid: string, newUid: string): Promise<void> {
+        return this.storage.cloneProjectFigures(oldUid, newUid);
+    }
+
     public clearStagedChanges(): void {
         this.pendingUploads.clear();
         this.pendingDeletes.clear();
     }
 
     /**
-     * Stages a figure deletion in memory until commitStagedChanges() is fired.
+     * Single teardown for switching the active project: drops staged (uncommitted)
+     * blob uploads and revokes every cached figure object-URL. Owning this here keeps
+     * callers from hand-rolling the revoke loop on every project switch.
      */
+    public resetActiveImageCache(): void {
+        revokeStoredObjectURLs();
+        this.clearStagedChanges();
+    }
+
     public deleteFigureBinary(id: number): void {
-        this.pendingDeletes.add(id);
         this.pendingUploads.delete(id);
+        this.pendingDeletes.add(id);
     }
 
-    /**
-     * Stages a new figure upload or replacement in memory until commitStagedChanges() is fired.
-     */
     public uploadFigureBinary(id: number, blob: Blob): void {
+        this.pendingDeletes.delete(id); // A fresh upload supersedes a staged delete
         this.pendingUploads.set(id, blob);
-        this.pendingDeletes.delete(id);
     }
 
-    /**
-     * Retrieves a figure binary blob, prioritizing memory-staged updates before querying IndexedDB.
-     */
-    public async getFigureBinary(id: number): Promise<Blob | null> {
+    public async getFigureBinary(projectUid: string, id: number): Promise<Blob | null> {
         if (this.pendingUploads.has(id)) return this.pendingUploads.get(id)!;
-        if (this.pendingDeletes.has(id)) return null;
+        if (this.pendingDeletes.has(id)) return null; // Removed but not yet committed
+        return this.storage.getFigure(projectUid, id);
+    }
 
-        const db = await this.getDB();
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(this.storeName, 'readonly');
-            const store = tx.objectStore(this.storeName);
-            const request = store.get(id);
-            
-            request.onsuccess = () => resolve(request.result || null);
-            request.onerror = () => reject(request.error);
+    public async commitStagedChanges(projectUid: string, activeFigures: Figure[]): Promise<void> {
+        const previous = this.commitPromise ?? Promise.resolve();
+
+        const run = (async () => {
+            await previous.catch(() => { });
+
+            try {
+                const activeIds = new Set<number>(activeFigures.map((f) => f.id));
+
+                for (const [id, blob] of this.pendingUploads.entries()) {
+                    if (activeIds.has(id)) {
+                        await this.storage.saveFigure(projectUid, id, blob);
+                    }
+                }
+
+                for (const id of this.pendingDeletes) {
+                    await this.storage.deleteFigure(projectUid, id);
+                }
+
+                await this.storage.cleanupOrphanFigures(projectUid, activeIds);
+                this.clearStagedChanges();
+            } catch (error: unknown) {
+                if (error instanceof Error && error.name === 'QuotaExceededError') {
+                    alert("⚠️ Browser storage is full! Could not save the latest images. Please delete old workspaces to free up space.");
+                }
+                throw error;
+            }
+        })();
+
+        const tracked = run.finally(() => {
+            if (this.commitPromise === tracked) this.commitPromise = null;
         });
+        this.commitPromise = tracked;
+
+        return tracked;
     }
 }
 
-// Global active memory mapping engine to bypass async constraints inside hot layout updates
-export const figureStorage = new FigureStorageEngine();
+// Unified global instances
+export const workspaceStorage = new WorkspaceManager();
 export const activeObjectURLs = new Map<number, string>();
 
 /**
- * Converts a standard file Blob into a secure Base64 data URL string.
+ * Converts a Blob to base64. Useful for data exports or fallback workflows.
  */
 export function blobToBase64(blob: Blob): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -112,4 +337,15 @@ export function blobToBase64(blob: Blob): Promise<string> {
         reader.onerror = reject;
         reader.readAsDataURL(blob);
     });
+}
+
+/**
+ * Revokes every cached figure object-URL to prevent client-side memory exhaustion.
+ * Internal to the storage layer — callers go through WorkspaceManager.resetActiveImageCache().
+ */
+function revokeStoredObjectURLs(): void {
+    for (const url of activeObjectURLs.values()) {
+        URL.revokeObjectURL(url);
+    }
+    activeObjectURLs.clear();
 }
