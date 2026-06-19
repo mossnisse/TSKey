@@ -10,9 +10,6 @@ export const APP_VERSION = '0.0.1';
 function newProjectUid(): string {
     return crypto.randomUUID();
 }
-export const STORAGE_KEY = 'dichotomous_key';
-export const FIGURES_STORAGE_KEY = 'dichotomous_key_figures';
-export const TITLE_STORAGE_KEY = 'dichotomous_key_title';
 
 /**
  * A couplet choice's destination. 
@@ -147,10 +144,6 @@ export class KeyStore {
 
     public clearActiveCouplet() {
         this.activeCoupletId = null;
-    }
-
-    public getActiveCoupletId(): number | null {
-        return this.activeCoupletId;
     }
 
     public get draggedCoupletId(): number | null {
@@ -1103,10 +1096,6 @@ export class KeyStore {
         this.onProjectPersisted?.(title);   // <- the single place the pointer updates
     }
 
-    public async getStoredProjectsList(): Promise<{ name: string, lastModified: number }[]> {
-        return await workspaceStorage.getProjectList();
-    }
-
     public async createNewProject(title: string): Promise<void> {
         this.state.title = title;
         this.activeProjectUid = newProjectUid(); // Fresh identity for a fresh project
@@ -1186,23 +1175,6 @@ export class KeyStore {
         }
     }
 
-    public addFigureReference(id: number, filename: string, blob: Blob): void {
-        this.saveCheckpoint();
-        this.state.figures = [...this.state.figures, { id, filename, caption: '' }];
-        workspaceStorage.uploadFigureBinary(id, blob);
-        this.hasUncommittedChanges = true;
-    }
-
-    /**
-     * Handles dropping an image from reference map stack tracking
-     */
-    public deleteFigureReference(id: number): void {
-        this.saveCheckpoint();
-        this.state.figures = this.state.figures.filter(f => f.id !== id);
-        workspaceStorage.deleteFigureBinary(id);
-        this.hasUncommittedChanges = true;
-    }
-
     public async loadFromStorage(fallbackData: Couplet[] = [], fallbackFigures: Figure[] = [], lastActiveTitle = 'Untitled Key'): Promise<boolean> {
         const lastActive = lastActiveTitle;
         const success = await this.loadProject(lastActive);
@@ -1242,10 +1214,6 @@ export class KeyStore {
         this.selectedCoupletIds.clear();
     }
 
-    public setSelectionToSingle(coupletId: number): void {
-        this.selectedCoupletIds.clear();
-        this.selectedCoupletIds.add(coupletId);
-    }
 
     public setSelectionBatch(coupletIds: number[] | Set<number>): void {
         this.selectedCoupletIds = new Set(coupletIds);
