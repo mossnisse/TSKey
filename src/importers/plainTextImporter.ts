@@ -529,6 +529,13 @@ async function confirmImport(store: KeyStore, uiState: UIStateStore, refreshAll:
     const titleInput = getEl<HTMLInputElement>('pt-import-title');
     const targetName = (titleInput?.value.trim()) || 'Imported Key';
 
+    // Importing replaces the open key — guard unsaved work like Load/New do.
+    if (store.hasUnsavedChanges()) {
+        if (!confirm("You have unsaved changes in the current key. Importing will discard them. Continue?")) {
+            return;
+        }
+    }
+
     const originalTitle = store.getPersistedTitle();
 
     try {

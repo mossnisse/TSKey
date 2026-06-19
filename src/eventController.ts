@@ -730,8 +730,13 @@ function setupDialogs(store: KeyStore, refreshAll: () => void, signal: AbortSign
                     const currentOpenName = store.getProjectName();
 
                     if (currentOpenName === projectName) {
-                        await store.createNewProject('Untitled Key');
-                        await store.saveToStorage(); // Persist baseline
+                        const remaining = await workspaceStorage.getProjectList();
+                        if (remaining.length > 0) {
+                            await store.loadProject(remaining[0].name);
+                        } else {
+                            await store.createNewProject('Untitled Key');
+                            await store.saveToStorage(); // Persist baseline
+                        }
                     }
 
                     await refreshHubView(store);
@@ -864,6 +869,14 @@ function setupFileMenu(store: KeyStore, refreshAll: () => void, signal: AbortSig
     hiddenInput?.addEventListener('change', async (e) => {
         const file = (e.target as HTMLInputElement).files?.[0];
         if (!file) return;
+
+        // Importing replaces the open key — guard unsaved work like Load/New do.
+        if (store.hasUnsavedChanges()) {
+            if (!confirm("You have unsaved changes in the current key. Importing will discard them. Continue?")) {
+                if (hiddenInput) hiddenInput.value = '';
+                return;
+            }
+        }
 
         // Keep track of original title in case we need to roll back on an error
         const originalTitle = store.getPersistedTitle();

@@ -1135,14 +1135,6 @@ export class KeyStore {
         return false;
     }
 
-    public async deleteProject(title: string): Promise<void> {
-        await workspaceStorage.deleteProject(title);
-
-        if (this.state.title === title) {
-            await this.createNewProject('Untitled Key');
-        }
-    }
-
     public async saveToStorage(): Promise<void> {
         const isRename = this.persistedTitle && this.persistedTitle !== this.state.title;
         const oldTitle = this.persistedTitle;
