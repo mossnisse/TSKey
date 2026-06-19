@@ -245,17 +245,17 @@ export function initializeShell(appDiv: HTMLDivElement) {
               <tr><td>Open Local Workspace Hub Window</td><td><code>${IS_MAC ? '⌘ + O' : 'Ctrl + O'}</code></td></tr>
               <tr><td>Save Current Key changes</td><td><code>${IS_MAC ? '⌘ + S' : 'Ctrl + S'}</code></td></tr>
               <tr><td>Save Current Key under alternative title</td><td><code>Shift + ${IS_MAC ? '⌘ + S' : 'Ctrl + S'}</code></td></tr>
-              <tr><td>Select All Step Cards</td><td><code>${IS_MAC ? '⌘ + A' : 'Ctrl + A'}</code></td></tr>
-              <tr><td>Cut Selected Step Cards</td><td><code>${IS_MAC ? '⌘ + X' : 'Ctrl + X'}</code></td></tr>
-              <tr><td>Copy Selected Step Cards</td><td><code>${IS_MAC ? '⌘ + C' : 'Ctrl + C'}</code></td></tr>
-              <tr><td>Paste Step Cards Below selected steps</td><td><code>${IS_MAC ? '⌘ + V' : 'Ctrl + V'}</code></td></tr>
-              <tr><td>Paste Step Cards Above selected steps</td><td><code>Shift + ${IS_MAC ? 'Shift + ⌘ + V' : 'Shift + Ctrl + V'}</code></td></tr>
-              <tr><td>Append New Step Card</td><td><code>Alt + N</code></td></tr>
-              <tr><td>Swap Alternative Rows in selected steps</td><td><code>Alt + S</code></td></tr>
+              <tr><td>Select All Key  Steps</td><td><code>${IS_MAC ? '⌘ + A' : 'Ctrl + A'}</code></td></tr>
+              <tr><td>Cut Selected Key Step</td><td><code>${IS_MAC ? '⌘ + X' : 'Ctrl + X'}</code></td></tr>
+              <tr><td>Copy Selected Key Steps</td><td><code>${IS_MAC ? '⌘ + C' : 'Ctrl + C'}</code></td></tr>
+              <tr><td>Paste Key Step Below selected steps</td><td><code>${IS_MAC ? '⌘ + V' : 'Ctrl + V'}</code></td></tr>
+              <tr><td>Paste Key Step Above selected steps</td><td><code>Shift + ${IS_MAC ? 'Shift + ⌘ + V' : 'Shift + Ctrl + V'}</code></td></tr>
+              <tr><td>Append New Key Step</td><td><code>Alt + N</code></td></tr>
+              <tr><td>Swap Alternative Rows in selected key steps</td><td><code>Alt + S</code></td></tr>
               <tr><td>Undo Last Action</td><td><code>${IS_MAC ? '⌘ + Z' : 'Ctrl + Z'}</code></td></tr>
               <tr><td>Redo Action</td><td><code>${IS_MAC ? '⌘ + Y' : 'Ctrl + Y'}</code></td></tr>
-              <tr><td>Delete Selected step cards</td><td><code>Delete</code> / <code>Backspace</code></td></tr>
-              <tr><td>Deselect all step cards</td><td><code>Escape</code></td></tr>
+              <tr><td>Delete Selected Key Steps</td><td><code>Delete</code> / <code>Backspace</code></td></tr>
+              <tr><td>Deselect all key step and figure references</td><td><code>Escape</code></td></tr>
             </tbody>
           </table>
         </div>
@@ -312,7 +312,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
         <label class="import-option"><input type="checkbox" id="pt-opt-ws" checked /> Spaces/Tab separator</label>
         <label class="import-option"><input type="checkbox" id="pt-opt-lettered" checked /> Lettered (1a/1b)</label>
         <label class="import-option"><input type="checkbox" id="pt-opt-dash" checked /> Dash second line</label>
-        <label class="import-option"><input type="checkbox" id="pt-opt-fill" checked /> Fill missing couplets</label>
+        <label class="import-option"><input type="checkbox" id="pt-opt-fill" checked /> Fill missing key steps</label>
         <label class="import-option import-option-num">Min leader dots
           <input type="number" id="pt-opt-min-dots" min="2" max="10" step="1" value="3" />
         </label>
@@ -613,7 +613,7 @@ export function renderEditorCards(store: KeyStore) {
                   <span class="drag-handle">☰</span>
                 </div>
                 <div class="card-row">
-                  <textarea class="input-sync card-textarea" data-field="alt1" placeholder="Enter diagnostic trait details...">${escapeHTML(store.decodeTextReferencesForEditor(couplet.alt1))}</textarea>
+                  <textarea class="input-sync card-textarea" data-field="alt1" placeholder="Enter diagnostic trait details [fig:1]...">${escapeHTML(store.decodeTextReferencesForEditor(couplet.alt1))}</textarea>
                   <div class="card-meta-pane">
                     <label class="meta-label">→
                       <input type="text" class="input-sync input-destination ${dest1.isUnresolved ? 'input-error' : ''}" data-field="dest1" placeholder="Taxon or Step #" value="${escapeHTML(dest1.inputValue)}" />

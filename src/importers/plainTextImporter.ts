@@ -207,11 +207,11 @@ function accToBranch(link: number, taxa: string, present: Set<number>): Branch {
     if (link) {
         return present.has(link)
             ? { kind: 'linked', targetId: link }
-            : { kind: 'unresolved', step: link };
+            : { kind: 'unresolved', couplet: link };
     }
     const trimmed = taxa.trim();
     if (trimmed === '') return { kind: 'empty' };
-    if (/^\d+$/.test(trimmed)) return { kind: 'unresolved', step: parseInt(trimmed, 10) };
+    if (/^\d+$/.test(trimmed)) return { kind: 'unresolved', couplet: parseInt(trimmed, 10) };
     return { kind: 'taxon', name: trimmed };
 }
 
@@ -344,7 +344,7 @@ export function parsePlainTextKey(
             if (!byNum.has(i)) { ensure(i); generated++; }
         }
         if (generated > 0) {
-            warnings.push(`Generated ${generated} empty couplet(s) to fill gaps so links resolve.`);
+            warnings.push(`Generated ${generated} empty key step(s) to fill gaps so links resolve.`);
         }
     }
 
@@ -489,7 +489,7 @@ function renderPreviewHtml(result: PlainTextParseResult): string {
                 return step !== undefined ? `→ step ${step}` : '→ ?';
             }
             case 'unresolved':
-                return `→ step ${branch.step}`;
+                return `→ step ${branch.couplet}`;
             case 'taxon':
                 return escapeHTML(branch.name);
             case 'empty':

@@ -10,6 +10,26 @@ export interface ProjectRecord {
 }
 
 /**
+ * Resolves when a transaction commits; rejects on error or abort.
+ * `abortMessage` gives the abort path a contextual error for debugging.
+ */
+function txDone(tx: IDBTransaction, abortMessage: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(new Error(abortMessage));
+    });
+}
+
+/** Resolves with a single IDBRequest's result; rejects on error. */
+function reqValue<T>(request: IDBRequest<T>): Promise<T> {
+    return new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+}
+
+/**
  * PERSISTENT DISK LAYER (IndexedDB Engine)
  * Handles low-level raw browser transactions wrapped cleanly in native Promises.
  */
@@ -29,11 +49,9 @@ class IndexedDBEngine {
                 if (!db.objectStoreNames.contains(this.projectsStoreName)) {
                     db.createObjectStore(this.projectsStoreName, { keyPath: 'title' });
                 }
-
-                if (db.objectStoreNames.contains(this.figuresStoreName)) {
-                    db.deleteObjectStore(this.figuresStoreName);
+                if (!db.objectStoreNames.contains(this.figuresStoreName)) {
+                    db.createObjectStore(this.figuresStoreName);
                 }
-                db.createObjectStore(this.figuresStoreName);
             };
             request.onsuccess = () => resolve(request.result);
             request.onerror = () => reject(request.error);
@@ -51,6 +69,10 @@ class IndexedDBEngine {
         return `${projectUid}::${id}`;
     }
 
+    private parseFigureId(key: string): number {
+        return parseInt(key.substring(key.lastIndexOf('::') + 2), 10);
+    }
+
     private getProjectKeyRange(projectUid: string): IDBKeyRange {
         const prefix = `${projectUid}::`;
         const upper = prefix.substring(0, prefix.length - 1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
@@ -59,81 +81,54 @@ class IndexedDBEngine {
 
     public async getProjectList(): Promise<{ name: string, lastModified: number }[]> {
         const db = await this.getDB();
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(this.projectsStoreName, 'readonly');
-            const store = tx.objectStore(this.projectsStoreName);
-            const request = store.getAll();
+        const tx = db.transaction(this.projectsStoreName, 'readonly');
+        const records = await reqValue(tx.objectStore(this.projectsStoreName).getAll() as IDBRequest<ProjectRecord[]>);
 
-            request.onsuccess = () => {
-                const records = request.result as ProjectRecord[];
-                const projects = records.map((p) => ({
-                    name: p.title,
-                    lastModified: p.lastModified
-                }));
-                projects.sort((a, b) => b.lastModified - a.lastModified);
-                resolve(projects);
-            };
-            request.onerror = () => reject(request.error);
-        });
+        return records
+            .map((p) => ({ name: p.title, lastModified: p.lastModified }))
+            .sort((a, b) => b.lastModified - a.lastModified);
     }
 
     public async saveProject(title: string, projectUid: string, key: Couplet[], figures: Figure[]): Promise<void> {
         const db = await this.getDB();
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(this.projectsStoreName, 'readwrite');
-            const store = tx.objectStore(this.projectsStoreName);
+        const tx = db.transaction(this.projectsStoreName, 'readwrite');
 
-            store.put({
-                title,
-                projectUid,
-                dichotomousKey: key,
-                figures,
-                lastModified: Date.now()
-            });
-
-            // Resolving on complete ensures that data is successfully committed to disk
-            tx.oncomplete = () => resolve();
-            tx.onerror = () => reject(tx.error);
-            tx.onabort = () => reject(new Error(`Transaction aborted while saving project: ${title}`));
+        tx.objectStore(this.projectsStoreName).put({
+            title,
+            projectUid,
+            dichotomousKey: key,
+            figures,
+            lastModified: Date.now()
         });
+
+        // Resolving on complete ensures that data is successfully committed to disk
+        return txDone(tx, `Transaction aborted while saving project: ${title}`);
     }
 
     public async loadProject(title: string): Promise<ProjectRecord | null> {
         const db = await this.getDB();
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(this.projectsStoreName, 'readonly');
-            const store = tx.objectStore(this.projectsStoreName);
-            const request = store.get(title);
-            
-            request.onsuccess = () => resolve((request.result as ProjectRecord) || null);
-            request.onerror = () => reject(request.error);
-        });
+        const tx = db.transaction(this.projectsStoreName, 'readonly');
+        const result = await reqValue(tx.objectStore(this.projectsStoreName).get(title) as IDBRequest<ProjectRecord | undefined>);
+        return result || null;
     }
 
     public async deleteProject(title: string, projectUid: string): Promise<void> {
         const db = await this.getDB();
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction([this.projectsStoreName, this.figuresStoreName], 'readwrite');
+        const tx = db.transaction([this.projectsStoreName, this.figuresStoreName], 'readwrite');
 
-            const pStore = tx.objectStore(this.projectsStoreName);
-            pStore.delete(title);
+        tx.objectStore(this.projectsStoreName).delete(title);
 
-            const fStore = tx.objectStore(this.figuresStoreName);
-            const range = this.getProjectKeyRange(projectUid);
-            const cursorReq = fStore.openCursor(range);
+        const fStore = tx.objectStore(this.figuresStoreName);
+        const cursorReq = fStore.openCursor(this.getProjectKeyRange(projectUid));
+        cursorReq.onsuccess = (e) => {
+            const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
+            if (cursor) {
+                cursor.delete();
+                cursor.continue();
+            }
+        };
 
-            cursorReq.onsuccess = (e) => {
-                const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
-                if (cursor) {
-                    cursor.delete();
-                    cursor.continue();
-                }
-            };
-
-            tx.oncomplete = () => resolve();
-            tx.onerror = () => reject(tx.error);
-            tx.onabort = () => reject(new Error(`Project deletion aborted for: ${title}`));
-        });
+        return txDone(tx, `Project deletion aborted for: ${title}`);
     }
 
     /**
@@ -142,39 +137,23 @@ class IndexedDBEngine {
      */
     public async deleteProjectRecordOnly(title: string): Promise<void> {
         const db = await this.getDB();
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(this.projectsStoreName, 'readwrite');
-            tx.objectStore(this.projectsStoreName).delete(title);
-            tx.oncomplete = () => resolve();
-            tx.onerror = () => reject(tx.error);
-            tx.onabort = () => reject(new Error(`Project record deletion aborted for: ${title}`));
-        });
+        const tx = db.transaction(this.projectsStoreName, 'readwrite');
+        tx.objectStore(this.projectsStoreName).delete(title);
+        return txDone(tx, `Project record deletion aborted for: ${title}`);
     }
 
     public async saveFigure(projectUid: string, id: number, blob: Blob): Promise<void> {
         const db = await this.getDB();
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(this.figuresStoreName, 'readwrite');
-            const store = tx.objectStore(this.figuresStoreName);
-
-            store.put(blob, this.getFigureKey(projectUid, id));
-
-            tx.oncomplete = () => resolve();
-            tx.onerror = () => reject(tx.error);
-            tx.onabort = () => reject(new Error(`Transaction aborted while saving figure ID ${id}`));
-        });
+        const tx = db.transaction(this.figuresStoreName, 'readwrite');
+        tx.objectStore(this.figuresStoreName).put(blob, this.getFigureKey(projectUid, id));
+        return txDone(tx, `Transaction aborted while saving figure ID ${id}`);
     }
 
     public async deleteFigure(projectUid: string, id: number): Promise<void> {
         const db = await this.getDB();
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(this.figuresStoreName, 'readwrite');
-            tx.objectStore(this.figuresStoreName).delete(this.getFigureKey(projectUid, id));
-
-            tx.oncomplete = () => resolve();
-            tx.onerror = () => reject(tx.error);
-            tx.onabort = () => reject(new Error(`Transaction aborted while deleting figure ID ${id}`));
-        });
+        const tx = db.transaction(this.figuresStoreName, 'readwrite');
+        tx.objectStore(this.figuresStoreName).delete(this.getFigureKey(projectUid, id));
+        return txDone(tx, `Transaction aborted while deleting figure ID ${id}`);
     }
 
     /**
@@ -183,69 +162,49 @@ class IndexedDBEngine {
      */
     public async cleanupOrphanFigures(projectUid: string, activeIds: Set<number>): Promise<void> {
         const db = await this.getDB();
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(this.figuresStoreName, 'readwrite');
-            const store = tx.objectStore(this.figuresStoreName);
-            const range = this.getProjectKeyRange(projectUid);
-            const cursorReq = store.openCursor(range);
+        const tx = db.transaction(this.figuresStoreName, 'readwrite');
+        const cursorReq = tx.objectStore(this.figuresStoreName).openCursor(this.getProjectKeyRange(projectUid));
 
-            cursorReq.onsuccess = (e) => {
-                const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
-                if (cursor) {
-                    const key = cursor.key as string;
-                    const idParts = key.split('::');
-                    const id = parseInt(idParts[idParts.length - 1], 10);
+        cursorReq.onsuccess = (e) => {
+            const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
+            if (cursor) {
+                const id = this.parseFigureId(cursor.key as string);
 
-                    if (!activeIds.has(id)) {
-                        cursor.delete();
-                    }
-                    cursor.continue();
+                if (!activeIds.has(id)) {
+                    cursor.delete();
                 }
-                // FIXED: Removed the dual-resolving "else" block.
-            };
-            
-            cursorReq.onerror = () => reject(cursorReq.error);
-            tx.oncomplete = () => resolve(); // Safely single-resolves here
-            tx.onerror = () => reject(tx.error);
-            tx.onabort = () => reject(new Error(`Orphan cleanup transaction aborted for project: ${projectUid}`));
-        });
+                cursor.continue();
+            }
+        };
+
+        return txDone(tx, `Orphan cleanup transaction aborted for project: ${projectUid}`);
     }
 
     public async getFigure(projectUid: string, id: number): Promise<Blob | null> {
         const db = await this.getDB();
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(this.figuresStoreName, 'readonly');
-            const store = tx.objectStore(this.figuresStoreName);
-            const request = store.get(this.getFigureKey(projectUid, id));
-            
-            request.onsuccess = () => resolve((request.result as Blob) || null);
-            request.onerror = () => reject(request.error);
-        });
+        const tx = db.transaction(this.figuresStoreName, 'readonly');
+        const result = await reqValue(tx.objectStore(this.figuresStoreName).get(this.getFigureKey(projectUid, id)) as IDBRequest<Blob | undefined>);
+        return result || null;
     }
 
     public async cloneProjectFigures(oldUid: string, newUid: string): Promise<void> {
         const db = await this.getDB();
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(this.figuresStoreName, 'readwrite');
-            const store = tx.objectStore(this.figuresStoreName);
-            const range = this.getProjectKeyRange(oldUid);
-            const cursorReq = store.openCursor(range);
+        const tx = db.transaction(this.figuresStoreName, 'readwrite');
+        const store = tx.objectStore(this.figuresStoreName);
+        const cursorReq = store.openCursor(this.getProjectKeyRange(oldUid));
 
-            cursorReq.onsuccess = (e) => {
-                const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
-                if (cursor) {
-                    const key = cursor.key as string;
-                    const id = key.substring(key.lastIndexOf('::') + 2);
-                    const blob = cursor.value as Blob;
+        cursorReq.onsuccess = (e) => {
+            const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
+            if (cursor) {
+                const id = this.parseFigureId(cursor.key as string);
+                const blob = cursor.value as Blob;
 
-                    store.put(blob, this.getFigureKey(newUid, parseInt(id, 10)));
-                    cursor.continue();
-                }
-            };
-            tx.oncomplete = () => resolve();
-            tx.onerror = () => reject(tx.error);
-            tx.onabort = () => reject(new Error(`Cloning figures transaction aborted from "${oldUid}" to "${newUid}"`));
-        });
+                store.put(blob, this.getFigureKey(newUid, id));
+                cursor.continue();
+            }
+        };
+
+        return txDone(tx, `Cloning figures transaction aborted from "${oldUid}" to "${newUid}"`);
     }
 
 }

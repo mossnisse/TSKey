@@ -53,7 +53,7 @@ export function exportKeyToLaTeX(store: KeyStore): void {
             mainContent = `
 \\begin{center}
   \\vspace*{2cm}
-  \\textit{\\small [The identification key is currently empty. Please add couplets in the editor to populate this document.]}
+  \\textit{\\small [The identification key is currently empty. Please add key steps in the editor to populate this document.]}
 \\end{center}`;
         } else {
             let bodyContent = '';

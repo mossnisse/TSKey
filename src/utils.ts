@@ -245,7 +245,7 @@ export function resolveDestination(branch: Branch, idToIndexMap: Map<number, num
 
         // A step number was typed before that step exists
         case 'unresolved': {
-            const stepStr = branch.step.toString();
+            const stepStr = branch.couplet.toString();
             return { inputValue: stepStr, printText: stepStr, printClass: 'error-text', isUnresolved: true };
         }
 
@@ -278,7 +278,7 @@ export function parseDestinationInput(input: string, key: readonly Couplet[]): B
             return { kind: 'linked', targetId: key[index].id };
         }
         // Target step doesn't exist yet: keep the raw number as an unresolved reference
-        return { kind: 'unresolved', step: stepNum };
+        return { kind: 'unresolved', couplet: stepNum };
     }
 
     // Descriptive textual taxon identification

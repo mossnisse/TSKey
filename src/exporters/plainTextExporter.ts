@@ -23,7 +23,7 @@ export function exportKeyToPlainText(store: KeyStore): void {
 
         // --- DICHOTOMOUS KEY COUPLETS ---
         if (key.length === 0) {
-            content += `[The identification key is currently empty. Add couplets in the editor to populate this document.]\n\n`;
+            content += `[The identification key is currently empty. Add key steps in the editor to populate this document.]\n\n`;
         }
 
         key.forEach((c, index) => {

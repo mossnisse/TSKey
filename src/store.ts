@@ -29,7 +29,7 @@ export const TITLE_STORAGE_KEY = 'dichotomous_key_title';
  */
 export type Branch =
     | { kind: 'linked'; targetId: number }
-    | { kind: 'unresolved'; step: number }
+    | { kind: 'unresolved'; couplet: number }
     | { kind: 'taxon'; name: string }
     | { kind: 'empty' };
 
@@ -388,7 +388,7 @@ export class KeyStore {
         }, 100);
 
         const nextInternalId = maxId + 1;
-        // Determine what the 1-based step number will be for the new card
+        // Determine what the 1-based step number will be for the new step
         const newStepNumber = this.state.dichotomousKey.length + 1;
 
         // Find which slot we want to auto-link (searching backwards)
@@ -412,7 +412,7 @@ export class KeyStore {
 
         // An unresolved branch that was waiting for this exact step now resolves to it
         const resolveIfWaiting = (branch: Branch): Branch =>
-            branch.kind === 'unresolved' && branch.step === newStepNumber ? linkedToNew : branch;
+            branch.kind === 'unresolved' && branch.couplet === newStepNumber ? linkedToNew : branch;
 
         const updatedKey = this.state.dichotomousKey.map((couplet, index) => {
             let updated = { ...couplet };
@@ -420,7 +420,7 @@ export class KeyStore {
             updated.branch1 = resolveIfWaiting(updated.branch1);
             updated.branch2 = resolveIfWaiting(updated.branch2);
 
-            // Apply standard backward auto-linking if this card matched an open slot
+            // Apply standard backward auto-linking if this step matched an open slot
             if (index === targetLinkIndex && targetField) {
                 updated[targetField] = linkedToNew;
             }
@@ -444,7 +444,7 @@ export class KeyStore {
 
 
     /**
-    * Pastes cards from the clipboard buffer.
+    * Pastes couplets from the clipboard buffer.
     */
     public pasteCouplets(targetId?: number, position: 'above' | 'below' = 'below'): boolean {
         if (this.clipboardBuffer.length === 0) return false;
@@ -478,7 +478,7 @@ export class KeyStore {
                 ? { kind: 'linked', targetId: idTranslationMap.get(branch.targetId)! }
                 : branch;
 
-        const newCards: Couplet[] = this.clipboardBuffer.map((item) => {
+        const newCouplets: Couplet[] = this.clipboardBuffer.map((item) => {
             return {
                 ...item,
                 id: idTranslationMap.get(item.id)!,
@@ -489,14 +489,14 @@ export class KeyStore {
 
         // Splice items into a new shallow copy of the key array
         let newKey = [...this.state.dichotomousKey];
-        newKey.splice(insertIndex, 0, ...newCards);
+        newKey.splice(insertIndex, 0, ...newCouplets);
 
         // Restore incoming links if this was a Cut operation
         if (this.clipboardMode === 'cut' && this.cutIncomingLinksBuffer.length > 0) {
             newKey = newKey.map(couplet => {
                 let updated = { ...couplet };
 
-                // Find any broken links in the buffer that belong to this specific card
+                // Find any broken links in the buffer that belong to this specific couplet
                 const linksToRestore = this.cutIncomingLinksBuffer.filter(b => b.sourceId === couplet.id);
 
                 linksToRestore.forEach(b => {
@@ -514,7 +514,7 @@ export class KeyStore {
         }
 
         this.state.dichotomousKey = newKey;
-        this.setSelectionBatch(newCards.map(c => c.id));
+        this.setSelectionBatch(newCouplets.map(c => c.id));
         this.hasUncommittedChanges = true;
 
         return true;
@@ -539,7 +539,7 @@ export class KeyStore {
         this.cutIncomingLinksBuffer = [];
 
         //  Identify incoming links, buffer them in memory, and safely sever them
-        //    while removing the selected cards from the key array.
+        //    while removing the selected couplets from the key array.
         this.state.dichotomousKey = this.state.dichotomousKey
             .filter(c => !selectedIds.has(c.id))
             .map(c => {
@@ -590,7 +590,7 @@ export class KeyStore {
     }
 
     /**
-    * Swaps alternative choices, target links, and taxa fields for all selected cards.
+    * Swaps alternative choices, target links, and taxa fields for all selected couplets.
     */
     public swapSelectedCouplets(): boolean {
         if (this.selectedCoupletIds.size === 0) return false;
@@ -687,7 +687,7 @@ export class KeyStore {
                 case 'taxon': return 0;
                 case 'linked': return calculateBranchDepth((branch as { targetId: number }).targetId);
                 // Treat the unresolved step number as its simulated depth (higher number = deeper branch)
-                case 'unresolved': return (branch as { step: number }).step || 0;
+                case 'unresolved': return (branch as { couplet: number }).couplet || 0;
                 default: return 10000; // broken/empty: count it as a long branch
             }
         };
@@ -1250,13 +1250,13 @@ export class KeyStore {
         this.selectedCoupletIds.clear();
     }
 
-    public setSelectionToSingle(cardId: number): void {
+    public setSelectionToSingle(coupletId: number): void {
         this.selectedCoupletIds.clear();
-        this.selectedCoupletIds.add(cardId);
+        this.selectedCoupletIds.add(coupletId);
     }
 
-    public setSelectionBatch(cardIds: number[] | Set<number>): void {
-        this.selectedCoupletIds = new Set(cardIds);
+    public setSelectionBatch(coupletIds: number[] | Set<number>): void {
+        this.selectedCoupletIds = new Set(coupletIds);
     }
 
     public selectAll() {
@@ -1304,13 +1304,13 @@ export class KeyStore {
             const issues: KeyValidationError[] = [];
 
             if (c.branch1.kind === 'unresolved') {
-                issues.push({ severity: 'error', message: `Choice A points to step '${c.branch1.step}' which does not exist yet.` });
+                issues.push({ severity: 'error', message: `Choice A points to step '${c.branch1.couplet}' which does not exist yet.` });
             } else if (c.branch1.kind === 'empty') {
                 issues.push({ severity: 'warning', message: 'Choice A is incomplete. Assign a Taxa or destination step.' });
             }
 
             if (c.branch2.kind === 'unresolved') {
-                issues.push({ severity: 'error', message: `Choice B points to step '${c.branch2.step}' which does not exist yet.` });
+                issues.push({ severity: 'error', message: `Choice B points to step '${c.branch2.couplet}' which does not exist yet.` });
             } else if (c.branch2.kind === 'empty') {
                 issues.push({ severity: 'warning', message: 'Choice B is incomplete. Assign a Taxa or destination step.' });
             }
@@ -1373,11 +1373,11 @@ export class KeyStore {
                 issues.push({ severity: 'warning', message: 'Orphaned: This step is unreachable from Step #1.' });
             }
             if (c.branch1.kind === 'linked') {
-                if (c.branch1.targetId === c.id) issues.push({ severity: 'error', message: 'Choice A loops directly into its own card.' });
+                if (c.branch1.targetId === c.id) issues.push({ severity: 'error', message: 'Choice A loops directly into its own key step.' });
                 else if (!idMap.has(c.branch1.targetId)) issues.push({ severity: 'error', message: 'Choice A points to an invalid or deleted step.' });
             }
             if (c.branch2.kind === 'linked') {
-                if (c.branch2.targetId === c.id) issues.push({ severity: 'error', message: 'Choice B loops directly into its own card.' });
+                if (c.branch2.targetId === c.id) issues.push({ severity: 'error', message: 'Choice B loops directly into its own key step.' });
                 else if (!idMap.has(c.branch2.targetId)) issues.push({ severity: 'error', message: 'Choice B points to an invalid or deleted step.' });
             }
 
