@@ -120,6 +120,12 @@ export function initializeShell(appDiv: HTMLDivElement) {
               <span>➕ Append New Step</span>
               <span class="menu-shortcut">Alt+N</span>
             </button>
+            <div class="menu-divider" role="separator"></div>
+            <button id="cmd-insert-figref" class="dropdown-action" role="menuitem" tabindex="-1">
+              <span>🖼️ Insert Figure Reference</span>
+              <span class="menu-shortcut">${IS_MAC ? 'Option+F' : 'Alt+F'}</span>
+            </button>
+            <div class="menu-divider" role="separator"></div>
             <button id="cmd-clear" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🧼 Clear Selections</span>
               <span class="menu-shortcut">Esc</span>
@@ -251,6 +257,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
               <tr><td>Paste Key Step Below selected steps</td><td><code>${IS_MAC ? '⌘ + V' : 'Ctrl + V'}</code></td></tr>
               <tr><td>Paste Key Step Above selected steps</td><td><code>Shift + ${IS_MAC ? 'Shift + ⌘ + V' : 'Shift + Ctrl + V'}</code></td></tr>
               <tr><td>Append New Key Step</td><td><code>Alt + N</code></td></tr>
+              <tr><td>Insert figure reference <code>[fig: ]</code> (while editing a step's text)</td><td><code>${IS_MAC ? 'Option + F' : 'Alt + F'}</code></td></tr>
               <tr><td>Swap Alternative Rows in selected key steps</td><td><code>Alt + S</code></td></tr>
               <tr><td>Undo Last Action</td><td><code>${IS_MAC ? '⌘ + Z' : 'Ctrl + Z'}</code></td></tr>
               <tr><td>Redo Action</td><td><code>${IS_MAC ? '⌘ + Y' : 'Ctrl + Y'}</code></td></tr>

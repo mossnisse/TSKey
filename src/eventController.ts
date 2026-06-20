@@ -14,6 +14,14 @@ const DEBOUNCE_TYPING_MS = 800;
 const AUTO_SCROLL_THRESHOLD_PX = 80;
 const AUTO_SCROLL_SPEED_PX = 15;
 
+// Figure-reference insertion (key editor alt1/alt2 text only).
+const FIG_REF_TOKEN = '[fig: ]';
+const FIG_REF_CARET_OFFSET = '[fig: '.length; // caret lands just after the colon+space
+
+// The alt1/alt2 textarea (and caret) most recently edited, so the menu item can
+// target it even though clicking the menu blurs the textarea.
+let lastFigureField: { el: HTMLTextAreaElement; start: number; end: number } | null = null;
+
 let refreshScheduled = false;
 
 /**
@@ -27,6 +35,43 @@ function batchedRefresh(refreshFn: () => void) {
         refreshScheduled = false;
         refreshFn();
     });
+}
+
+/** True only for the key editor's alt1/alt2 description textareas, where figure refs live. */
+function isFigureTextarea(el: EventTarget | null): el is HTMLTextAreaElement {
+    return el instanceof HTMLTextAreaElement
+        && (el.dataset.field === 'alt1' || el.dataset.field === 'alt2')
+        && el.closest('.key-card') !== null;
+}
+
+/** Resolves the textarea to insert into: the focused one, else the last one edited. */
+function resolveFigureTarget(): { el: HTMLTextAreaElement; start: number; end: number } | null {
+    const active = document.activeElement;
+    if (isFigureTextarea(active)) {
+        return { el: active, start: active.selectionStart ?? 0, end: active.selectionEnd ?? 0 };
+    }
+    if (lastFigureField && document.body.contains(lastFigureField.el)) {
+        return lastFigureField;
+    }
+    return null;
+}
+
+/**
+ * Inserts a "[fig: ]" reference skeleton at the caret/selection of a key-step
+ * textarea and parks the caret just after the colon, ready for a figure number.
+ * Dispatches `input` so the store syncs and the edit is captured for undo.
+ */
+function insertFigureReference(el: HTMLTextAreaElement, start: number, end: number): void {
+    const value = el.value;
+    const from = Math.min(Math.max(start, 0), value.length);
+    const to = Math.min(Math.max(end, from), value.length);
+
+    el.value = value.slice(0, from) + FIG_REF_TOKEN + value.slice(to);
+
+    const caret = from + FIG_REF_CARET_OFFSET;
+    el.focus();
+    el.setSelectionRange(caret, caret);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 /** Refreshes and populates rows inside the workspace project selector hub. */
@@ -53,6 +98,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
     setupDialogs(store, uiState, refreshAll, signal);
     setupFileMenu(store, uiState, refreshAll, signal);
     setupEditMenu(store, uiState, refreshAll, signal);
+    setupFigureReference(keyContainer, signal);
     setupMenuBarNavigation(signal);
 
     return () => {
@@ -1137,6 +1183,35 @@ function setupEditMenu(store: KeyStore, uiState: UIStateStore, refreshAll: () =>
     }, { signal });
 }
 
+/**
+ * Figure-reference tool: remembers the last alt1/alt2 caret (so the menu item can
+ * target it after the click steals focus) and wires the Insert Figure Reference
+ * menu command. The keyboard shortcut (Alt+F) lives in setupKeyboardShortcuts.
+ */
+function setupFigureReference(keyContainer: HTMLElement, signal: AbortSignal) {
+    // Keep the last alt1/alt2 caret fresh from any interaction, so the menu item can
+    // target it after the click moves focus away (focusout alone is unreliable, and
+    // never fires for keyboard-only callers).
+    const captureCaret = (e: Event) => {
+        if (isFigureTextarea(e.target)) {
+            const t = e.target as HTMLTextAreaElement;
+            lastFigureField = { el: t, start: t.selectionStart ?? 0, end: t.selectionEnd ?? 0 };
+        }
+    };
+    (['focusout', 'keyup', 'mouseup', 'input', 'select'] as const).forEach(type =>
+        keyContainer.addEventListener(type, captureCaret, { signal })
+    );
+
+    document.querySelector('#cmd-insert-figref')?.addEventListener('click', () => {
+        const target = resolveFigureTarget();
+        if (!target) {
+            showToast('Click into a key step description first, then insert a figure reference.', 'error');
+            return;
+        }
+        insertFigureReference(target.el, target.start, target.end);
+    }, { signal });
+}
+
 /** Menu bar mouse toggling and full keyboard navigation (arrows / Enter / Escape). */
 function setupMenuBarNavigation(signal: AbortSignal) {
     const menuBar = document.querySelector('.app-menu-bar') as HTMLElement;
@@ -1277,6 +1352,14 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
             activeElement.tagName === 'TEXTAREA' ||
             activeElement.hasAttribute('contenteditable')
         );
+
+        // Insert a figure reference — only while editing a key step's alt1/alt2 text.
+        // Uses e.code so Option+F on macOS (which types 'ƒ') still resolves to the F key.
+        if (e.altKey && !hasModifier && !e.shiftKey && e.code === 'KeyF' && isFigureTextarea(activeElement)) {
+            e.preventDefault();
+            insertFigureReference(activeElement, activeElement.selectionStart ?? 0, activeElement.selectionEnd ?? 0);
+            return;
+        }
 
         // Global lifecycle overrides (Available even when focus sits inside active text fields)
         if (hasModifier && e.key.toLowerCase() === 's') {
