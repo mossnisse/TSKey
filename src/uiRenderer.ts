@@ -81,8 +81,8 @@ export function initializeShell(appDiv: HTMLDivElement) {
         </div>
 
         <div class="menu-item" role="none">
-          <button class="menu-trigger" role="menuitem" aria-haspopup="menu" aria-expanded="false">Edit</button>
-          <div class="menu-dropdown" role="menu">
+          <button id="menu-edit-trigger" class="menu-trigger" role="menuitem" aria-haspopup="menu" aria-expanded="false">Edit</button>
+          <div class="menu-dropdown" role="menu" aria-labelledby="menu-edit-trigger">
             <button id="cmd-undo" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🔄 Undo</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘Z' : 'Ctrl+Z'}</span>
@@ -138,8 +138,8 @@ export function initializeShell(appDiv: HTMLDivElement) {
         </div>
 
         <div class="menu-item" role="none">
-          <button class="menu-trigger" role="menuitem" aria-haspopup="menu" aria-expanded="false">View</button>
-          <div class="menu-dropdown" role="menu">
+          <button id="menu-view-trigger" class="menu-trigger" role="menuitem" aria-haspopup="menu" aria-expanded="false">View</button>
+          <div class="menu-dropdown" role="menu" aria-labelledby="menu-view-trigger">
             <button id="cmd-toggle-figures" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🖼️ Hide Figures Panel</span>
               <span class="menu-shortcut">Ctrl+Shift+F</span>
@@ -155,8 +155,8 @@ export function initializeShell(appDiv: HTMLDivElement) {
         </div>
 
         <div class="menu-item" role="none">
-          <button class="menu-trigger" role="menuitem" aria-haspopup="menu" aria-expanded="false">Tools</button>
-          <div class="menu-dropdown" role="menu">
+          <button id="menu-tools-trigger" class="menu-trigger" role="menuitem" aria-haspopup="menu" aria-expanded="false">Tools</button>
+          <div class="menu-dropdown" role="menu" aria-labelledby="menu-tools-trigger">
             <button id="cmd-reorder-couplets" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🔄 Order Steps</span>
             </button>
@@ -167,8 +167,8 @@ export function initializeShell(appDiv: HTMLDivElement) {
         </div>
 
         <div class="menu-item" role="none">
-          <button class="menu-trigger" role="menuitem" aria-haspopup="menu" aria-expanded="false">Window</button>
-          <div class="menu-dropdown" role="menu">
+          <button id="menu-window-trigger" class="menu-trigger" role="menuitem" aria-haspopup="menu" aria-expanded="false">Window</button>
+          <div class="menu-dropdown" role="menu" aria-labelledby="menu-window-trigger">
             <button id="cmd-open-shortcuts" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>⌨️ Keyboard Shortcuts...</span>
             </button>
@@ -182,16 +182,10 @@ export function initializeShell(appDiv: HTMLDivElement) {
           </div>
         </div>
 
-        <div class="menu-title-container" style="margin-left: auto; display: flex; align-items: center; padding-right: 12px;">
-          <label for="key-title-input" style="color: #fff; font-size: 12px; margin-right: 8px; font-weight: 500;">Title:</label>
-          <input 
-            type="text" 
-            id="key-title-input" 
-            class="key-title-input" 
-            placeholder="Untitled Key"
-           style="background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); color: black; padding: 4px 8px; border-radius: 4px; font-size: 13px; width: 220px;" 
-        />
-    </div>
+        <div class="menu-title-container">
+          <label for="key-title-input" class="menu-title-label">Title:</label>
+          <input type="text" id="key-title-input" class="key-title-input" placeholder="Untitled Key" />
+        </div>
 
         <input type="file" id="file-import-hidden" accept=".tskey,.json" />
       </div>
@@ -218,27 +212,26 @@ export function initializeShell(appDiv: HTMLDivElement) {
       </div>
     </div>
 
-    <div id="modal-open-project" class="modal-overlay" style="display: none;">
-      <div class="modal-window" style="max-width: 520px;">
+    <div id="modal-open-project" class="modal-overlay" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="modal-open-project-title">
+      <div class="modal-window hub-modal-window">
         <div class="modal-header">
-          <h3>📂 Open Key Workspace</h3>
+          <h3 id="modal-open-project-title">📂 Open Key Workspace</h3>
           <button id="modal-project-close" class="modal-close-x">&times;</button>
         </div>
         <div class="modal-body">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-            <span style="font-size: 13px; color: var(--color-text-muted);">Stored browser keys:</span>
-            <button id="btn-hub-import" class="btn btn-secondary" style="font-size: 12px; padding: 4px 10px;">+ Import File</button>
+          <div class="hub-toolbar">
+            <span class="hub-toolbar-label">Stored browser keys:</span>
+            <button id="btn-hub-import" class="btn btn-secondary btn-hub-import">+ Import File</button>
           </div>
-          <div id="project-hub-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto; padding-right: 4px;">
-             </div>
+          <div id="project-hub-list"></div>
         </div>
       </div>
     </div>
 
-    <div id="modal-shortcuts" class="modal-overlay">
+    <div id="modal-shortcuts" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-shortcuts-title">
       <div class="modal-window">
         <div class="modal-header">
-          <h3>⌨️ Keyboard Shortcuts</h3>
+          <h3 id="modal-shortcuts-title">⌨️ Keyboard Shortcuts</h3>
           <button id="modal-shortcuts-close" class="modal-close-x">&times;</button>
         </div>
         <div class="modal-body">
@@ -269,10 +262,10 @@ export function initializeShell(appDiv: HTMLDivElement) {
       </div>
     </div>
 
-    <div id="modal-options" class="modal-overlay">
+    <div id="modal-options" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-options-title">
       <div class="modal-window">
         <div class="modal-header">
-          <h3>🔧 Options & Settings</h3>
+          <h3 id="modal-options-title">🔧 Options & Settings</h3>
           <button id="modal-options-close" class="modal-close-x">&times;</button>
         </div>
         <div class="modal-body">
@@ -315,10 +308,10 @@ export function initializeShell(appDiv: HTMLDivElement) {
       </div>
     </div>
 
-    <div id="modal-about" class="modal-overlay">
+    <div id="modal-about" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-about-title">
       <div class="modal-window about-modal-window">
         <div class="modal-header">
-          <h3>ℹ️ About</h3>
+          <h3 id="modal-about-title">ℹ️ About</h3>
           <button id="modal-about-close" class="modal-close-x">&times;</button>
         </div>
         <div class="modal-body about-modal-body">
@@ -466,6 +459,7 @@ export function renderMenu(store: KeyStore, uiState: UIStateStore) {
 
     // Tools Submenu Action items
     const reorderBtn = getBtn('cmd-reorder-couplets');
+    const reorderFiguresBtn = getBtn('cmd-reorder-figures');
 
     if (saveBtn) {
         saveBtn.classList.toggle('has-unsaved-changes', isUnsaved);
@@ -489,6 +483,8 @@ export function renderMenu(store: KeyStore, uiState: UIStateStore) {
     if (pasteBtnAbove) pasteBtnAbove.disabled = !hasClipboard;
 
     if (reorderBtn) reorderBtn.disabled = !hasKeyElements;
+    // Ordering figures needs both a key to scan and figures to order (see autoOrderFigures).
+    if (reorderFiguresBtn) reorderFiguresBtn.disabled = !hasKeyElements || store.getFigures().length === 0;
 
     // View submenus
     const toggleFiguresBtn = getBtn('cmd-toggle-figures');
@@ -516,8 +512,7 @@ export function renderMenu(store: KeyStore, uiState: UIStateStore) {
         }
     }
 
-    // update key title from the menu bar #key-title-input
-    // where should it be in the code?
+    // Keep the menu-bar title input in sync with the store (without stealing focus).
     const appShell = document.querySelector('.app-shell') as HTMLElement;
     if (appShell) {
         syncField(appShell, '#key-title-input', store.getTitle());
@@ -532,37 +527,23 @@ export function renderProjectHubList(projects: Array<{ name: string; lastModifie
     if (!container) return;
 
     if (projects.length === 0) {
-        container.innerHTML = `
-            <div style="text-align: center; color: var(--color-text-muted); padding: 24px 12px; font-size: 13px; border: 1px dashed var(--color-border); border-radius: var(--radius-md);">
-                No keys saved inside local browser memory yet.
-            </div>`;
+        container.innerHTML = `<div class="hub-empty">No keys saved inside local browser memory yet.</div>`;
         return;
     }
 
     container.innerHTML = projects.map(proj => {
         const isCurrent = proj.name === currentProjectName;
         const dateString = new Date(proj.lastModified).toLocaleString();
+        const safeName = escapeHTML(proj.name);
+        const activeTag = isCurrent ? ' <small class="hub-item-active-tag">(active)</small>' : '';
 
         return `
-            <div class="project-hub-item" data-name="${escapeHTML(proj.name)}" 
-                 style="display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; 
-                        border: 1px solid ${isCurrent ? 'var(--color-primary)' : 'var(--color-border-light)'}; 
-                        background: ${isCurrent ? 'var(--color-primary-light)' : 'var(--color-bg)'}; 
-                        border-radius: var(--radius-md); transition: var(--transition-base);">
-                <div class="hub-item-clickable-zone" data-action="load" data-name="${escapeHTML(proj.name)}"
-                     style="cursor: pointer; flex: 1; display: flex; flex-direction: column; gap: 2px;">
-                    <span style="font-weight: ${isCurrent ? '700' : '500'}; color: var(--color-text); font-size: 14px;">
-                        ${escapeHTML(proj.name)} ${isCurrent ? '<small style="color: var(--color-primary); margin-left: 4px; font-weight: normal;">(active)</small>' : ''}
-                    </span>
-                    <span style="font-size: 11px; color: var(--color-text-muted);">Last saved: ${dateString}</span>
+            <div class="project-hub-item${isCurrent ? ' is-current' : ''}" data-name="${safeName}">
+                <div class="hub-item-clickable-zone" data-action="load" data-name="${safeName}">
+                    <span class="hub-item-name">${safeName}${activeTag}</span>
+                    <span class="hub-item-date">Last saved: ${dateString}</span>
                 </div>
-                <button class="btn-hub-delete" data-action="delete" data-name="${escapeHTML(proj.name)}" 
-                        style="background: transparent; border: none; color: var(--color-text-muted); 
-                               cursor: pointer; font-size: 18px; padding: 4px 8px; line-height: 1; 
-                               border-radius: var(--radius-sm); transition: var(--transition-base);" 
-                        title="Delete from local database"
-                        onmouseover="this.style.color='var(--color-danger)';this.style.backgroundColor='var(--color-danger-light)'"
-                        onmouseout="this.style.color='var(--color-text-muted)';this.style.backgroundColor='transparent'">&times;</button>
+                <button class="btn-hub-delete" data-action="delete" data-name="${safeName}" title="Delete from local database">&times;</button>
             </div>
         `;
     }).join('');
@@ -661,7 +642,7 @@ export function renderEditorCards(store: KeyStore) {
                   <span class="drag-handle">☰</span>
                 </div>
                 <div class="card-row">
-                  <textarea class="input-sync card-textarea" data-field="alt1" placeholder="Enter diagnostic trait details [fig:1]...">${escapeHTML(store.decodeTextReferencesForEditor(couplet.alt1))}</textarea>
+                  <textarea class="input-sync card-textarea" data-field="alt1" placeholder="Enter diagnostic trait details [fig: 1]...">${escapeHTML(store.decodeTextReferencesForEditor(couplet.alt1))}</textarea>
                   <div class="card-meta-pane">
                     <label class="meta-label">→
                       <input type="text" class="input-sync input-destination ${dest1.isUnresolved ? 'input-error' : ''}" data-field="dest1" placeholder="Taxon or Step #" value="${escapeHTML(dest1.inputValue)}" />

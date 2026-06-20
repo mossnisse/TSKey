@@ -174,7 +174,7 @@ function setupCoupletInput(keyContainer: HTMLElement, store: KeyStore, uiState: 
         });
 
         // Synchronize the text change immediately to the store without waiting
-        let updatePayload: Partial<Omit<Couplet, 'id'>> = {};
+        const updatePayload: Partial<Omit<Couplet, 'id'>> = {};
         const currentValue = target.value;
         type CoupletStringField = 'alt1' | 'alt2';
 
@@ -287,8 +287,7 @@ function setupCoupletFocus(keyContainer: HTMLElement, store: KeyStore, uiState: 
                 const isClickingControl = destination instanceof Element && (
                     destination.closest('.key-card') ||
                     destination.closest('.app-menu-bar') ||
-                    destination.closest('#add-couplet-btn') ||
-                    destination.closest('#control-panel-modal')
+                    destination.closest('#add-couplet-btn')
                 );
 
                 if (!isClickingControl) {
@@ -352,7 +351,6 @@ function setupCoupletDragAndDrop(keyContainer: HTMLElement, store: KeyStore, ref
 
         const id = Number(card.getAttribute('data-id'));
         store.startDraggingCouplet(id);
-        card.classList.remove('is-hovered', 'is-active');
         requestAnimationFrame(() => {
             card.style.opacity = '0.4';
         });
@@ -523,8 +521,7 @@ function setupFigurePanel(store: KeyStore, uiState: UIStateStore, refreshAll: ()
                     destination.closest('.figure-card') ||
                     destination.closest('.key-card') ||
                     destination.closest('.app-menu-bar') ||
-                    destination.closest('#add-figure-btn') ||
-                    destination.closest('#control-panel-modal')
+                    destination.closest('#add-figure-btn')
                 );
 
                 // Force an immediate structural refresh unless clicking an active app controller
@@ -622,7 +619,6 @@ function setupFigureDragAndDrop(figureContainer: HTMLElement, store: KeyStore, r
         if (!card) return;
 
         draggedFigId = Number(card.getAttribute('data-id'));
-        card.classList.remove('is-hovered', 'is-active');
         requestAnimationFrame(() => {
             card.style.opacity = '0.4';
         });
@@ -718,23 +714,28 @@ function setupDialogs(store: KeyStore, uiState: UIStateStore, refreshAll: () => 
         batchedRefresh(refreshAll);
     }, { signal });
 
+    // Show a modal and move focus into it for keyboard users (Tab is then trapped
+    // inside it by setupKeyboardShortcuts).
+    const openModal = (modal: HTMLElement) => {
+        modal.style.display = 'flex';
+        modal.querySelector<HTMLElement>('button, input:not([disabled]), [tabindex]:not([tabindex="-1"])')?.focus();
+    };
+
     // --- DIALOG MODAL OPEN TRIGGERS ---
     document.getElementById('cmd-open-shortcuts')?.addEventListener('click', () => {
-        modalShortcuts.style.display = 'flex';
+        openModal(modalShortcuts);
     }, { signal });
     document.getElementById('cmd-open-options')?.addEventListener('click', () => {
         syncOptionControls();
-        modalOptions.style.display = 'flex';
+        openModal(modalOptions);
     }, { signal });
     document.getElementById('cmd-open-about')?.addEventListener('click', () => {
-        modalAbout.style.display = 'flex';
+        openModal(modalAbout);
     }, { signal });
 
     document.getElementById('cmd-open-dialog')?.addEventListener('click', async () => {
-        if (modalProjectHub) {
-            modalProjectHub.style.display = 'flex';
-            await refreshHubView(store);
-        }
+        openModal(modalProjectHub);
+        await refreshHubView(store);
     }, { signal });
 
     // --- DIALOG MODAL CLOSE TRIGGERS ---
@@ -748,7 +749,7 @@ function setupDialogs(store: KeyStore, uiState: UIStateStore, refreshAll: () => 
         modalAbout.style.display = 'none';
     }, { signal });
     document.getElementById('modal-project-close')?.addEventListener('click', () => {
-        if (modalProjectHub) modalProjectHub.style.display = 'none';
+        modalProjectHub.style.display = 'none';
     }, { signal });
 
     // --- PROJECT WORKSPACE HUB ROW ACTIONS ---
@@ -772,7 +773,7 @@ function setupDialogs(store: KeyStore, uiState: UIStateStore, refreshAll: () => 
 
                 await store.loadProject(projectName);
 
-                if (modalProjectHub) modalProjectHub.style.display = 'none';
+                modalProjectHub.style.display = 'none';
                 showToast(`📂 Swapped to workspace: "${projectName}"`, "success");
                 batchedRefresh(refreshAll);
             } catch (error) {
@@ -936,6 +937,13 @@ function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll: () =>
     hiddenInput?.addEventListener('change', async (e) => {
         const file = (e.target as HTMLInputElement).files?.[0];
         if (!file) return;
+
+        // Guard re-entrancy from any trigger (menu import or hub "+ Import File").
+        if (isImporting) {
+            showToast("⚠️ An import is currently in progress. Please wait.", "error");
+            if (hiddenInput) hiddenInput.value = '';
+            return;
+        }
 
         // Importing replaces the open key — guard unsaved work like Load/New do.
         if (store.hasUnsavedChanges()) {
@@ -1329,6 +1337,12 @@ function setupMenuBarNavigation(signal: AbortSignal) {
  */
 export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) {
     const handleKeyDown = (e: KeyboardEvent) => {
+        // The full-window plain-text import dialog owns the keyboard while open, so
+        // editor shortcuts (Save, Delete, …) don't fire behind it. Its own Escape
+        // handler closes it.
+        const importView = document.getElementById('plain-text-import-view') as HTMLElement | null;
+        if (importView && importView.style.display === 'flex') return;
+
         const modals = document.querySelectorAll('.modal-overlay');
         const activeModal = Array.from(modals).find(
             el => (el as HTMLElement).style.display === 'flex'
@@ -1341,7 +1355,16 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
                 return;
             }
             if (e.key === 'Tab') {
+                // Trap focus inside the open dialog instead of escaping to the page behind it.
                 e.preventDefault();
+                const focusables = Array.from(activeModal.querySelectorAll<HTMLElement>(
+                    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+                )).filter(el => el.offsetParent !== null);
+                if (focusables.length > 0) {
+                    const current = focusables.indexOf(document.activeElement as HTMLElement);
+                    const delta = e.shiftKey ? -1 : 1;
+                    focusables[(current + delta + focusables.length) % focusables.length].focus();
+                }
                 return;
             }
         }
@@ -1381,6 +1404,19 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
         if (hasModifier && e.altKey && e.key.toLowerCase() === 'n') {
             e.preventDefault();
             document.querySelector<HTMLButtonElement>('#cmd-new')?.click();
+            return;
+        }
+
+        // View-panel toggles work regardless of focus (consistent with Save/Open).
+        if (hasModifier && e.shiftKey && e.key.toLowerCase() === 'f') {
+            e.preventDefault();
+            document.querySelector<HTMLButtonElement>('#cmd-toggle-figures')?.click();
+            return;
+        }
+
+        if (hasModifier && e.shiftKey && e.key.toLowerCase() === 'p') {
+            e.preventDefault();
+            document.querySelector<HTMLButtonElement>('#cmd-toggle-print')?.click();
             return;
         }
 
@@ -1447,18 +1483,6 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
                 e.preventDefault();
                 const position = e.shiftKey ? 'above' : 'below';
                 executePaste(store, refreshAll, position);
-                return;
-            }
-
-            if (hasModifier && e.shiftKey && e.key.toLowerCase() === 'f') {
-                e.preventDefault();
-                document.querySelector<HTMLButtonElement>('#cmd-toggle-figures')?.click();
-                return;
-            }
-
-            if (hasModifier && e.shiftKey && e.key.toLowerCase() === 'p') {
-                e.preventDefault();
-                document.querySelector<HTMLButtonElement>('#cmd-toggle-print')?.click();
                 return;
             }
         }
