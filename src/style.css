@@ -59,17 +59,6 @@
     display: none !important;
 }
 
-/* Shared text-field baseline. The grid panel that once shared this rule now
-   lives in .print-grid; only the typographic bits below are load-bearing
-   (notably the serif family that .input-destination relies on). */
-.card-textarea,
-.input-destination {
-    user-select: text;
-    color: var(--color-text);
-    line-height: 1.6;
-    font-family: serif;
-}
-
 /* ==========================================
    GLOBAL & CORE LAYOUT WRAPPERS
    ========================================== */
@@ -375,7 +364,26 @@ html, body {
     background: var(--color-primary-light);
 }
 
-/* Form inputs & auto-expanding textareas baseline focus states groups */
+/* Unified styling for every editable field in the key editor and figure panels —
+   descriptions, destinations, filenames and captions all look identical, with the
+   same underline and focus highlight. (The menu-bar title input is separate.) */
+.card-textarea,
+.input-destination,
+.figure-card .figure-input-filename,
+.figure-card .figure-input-caption {
+    font-family: sans-serif;
+    font-size: var(--text-base);
+    font-weight: 500;
+    line-height: 1.5;
+    color: var(--color-text);
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--color-border-light);
+    padding: 2px 0;
+    transition: var(--transition-base);
+    user-select: text;
+}
+
 .card-textarea:focus,
 .input-destination:focus,
 .figure-card .figure-input-filename:focus,
@@ -421,18 +429,9 @@ html, body {
 .card-textarea {
     flex: 1;
     min-height: 24px;
-    font-family: sans-serif;
-    padding: 4px 0;
-    border: none;
-    border-bottom: 1px dashed transparent;
-    background: transparent;
     resize: none;
     overflow: hidden;
     field-sizing: content;
-    font-size: var(--text-base);
-    line-height: 1.5;
-    color: var(--color-text);
-    transition: border-color 0.15s ease;
 }
 
 .card-meta-pane {
@@ -450,15 +449,7 @@ html, body {
    INTEGRATED BASELINE INPUTS & FIELDS
    ========================================== */
 .input-destination {
-    border: none;
-    border-bottom: 1px solid var(--color-border-light);
-    background: transparent;
-    padding: 2px 0;
-    font-size: var(--text-base);
-    color: var(--color-text);
-    font-weight: 600;
     width: 140px;
-    transition: var(--transition-base);
 }
 
 .input-destination.input-error {
@@ -530,26 +521,15 @@ html, body {
     user-select: none;
 }
 
-/* Updated to look identical to the Go-To / Destination input fields */
 .figure-card .figure-input-filename,
 .figure-card .figure-input-caption {
     flex: 1;
-    font-family: sans-serif;
-    font-size: var(--text-base);
-    font-weight: 600;
-    border: none;
-    border-bottom: 1px solid var(--color-border-light);
-    background: transparent;
-    color: var(--color-text);
-    padding: 2px 0;
-    transition: var(--transition-base);
 }
 
 .figure-input-caption {
     resize: none;
     overflow: hidden;
     field-sizing: content;
-    line-height: 1.5;
 }
 
 .figure-preview-wrapper {

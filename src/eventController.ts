@@ -938,7 +938,6 @@ function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll: () =>
         const file = (e.target as HTMLInputElement).files?.[0];
         if (!file) return;
 
-        // Guard re-entrancy from any trigger (menu import or hub "+ Import File").
         if (isImporting) {
             showToast("⚠️ An import is currently in progress. Please wait.", "error");
             if (hiddenInput) hiddenInput.value = '';
@@ -1337,9 +1336,6 @@ function setupMenuBarNavigation(signal: AbortSignal) {
  */
 export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) {
     const handleKeyDown = (e: KeyboardEvent) => {
-        // The full-window plain-text import dialog owns the keyboard while open, so
-        // editor shortcuts (Save, Delete, …) don't fire behind it. Its own Escape
-        // handler closes it.
         const importView = document.getElementById('plain-text-import-view') as HTMLElement | null;
         if (importView && importView.style.display === 'flex') return;
 
@@ -1355,7 +1351,6 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
                 return;
             }
             if (e.key === 'Tab') {
-                // Trap focus inside the open dialog instead of escaping to the page behind it.
                 e.preventDefault();
                 const focusables = Array.from(activeModal.querySelectorAll<HTMLElement>(
                     'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
@@ -1376,8 +1371,6 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
             activeElement.hasAttribute('contenteditable')
         );
 
-        // Insert a figure reference — only while editing a key step's alt1/alt2 text.
-        // Uses e.code so Option+F on macOS (which types 'ƒ') still resolves to the F key.
         if (e.altKey && !hasModifier && !e.shiftKey && e.code === 'KeyF' && isFigureTextarea(activeElement)) {
             e.preventDefault();
             insertFigureReference(activeElement, activeElement.selectionStart ?? 0, activeElement.selectionEnd ?? 0);
@@ -1407,7 +1400,6 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
             return;
         }
 
-        // View-panel toggles work regardless of focus (consistent with Save/Open).
         if (hasModifier && e.shiftKey && e.key.toLowerCase() === 'f') {
             e.preventDefault();
             document.querySelector<HTMLButtonElement>('#cmd-toggle-figures')?.click();
