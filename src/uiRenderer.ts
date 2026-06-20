@@ -900,7 +900,7 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
             block.setAttribute('data-id', c.id.toString());
 
             block.innerHTML = `
-                 <div class="print-step-num"></div>
+              <div class="print-step-num"></div>
                 <div class="print-row" data-choice="1">
                   <span class="print-text"></span>
                   <span class="print-dest"></span>
@@ -910,7 +910,7 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
                   <span class="print-text"></span>
                   <span class="print-dest"></span>
                 </div>
-                <div class="print-spacer"></div>
+              <div class="print-spacer"></div>
             `;
 
             const stepNumEl = block.querySelector('.print-step-num');
