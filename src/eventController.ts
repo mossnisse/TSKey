@@ -3,7 +3,7 @@ import type { KeyStore, Couplet } from './store.ts';
 import { computePathFromRoot } from './store.ts';
 import type { UIStateStore } from './uiState.ts';
 import { showToast, renderProjectHubList } from './uiRenderer.ts';
-import { IS_MAC, resolveDestination, parseDestinationInput, buildIdToIndexMap, isLeadFormat, branchTarget, escapeHTML } from './utils.ts';
+import { IS_MAC, resolveDestination, parseDestinationInput, buildIdToIndexMap, isLeadFormat, branchTarget, escapeHTML, buildFigureIdToDisplayNumMap } from './utils.ts';
 import { buildFigureLookups } from './figureTokens.ts';
 import { openPopover } from './popover.ts';
 import type { PopoverItem } from './popover.ts';
@@ -1301,6 +1301,14 @@ function setupNavigationClicks(store: KeyStore, uiState: UIStateStore, signal: A
         const target = e.target as HTMLElement;
         const handled = () => { e.preventDefault(); e.stopPropagation(); };
 
+        // 0. Inbound-link badge ("← 1b") → jump back to that parent step.
+        const badgeLink = target.closest<HTMLElement>('.badge-link[data-step-id]');
+        if (badgeLink) {
+            handled();
+            jumpToStep(Number(badgeLink.getAttribute('data-step-id')));
+            return;
+        }
+
         // 1. Figure citation span in the publication view.
         const figRef = target.closest<HTMLElement>('.fig-ref[data-fig-id]');
         if (figRef) {
@@ -1373,10 +1381,22 @@ function setupContextMenu(store: KeyStore, refreshAll: () => void, signal: Abort
         if (!path.reachable) {
             headerHtml = `<div class="popover-note">Step ${stepNum} is unreachable from step 1.</div>`;
         } else {
-            const crumbs = path.steps
-                .map(s => `<button type="button" class="popover-crumb" data-step-id="${s.id}">${s.stepNum}${s.choice ?? ''}</button>`)
-                .join('<span class="popover-crumb-sep">→</span>');
-            headerHtml = `<div class="popover-crumbs">${crumbs}</div>`;
+            // Show each step on the route with the actual text of the alternative taken
+            // (alt1 for choice 'a', alt2 for 'b'); the last row is the step itself.
+            const idToDisplay = buildFigureIdToDisplayNumMap(store.getFigures());
+            const rows = path.steps.map(s => {
+                const numLabel = `${s.stepNum}${s.choice ?? ''}`;
+                if (s.choice === undefined) {
+                    return `<div class="popover-path-row is-target"><span class="popover-path-num">${numLabel}</span><span class="popover-path-text">(this step)</span></div>`;
+                }
+                const couplet = key.find(c => c.id === s.id);
+                const raw = couplet ? (s.choice === 'a' ? couplet.alt1 : couplet.alt2) : '';
+                const text = store.resolveTextReferences(raw, idToDisplay).trim() || '(no description)';
+                return `<button type="button" class="popover-path-row" data-step-id="${s.id}">`
+                    + `<span class="popover-path-num">${escapeHTML(numLabel)}</span>`
+                    + `<span class="popover-path-text">${escapeHTML(text)}</span></button>`;
+            }).join('');
+            headerHtml = `<div class="popover-path">${rows}</div>`;
         }
 
         const items: PopoverItem[] = [

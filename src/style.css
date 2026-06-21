@@ -428,6 +428,9 @@ html, body {
 .badge             { font-size: var(--text-sm); padding: 2px 6px; border-radius: var(--radius-sm); font-weight: 500; }
 .badge-linked      { background: transparent; color: var(--color-text-muted); }
 .badge-isolated    { background: var(--color-danger-light); color: var(--color-danger); }
+/* Inbound parent reference — Ctrl/Cmd+click to jump back to that step. */
+.badge-link        { cursor: pointer; }
+.badge-link:hover  { color: var(--color-primary); text-decoration: underline; }
 
 .card-row {
     margin-bottom: var(--space-sm);
@@ -691,7 +694,9 @@ html, body {
 .popover {
     position: fixed;
     z-index: 2500; /* above modal overlay (2000) */
-    max-width: 320px;
+    max-width: min(460px, calc(100vw - 24px));
+    max-height: calc(100vh - 24px);
+    overflow-y: auto;
     padding: var(--space-sm);
     background: var(--color-bg);
     border: 1px solid var(--color-border);
@@ -702,28 +707,33 @@ html, body {
     color: var(--color-text);
 }
 
-/* Breadcrumb of the path from the root step */
-.popover-crumbs {
+/* Path from the root step: one row per step, showing the chosen alternative's text. */
+.popover-path {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-xs);
+    flex-direction: column;
+    gap: 2px;
     padding-bottom: var(--space-sm);
     margin-bottom: var(--space-sm);
     border-bottom: 1px solid var(--color-border-light);
 }
-.popover-crumb-sep { color: var(--color-text-muted); }
-.popover-crumb {
-    background: var(--color-primary-light);
-    color: var(--color-primary);
+.popover-path-row {
+    display: flex;
+    gap: var(--space-sm);
+    align-items: baseline;
+    width: 100%;
+    text-align: left;
+    background: transparent;
     border: none;
+    padding: var(--space-xs) var(--space-sm);
     border-radius: var(--radius-sm);
-    padding: 2px 6px;
     cursor: pointer;
     font-size: var(--text-sm);
-    font-weight: 600;
+    color: var(--color-text);
 }
-.popover-crumb:hover { background: var(--color-primary); color: var(--color-bg); }
+button.popover-path-row:hover { background: var(--color-bg-muted); }
+.popover-path-row.is-target { cursor: default; color: var(--color-text-muted); font-style: italic; }
+.popover-path-num { flex: 0 0 auto; min-width: 2.4em; font-weight: 700; color: var(--color-primary); }
+.popover-path-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .popover-note { color: var(--color-text-muted); font-size: var(--text-sm); padding: 2px 0 var(--space-sm); }
 
 .popover-action {

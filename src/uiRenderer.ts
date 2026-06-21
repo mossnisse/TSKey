@@ -605,7 +605,16 @@ export function renderEditorCards(store: KeyStore) {
         const cardErrors = activeDiagnostics.get(couplet.id) || [];
         const computedTitle = `${displayNum}.`;
         const badgeClass = inboundLinks.length ? 'badge badge-linked' : (index === 0 ? 'badge badge-linked' : 'badge badge-isolated');
-        const badgeLabel = inboundLinks.length ? `← ${inboundLinks.join(', ')}` : (index === 0 ? '🏁 root' : '⚠️ isolated');
+        // Each inbound label ("1b") becomes a Ctrl/Cmd+click target back to that parent
+        // step. The label's leading number is the parent's 1-based step number.
+        const badgeHtml = inboundLinks.length
+            ? `← ${inboundLinks.map(label => {
+                const parentId = key[parseInt(label, 10) - 1]?.id;
+                return parentId !== undefined
+                    ? `<span class="badge-link" data-step-id="${parentId}">${escapeHTML(label)}</span>`
+                    : escapeHTML(label);
+            }).join(', ')}`
+            : (index === 0 ? '🏁 root' : '⚠️ isolated');
 
         let warningInnerHtml = '';
         cardErrors.forEach(err => {
@@ -630,7 +639,7 @@ export function renderEditorCards(store: KeyStore) {
             const badgeEl = card.querySelector('.badge');
             if (badgeEl) {
                 badgeEl.className = badgeClass;
-                if (badgeEl.textContent !== badgeLabel) badgeEl.textContent = badgeLabel;
+                if (badgeEl.innerHTML !== badgeHtml) badgeEl.innerHTML = badgeHtml;
             }
 
             syncField(card, 'textarea[data-field="alt1"]', store.decodeTextReferencesForEditor(couplet.alt1));
@@ -668,7 +677,7 @@ export function renderEditorCards(store: KeyStore) {
                 <div class="card-header">
                   <div class="card-header-left">
                     <h4 class="card-title">${computedTitle}</h4>
-                    <span class="${badgeClass}">${badgeLabel}</span>
+                    <span class="${badgeClass}">${badgeHtml}</span>
                   </div>
                   <span class="drag-handle">☰</span>
                 </div>
