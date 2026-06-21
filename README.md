@@ -1,4 +1,4 @@
-TSKey: A Dichotomous Key Editor
+TSKey: A Dichotomous Key Editor  https://mossnisse.github.io/TSKey/
 
 TSKey is an interactive editor designed to build and manage classical taxonomic keys for identifying biological species based on morphological characters. It provides the standard productivity tools expected of a desktop application, including copy-paste and a undo-redo system.
 
