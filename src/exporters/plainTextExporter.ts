@@ -1,20 +1,22 @@
 // plainTextExporter.ts
 import type { KeyStore } from '../store.ts';
 import { showToast } from '../uiRenderer.ts';
-import { resolveDestination, triggerFileDownload, buildIdToIndexMap, buildFigureIdToDisplayNumMap, sanitizeFilename
+import { resolveDestination, triggerFileDownload, buildIdToIndexMap, buildFigureIdToDisplayNumMap, sanitizeFilename, buildCoupletLeads, buildBackReferenceMap
 } from '../utils.ts';
+import type { LeadFormat } from '../utils.ts';
 
 /**
  * Compiles the dichotomous key into a tab-separated plain-text document,
  * fully resolving embedded figure references and appending a metadata block.
  */
-export function exportKeyToPlainText(store: KeyStore): void {
+export function exportKeyToPlainText(store: KeyStore, leadFormat: LeadFormat, showBackReference: boolean): void {
     try {
         const key = store.getKey();
         const figures = store.getFigures();
-        
+
         const idToIndexMap = buildIdToIndexMap(key);
         const idToDisplayNum = buildFigureIdToDisplayNumMap(figures);
+        const backRefMap = showBackReference ? buildBackReferenceMap(key) : null;
         
         let content = '';
 
@@ -38,8 +40,9 @@ export function exportKeyToPlainText(store: KeyStore): void {
             const alt2Text = store.resolveTextReferences(c.alt2, idToDisplayNum) || '___';
 
             // Append lines to document
-            content += `${currentDisplayNum}.\t${alt1Text}\t${dest1}\n`;
-            content += `—\t${alt2Text}\t${dest2}\n\n`;
+            const { lead1, lead2 } = buildCoupletLeads(leadFormat, currentDisplayNum, backRefMap?.get(c.id));
+            content += `${lead1}\t${alt1Text}\t${dest1}\n`;
+            content += `${lead2}\t${alt2Text}\t${dest2}\n\n`;
         });
 
         // --- FIGURES DATA METADATA APPENDIX ---

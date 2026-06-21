@@ -1,0 +1,365 @@
+// events/coupletEvents.ts
+// Editor key-card events: title rename, selection, text input, focus, and
+// drag-and-drop reordering — plus the paste / append-step helpers shared with the
+// menu and keyboard handlers.
+import type { KeyStore, Couplet } from '../store.ts';
+import type { UIStateStore } from '../uiState.ts';
+import { batchedRefresh, DEBOUNCE_TYPING_MS, AUTO_SCROLL_THRESHOLD_PX, AUTO_SCROLL_SPEED_PX } from './shared.ts';
+import { resolveDestination, parseDestinationInput, buildIdToIndexMap } from '../utils.ts';
+import { showToast } from '../uiRenderer.ts';
+
+// The key-card whose field last gained focus — so the link highlight only refreshes
+// when focus moves to a different card, not when tabbing between a card's two fields.
+let lastFocusedCardId: number | null = null;
+
+/** Title input: commit a trimmed rename on blur, reverting to the current name if blank. */
+export function setupTitleEditing(store: KeyStore, refreshAll: () => void, signal: AbortSignal) {
+    const titleInput = document.getElementById('key-title-input') as HTMLInputElement | null;
+    if (!titleInput) return;
+
+    titleInput.addEventListener('blur', () => {
+        store.endTypingSession();
+
+        const newTitle = titleInput.value.trim();
+        if (!newTitle) {
+            titleInput.value = store.getProjectName();
+            return;
+        }
+
+        store.setTitle(newTitle);
+        batchedRefresh(refreshAll);
+    }, { signal });
+}
+
+/** Card selection clicks (with Ctrl/Cmd/Shift multi-select) and background-click clearing. */
+export function setupCoupletSelection(keyContainer: HTMLElement, store: KeyStore, refreshAll: () => void, signal: AbortSignal) {
+    keyContainer.addEventListener('click', (e: MouseEvent) => {
+        const target = e.target as HTMLElement;
+
+        // If the user clicked the editor background layout area itself, drop focus
+        if (target.id === 'editor-container') {
+            store.clearSelection();
+            batchedRefresh(refreshAll);
+            return;
+        }
+
+        // Prevent card selection if the user is interacting with text inputs or textareas
+        if (target.closest('input, textarea')) return;
+
+        const card = target.closest('.key-card') as HTMLElement;
+        if (!card) return;
+        const id = Number(card.getAttribute('data-id'));
+
+        // Enable multi-select when holding Control, Command (Mac), or Shift keys
+        const multiSelect = e.ctrlKey || e.metaKey || e.shiftKey;
+
+        store.toggleSelection(id, multiSelect);
+        batchedRefresh(refreshAll);
+    }, { signal });
+}
+
+/**
+ * Consolidated couplet input router: immediate store sync, undo debouncing,
+ * figure-token encoding, and destination link validation.
+ */
+export function setupCoupletInput(keyContainer: HTMLElement, store: KeyStore, uiState: UIStateStore, refreshAll: () => void, signal: AbortSignal) {
+    keyContainer.addEventListener('input', (e) => {
+        const target = e.target as HTMLInputElement | HTMLTextAreaElement;
+        if (!target.classList.contains('input-sync')) return;
+        const card = target.closest('.key-card') as HTMLElement;
+        if (!card) return;
+
+        const id = Number(card.getAttribute('data-id'));
+        const field = target.getAttribute('data-field')!;
+        const fieldKey = `${id}-${field}`;
+        store.setActiveCouplet(id);
+
+        // Undo History Checkpoint Manager (Couplets Context)
+        uiState.typing.couplets.start(fieldKey, () => {
+            store.endTypingSession();
+        });
+
+        // Synchronize the text change immediately to the store without waiting
+        const updatePayload: Partial<Omit<Couplet, 'id'>> = {};
+        const currentValue = target.value;
+        type CoupletStringField = 'alt1' | 'alt2';
+
+        if (field === 'dest1' || field === 'dest2') {
+            const branchField = field === 'dest1' ? 'branch1' : 'branch2';
+
+            // We parse using the current snapshot of the key array
+            updatePayload[branchField] = parseDestinationInput(currentValue, store.getKey());
+        } else {
+            updatePayload[field as CoupletStringField] = currentValue;
+        }
+
+        store.updateCouplet(id, updatePayload);
+
+        // If user stops typing for 800ms, trigger heavy map lookups & structural warnings
+        uiState.typing.couplets.extendTimeout(DEBOUNCE_TYPING_MS, () => {
+            // Encode any complete [fig: N] or [fig: filename] tokens to stable [figID: N] format.
+            if (field !== 'dest1' && field !== 'dest2') {
+                const currentCouplet = store.getKey().find(c => c.id === id);
+                if (currentCouplet) {
+                    const rawValue = currentCouplet[field as keyof Omit<Couplet, 'id'>] as string;
+                    const encodedValue = store.encodeFigureTokens(rawValue);
+                    if (encodedValue !== rawValue) {
+                        store.updateCouplet(id, { [field]: encodedValue } as Partial<Omit<Couplet, 'id'>>);
+                    }
+                }
+            }
+
+            // Perform link validation safely inside the debounce window
+            if (field === 'dest1' || field === 'dest2') {
+                const updatedKey = store.getKey();
+                const currentCouplet = updatedKey.find(c => c.id === id);
+
+                if (currentCouplet) {
+                    const branch = field === 'dest1' ? currentCouplet.branch1 : currentCouplet.branch2;
+
+                    const idToIndexMap = buildIdToIndexMap(updatedKey);
+                    const resolution = resolveDestination(branch, idToIndexMap);
+
+                    target.classList.toggle('input-error', resolution.isUnresolved);
+                }
+            }
+
+            batchedRefresh(refreshAll);
+        });
+    }, { signal });
+}
+
+/**
+ * Couplet field focus handling: disables card dragging while editing, auto-selects
+ * destination inputs, drives the link highlight, and on focusout commits figure
+ * tokens + flags bad destinations.
+ */
+export function setupCoupletFocus(keyContainer: HTMLElement, store: KeyStore, uiState: UIStateStore, refreshAll: () => void, signal: AbortSignal) {
+    // Centralized Drag and Form Text Highlight Mitigation
+    keyContainer.addEventListener('focusin', (e) => {
+        const target = e.target as HTMLElement;
+
+        if (target.matches('input, textarea')) {
+            const card = target.closest('.key-card') as HTMLElement;
+            if (!card) return;
+            card.draggable = false;
+
+            // Mark this step active and refresh the link highlight, but only when
+            // focus actually moved to a different card (not field-to-field).
+            const cardId = Number(card.getAttribute('data-id'));
+            store.setActiveCouplet(cardId);
+            if (cardId !== lastFocusedCardId) {
+                lastFocusedCardId = cardId;
+                batchedRefresh(refreshAll);
+            }
+
+            if (target.classList.contains('input-destination') && target instanceof HTMLInputElement) {
+                queueMicrotask(() => {
+                    if (document.activeElement === target) {
+                        target.select();
+                    }
+                });
+            }
+        }
+    }, { signal });
+
+    // Centralized Serialization Execution Focusout
+    keyContainer.addEventListener('focusout', (e: FocusEvent) => {
+        const target = e.target as HTMLElement;
+
+        if (target.matches('input, textarea')) {
+            const card = target.closest('.key-card') as HTMLElement;
+            if (card) card.draggable = true;
+
+            // Construct the unique identifier for this specific field
+            const id = card ? Number(card.getAttribute('data-id')) : null;
+            const field = target.getAttribute('data-field');
+            const fieldKey = id && field ? `${id}-${field}` : null;
+
+            // Verify if focus is genuinely leaving the active field session.
+            uiState.typing.couplets.end(fieldKey, () => {
+                store.clearActiveCouplet();
+
+                // Encode any [fig: N] tokens that the debounce may not have reached
+                if (field && field !== 'dest1' && field !== 'dest2' && id !== null) {
+                    const currentCouplet = store.getKey().find(c => c.id === id);
+                    if (currentCouplet) {
+                        const rawValue = currentCouplet[field as keyof Omit<Couplet, 'id'>] as string;
+                        const encodedValue = store.encodeFigureTokens(rawValue);
+                        if (encodedValue !== rawValue) {
+                            store.updateCouplet(id, { [field]: encodedValue } as Partial<Omit<Couplet, 'id'>>);
+                        }
+                    }
+                }
+
+                // Trigger the warning toast if the field has an unresolved destination
+                if (target.classList.contains('input-error') && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) && card) {
+                    const invalidVal = target.value;
+                    showToast(`⚠️ Destination "${invalidVal}" is unresolved. Saved as text context.`, "error");
+                }
+
+                // Evaluate next target context defensively (ensuring target is an Element node)
+                const destination = e.relatedTarget as HTMLElement | null;
+                const movingToCard = destination instanceof Element && destination.closest('.key-card');
+                const isClickingControl = movingToCard || (destination instanceof Element && (
+                    destination.closest('.app-menu-bar') ||
+                    destination.closest('#add-couplet-btn')
+                ));
+
+                // Once focus leaves the cards, forget the last card so re-focusing it
+                // re-asserts its link highlight.
+                if (!movingToCard) lastFocusedCardId = null;
+
+                if (!isClickingControl) {
+                    batchedRefresh(refreshAll);
+                }
+            });
+        }
+    }, { signal });
+}
+
+/** HTML5 drag-and-drop reordering for couplet cards, with edge auto-scroll. */
+export function setupCoupletDragAndDrop(keyContainer: HTMLElement, store: KeyStore, refreshAll: () => void, signal: AbortSignal) {
+    let activeDropCard: HTMLElement | null = null;
+    let activeDropClass: 'drag-drop-above' | 'drag-drop-below' | null = null;
+    let activeDropRect: DOMRect | null = null;        // Cached bounding metrics to prevent layout thrashing
+    let cachedScrollY = 0;
+
+    const clearDropMarkers = () => {
+        if (activeDropCard) {
+            activeDropCard.classList.remove('drag-drop-above', 'drag-drop-below');
+            activeDropCard = null;
+            activeDropClass = null;
+            activeDropRect = null;
+        }
+    };
+
+    const updateTargetTrackers = (clientY: number, cardEl: HTMLElement) => {
+        const actualCard = cardEl.closest('.key-card') as HTMLElement;
+
+        if (!actualCard) {
+            clearDropMarkers();
+            return;
+        }
+
+        const currentScrollY = keyContainer.scrollTop;
+
+        if (activeDropCard !== actualCard || !activeDropRect || cachedScrollY !== currentScrollY) {
+            activeDropRect = actualCard.getBoundingClientRect();
+            cachedScrollY = currentScrollY;
+        }
+
+        const relativeMouseY = clientY - activeDropRect.top;
+        const currentClass = relativeMouseY < activeDropRect.height / 2 ? 'drag-drop-above' : 'drag-drop-below';
+
+        if (activeDropCard !== actualCard || activeDropClass !== currentClass) {
+            const rectToPreserve = activeDropRect;
+
+            clearDropMarkers();
+
+            actualCard.classList.add(currentClass);
+            activeDropCard = actualCard;
+            activeDropClass = currentClass;
+            activeDropRect = rectToPreserve;
+        }
+    };
+
+    keyContainer.addEventListener('dragstart', (e) => {
+        const target = e.target as HTMLElement;
+        const card = target.closest('.key-card') as HTMLElement;
+        if (!card) return;
+
+        const id = Number(card.getAttribute('data-id'));
+        store.startDraggingCouplet(id);
+        requestAnimationFrame(() => {
+            card.style.opacity = '0.4';
+        });
+    }, { signal });
+
+    keyContainer.addEventListener('dragend', (e) => {
+        const target = e.target as HTMLElement;
+        const card = target.closest('.key-card') as HTMLElement;
+        if (!card) return;
+
+        card.style.opacity = '1';
+        store.stopDraggingCouplet();
+        clearDropMarkers();
+    }, { signal });
+
+    keyContainer.addEventListener('dragover', (e: DragEvent) => {
+        if (store.draggedCoupletId === null) return;
+        e.preventDefault();
+
+        const containerRect = keyContainer.getBoundingClientRect();
+
+        if (e.clientY - containerRect.top < AUTO_SCROLL_THRESHOLD_PX) {
+            keyContainer.scrollBy(0, -AUTO_SCROLL_SPEED_PX);
+        } else if (containerRect.bottom - e.clientY < AUTO_SCROLL_THRESHOLD_PX) {
+            keyContainer.scrollBy(0, AUTO_SCROLL_SPEED_PX);
+        }
+
+        updateTargetTrackers(e.clientY, e.target as HTMLElement);
+    }, { signal });
+
+    keyContainer.addEventListener('dragleave', (e: DragEvent) => {
+        const target = e.relatedTarget as HTMLElement;
+        if (!target || !keyContainer.contains(target)) {
+            clearDropMarkers();
+        }
+    }, { signal });
+
+    keyContainer.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const target = e.target as HTMLElement;
+        const card = target.closest('.key-card') as HTMLElement;
+        if (!card) return;
+        const coupletId = Number(card.getAttribute('data-id'));
+        if (store.draggedCoupletId === null || store.draggedCoupletId === coupletId) return;
+
+        const position: 'above' | 'below' = card.classList.contains('drag-drop-above') ? 'above' : 'below';
+
+        store.reorderCouplets(store.draggedCoupletId, coupletId, position);
+        batchedRefresh(refreshAll);
+    }, { signal });
+}
+
+/** Appends a new step and focuses its first description field. */
+export function createNewCoupletWithFocus(store: KeyStore, refreshAll: () => void) {
+    const newId = store.addCouplet();
+    refreshAll();
+
+    const newCard = document.querySelector(`.key-card[data-id="${newId}"]`);
+    const textarea = newCard?.querySelector('textarea[data-field="alt1"]') as HTMLTextAreaElement | null;
+
+    if (textarea) {
+        textarea.focus();
+    }
+}
+
+/** Pastes clipboard steps relative to the current selection (or the key ends). */
+export function executePaste(store: KeyStore, refreshAll: () => void, position: 'above' | 'below') {
+    let targetId: number | undefined = undefined;
+    const selectedIds = store.getSelectedCoupletIds();
+    const key = store.getKey();
+
+    const visibleSelection = key.filter(couplet => selectedIds.has(couplet.id));
+
+    if (visibleSelection.length > 0) {
+        targetId = position === 'below'
+            ? visibleSelection[visibleSelection.length - 1].id
+            : visibleSelection[0].id;
+    } else if (key.length > 0) {
+        targetId = position === 'above'
+            ? key[0].id
+            : key[key.length - 1].id;
+    }
+
+    if (store.pasteCouplets(targetId, position)) {
+        const locationText = visibleSelection.length > 0
+            ? `${position} selection`
+            : (position === 'above' ? 'at the beginning' : 'at the end');
+
+        showToast(`Pasted steps ${locationText}.`, "success");
+        batchedRefresh(refreshAll);
+    }
+}

@@ -28,6 +28,7 @@ export async function exportKeyToJSON(store: KeyStore): Promise<void> {
             version: APP_VERSION,
             exportedAt: new Date().toISOString()
         },
+        title: store.getTitle(),
         data: {
             title: store.getTitle(), // Embed title into the payload
             key: store.getKey(),

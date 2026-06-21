@@ -9,6 +9,11 @@ export interface ProjectRecord {
     lastModified: number;
 }
 
+export interface StagingSnapshot {
+    uploads: Map<number, Blob>;
+    deletes: Set<number>;
+}
+
 /**
  * Resolves when a transaction commits; rejects on error or abort.
  * `abortMessage` gives the abort path a contextual error for debugging.
@@ -55,7 +60,10 @@ class IndexedDBEngine {
             };
             request.onsuccess = () => resolve(request.result);
             request.onerror = () => reject(request.error);
-            request.onblocked = () => reject(new Error('IndexedDB open blocked by another open connection.'));
+            request.onblocked = () => {
+                alert('⚠️ TSKey could not open its database because another tab still has an older version open. Please close other TSKey tabs and reload.');
+                reject(new Error('IndexedDB open blocked by another open connection.'));
+            };
         });
 
         this.dbPromise.catch(() => {
@@ -238,8 +246,6 @@ export class WorkspaceManager {
     }
 
     public async deleteProject(title: string): Promise<void> {
-        this.clearStagedChanges();
-        // Resolve the project's stable uid so its figure blobs can be removed too.
         const project = await this.storage.loadProject(title);
         if (!project) return;
         return this.storage.deleteProject(title, project.projectUid);
@@ -259,11 +265,34 @@ export class WorkspaceManager {
         this.pendingDeletes.clear();
     }
 
-    /**
-     * Single teardown for switching the active project: drops staged (uncommitted)
-     * blob uploads and revokes every cached figure object-URL. Owning this here keeps
-     * callers from hand-rolling the revoke loop on every project switch.
-     */
+    /** Shallow copy of the current staging buffer (Blobs are shared by reference). */
+    public getStagingSnapshot(): StagingSnapshot {
+        return {
+            uploads: new Map(this.pendingUploads),
+            deletes: new Set(this.pendingDeletes),
+        };
+    }
+
+    public restoreStagingSnapshot(snap: StagingSnapshot): void {
+        const candidates = new Set<number>([
+            ...this.pendingUploads.keys(), ...this.pendingDeletes,
+            ...snap.uploads.keys(), ...snap.deletes,
+        ]);
+        for (const id of candidates) {
+            const sameUpload = this.pendingUploads.get(id) === snap.uploads.get(id);
+            const sameDelete = this.pendingDeletes.has(id) === snap.deletes.has(id);
+            if (sameUpload && sameDelete) continue; // source unchanged — keep the thumbnail
+
+            const url = activeObjectURLs.get(id);
+            if (url) {
+                URL.revokeObjectURL(url);
+                activeObjectURLs.delete(id);
+            }
+        }
+        this.pendingUploads = new Map(snap.uploads);
+        this.pendingDeletes = new Set(snap.deletes);
+    }
+
     public resetActiveImageCache(): void {
         revokeStoredObjectURLs();
         this.clearStagedChanges();
@@ -287,6 +316,8 @@ export class WorkspaceManager {
 
     public async commitStagedChanges(projectUid: string, activeFigures: Figure[]): Promise<void> {
         const previous = this.commitPromise ?? Promise.resolve();
+        const uploads = new Map(this.pendingUploads);
+        const deletes = new Set(this.pendingDeletes);
 
         const run = (async () => {
             await previous.catch(() => { });
@@ -294,18 +325,24 @@ export class WorkspaceManager {
             try {
                 const activeIds = new Set<number>(activeFigures.map((f) => f.id));
 
-                for (const [id, blob] of this.pendingUploads.entries()) {
+                for (const [id, blob] of uploads) {
                     if (activeIds.has(id)) {
                         await this.storage.saveFigure(projectUid, id, blob);
                     }
                 }
 
-                for (const id of this.pendingDeletes) {
+                for (const id of deletes) {
                     await this.storage.deleteFigure(projectUid, id);
                 }
 
                 await this.storage.cleanupOrphanFigures(projectUid, activeIds);
-                this.clearStagedChanges();
+
+                for (const [id, blob] of uploads) {
+                    if (this.pendingUploads.get(id) === blob) this.pendingUploads.delete(id);
+                }
+                for (const id of deletes) {
+                    this.pendingDeletes.delete(id);
+                }
             } catch (error: unknown) {
                 if (error instanceof Error && error.name === 'QuotaExceededError') {
                     alert("⚠️ Browser storage is full! Could not save the latest images. Please delete old workspaces to free up space.");

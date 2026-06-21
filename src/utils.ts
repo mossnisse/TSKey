@@ -134,10 +134,10 @@ export const IS_MAC: boolean = (() => {
  */
 function isValidBranch(value: unknown): value is Branch {
     if (!value || typeof value !== 'object') return false;
-    const branch = value as { kind?: unknown; targetId?: unknown; step?: unknown; name?: unknown };
+    const branch = value as { kind?: unknown; targetId?: unknown; couplet?: unknown; name?: unknown };
     switch (branch.kind) {
         case 'linked': return typeof branch.targetId === 'number';
-        case 'unresolved': return typeof branch.step === 'number';
+        case 'unresolved': return typeof branch.couplet === 'number';
         case 'taxon': return typeof branch.name === 'string';
         case 'empty': return true;
         default: return false;
@@ -257,6 +257,84 @@ export function resolveDestination(branch: Branch, idToIndexMap: Map<number, num
         case 'empty':
             return { inputValue: '', printText: '...', printClass: '', isUnresolved: false };
     }
+}
+
+/**
+ * The label style applied to the two alternatives of every couplet. Shared by the
+ * live publication view (renderPrintView) and every text/HTML/LaTeX exporter, and
+ * chosen by the user in Options & Settings (persisted via UIStateStore).
+ *
+ *   classic  — "1." / "—"   (step number + em dash; the original look)
+ *   lettered — "1a" / "1b"  (lettered sub-items)
+ *   minimal  — "1"  / "-"   (bare number + hyphen)
+ */
+export type LeadFormat = 'classic' | 'lettered' | 'minimal';
+
+export const DEFAULT_LEAD_FORMAT: LeadFormat = 'classic';
+
+/** Narrows an arbitrary value (persisted prefs / user input) to a valid LeadFormat. */
+export function isLeadFormat(value: unknown): value is LeadFormat {
+    return value === 'classic' || value === 'lettered' || value === 'minimal';
+}
+
+export interface CoupletLeads {
+    lead1: string; // marker for the first alternative
+    lead2: string; // marker for the second alternative
+}
+
+/**
+ * Maps each couplet id to the sorted, de-duplicated 1-based step numbers of the
+ * couplets that link to it (its parents). Powers the optional "(n)" back-
+ * reference after a couplet's lead. Only resolved (linked) branches count; the
+ * root couplet has no entry, and a couplet reached by convergence lists every
+ * parent — e.g. (1, 5).
+ */
+export function buildBackReferenceMap(key: readonly Couplet[]): Map<number, number[]> {
+    const parents = new Map<number, Set<number>>();
+
+    key.forEach((c, index) => {
+        const stepNum = index + 1;
+        for (const branch of [c.branch1, c.branch2]) {
+            const target = branchTarget(branch);
+            if (target === null) continue;
+            let set = parents.get(target);
+            if (!set) parents.set(target, (set = new Set()));
+            set.add(stepNum);
+        }
+    });
+
+    const result = new Map<number, number[]>();
+    for (const [id, set] of parents) {
+        result.set(id, [...set].sort((a, b) => a - b));
+    }
+    return result;
+}
+
+/**
+ * Builds the two leading markers for a couplet at the given 1-based display
+ * number, according to the chosen label format. When `backRefSteps` is supplied
+ * and non-empty, the parent step number(s) are appended to the first lead only
+ * (e.g. "2 (1)") as a back-reference for navigating upwards.
+ */
+export function buildCoupletLeads(format: LeadFormat, displayNum: number, backRefSteps?: readonly number[]): CoupletLeads {
+    let leads: CoupletLeads;
+    switch (format) {
+        case 'lettered':
+            leads = { lead1: `${displayNum}a`, lead2: `${displayNum}b` };
+            break;
+        case 'minimal':
+            leads = { lead1: `${displayNum}`, lead2: '-' };
+            break;
+        case 'classic':
+        default:
+            leads = { lead1: `${displayNum}.`, lead2: '—' };
+            break;
+    }
+
+    if (backRefSteps && backRefSteps.length > 0) {
+        leads.lead1 += ` (${backRefSteps.join(', ')})`;
+    }
+    return leads;
 }
 
 /**

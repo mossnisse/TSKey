@@ -1,6 +1,6 @@
 import type { KeyStore } from '../store.ts';
-import { escapeHTML, buildIdToIndexMap, buildFigureIdToDisplayNumMap, triggerFileDownload, resolveDestination, sanitizeFilename } from '../utils.ts';
-import type { DestinationResolution } from '../utils.ts';
+import { escapeHTML, buildIdToIndexMap, buildFigureIdToDisplayNumMap, triggerFileDownload, resolveDestination, sanitizeFilename, buildCoupletLeads, buildBackReferenceMap } from '../utils.ts';
+import type { DestinationResolution, LeadFormat } from '../utils.ts';
 import { showToast } from '../uiRenderer.ts';
 import { workspaceStorage, blobToBase64 } from '../db.ts';
 
@@ -21,7 +21,7 @@ function destinationToHtml(dest: DestinationResolution): string {
 /**
  * Compiles the current KeyStore state into a single standalone static HTML document.
  */
-export async function exportKeyToHTML(store: KeyStore): Promise<void> {
+export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, showBackReference: boolean): Promise<void> {
     try {
         const projectUid = store.getActiveProjectUid();
         const key = store.getKey();
@@ -29,6 +29,7 @@ export async function exportKeyToHTML(store: KeyStore): Promise<void> {
         const title = store.getTitle();
         const idToIndexMap = buildIdToIndexMap(key);
         const idToDisplayNum = buildFigureIdToDisplayNumMap(figures);
+        const backRefMap = showBackReference ? buildBackReferenceMap(key) : null;
 
         // COMPILE GLOBAL FIGURES PANEL SIDEBAR (CONCURRENT PIPELINE)
         const figureCards = await Promise.all(
@@ -77,14 +78,16 @@ export async function exportKeyToHTML(store: KeyStore): Promise<void> {
             const alt1 = store.resolveTextReferences(c.alt1, idToDisplayNum) || '___';
             const alt2 = store.resolveTextReferences(c.alt2, idToDisplayNum) || '___';
 
+            const { lead1, lead2 } = buildCoupletLeads(leadFormat, currentDisplayNum, backRefMap?.get(c.id));
+
             keyColumnMarkup += `
             <div class="print-couplet" role="group" aria-label="Couplet ${currentDisplayNum}">
-                <div class="print-step-num">${currentDisplayNum}.</div>
+                <div class="print-step-num">${escapeHTML(lead1)}</div>
                 <div class="print-row">
                   <span class="print-text">${escapeHTML(alt1)}</span>
                   <span class="print-dest">${end1}</span>
                 </div>
-                <div class="print-dash">—</div>
+                <div class="print-dash">${escapeHTML(lead2)}</div>
                 <div class="print-row">
                   <span class="print-text">${escapeHTML(alt2)}</span>
                   <span class="print-dest">${end2}</span>
@@ -95,7 +98,7 @@ export async function exportKeyToHTML(store: KeyStore): Promise<void> {
 
         // GENERATE TARGET DOCUMENT STRUCTURE
         const hasFiguresClass = figures.length > 0 ? ' layout-has-figures' : '';
-        const htmlDocument = buildHTMLBoilerplate(title, keyColumnMarkup, figuresColumnMarkup, hasFiguresClass);
+        const htmlDocument = buildHTMLBoilerplate(title, keyColumnMarkup, figuresColumnMarkup, hasFiguresClass, leadFormat);
 
         triggerFileDownload(htmlDocument, sanitizeFilename(title, '.html'), 'text/html;charset=utf-8;');
 
@@ -108,7 +111,7 @@ export async function exportKeyToHTML(store: KeyStore): Promise<void> {
 /**
  * Isolated template wrapper providing core layout scaffolding styles.
  */
-function buildHTMLBoilerplate(title: string, keyContent: string, figuresContent: string, layoutClass: string): string {
+function buildHTMLBoilerplate(title: string, keyContent: string, figuresContent: string, layoutClass: string, leadFormat: LeadFormat): string {
     const safeTitle = escapeHTML(title);
     return `<!DOCTYPE html>
 <html>
@@ -220,6 +223,9 @@ function buildHTMLBoilerplate(title: string, keyContent: string, figuresContent:
     
     .print-step-num { font-weight: bold; color: var(--color-text); }
     .print-dash { font-weight: bold; text-align: center; color: var(--color-text); }
+    /* Lettered/minimal leads read better flush-left, aligned under the step number. */
+    .print-page-layout[data-lead-format="lettered"] .print-dash,
+    .print-page-layout[data-lead-format="minimal"] .print-dash { text-align: left; }
     
     .print-row {
       display: block; 
@@ -280,7 +286,7 @@ function buildHTMLBoilerplate(title: string, keyContent: string, figuresContent:
   </style>
 </head>
 <body>
-  <div class="print-page-layout${layoutClass}">
+  <div class="print-page-layout${layoutClass}" data-lead-format="${leadFormat}">
     <div class="print-key-column">
       <div class="print-key-container">
         <h1 class="print-doc-title">${safeTitle}</h1>

@@ -2,6 +2,7 @@
 import { isValidCoupletArray, isValidFigureArray, isRecord, branchTarget, classifyBranch, EMPTY_BRANCH } from './utils.ts';
 import { figIdTokenRegex, figRawTokenRegex, buildFigureLookups } from './figureTokens.ts';
 import { workspaceStorage } from './db.ts';
+import type { StagingSnapshot } from './db.ts';
 
 export const APP_NAME = 'TSKey';
 export const APP_VERSION = '0.0.1';
@@ -59,6 +60,12 @@ interface AppState {
     figures: Figure[];
 }
 
+/** One undo/redo frame: the editable metadata plus the figure-binary staging. */
+interface HistoryEntry {
+    state: AppState;
+    staging: StagingSnapshot;
+}
+
 export interface ImportResult {
     success: boolean;
     errors: string[];
@@ -93,6 +100,80 @@ export function computeReachableNodes(key: Couplet[], idMap?: Map<number, Couple
     return reachable;
 }
 
+/** One step on the root→target path, with the alternative (a/b) taken to leave it. */
+export interface PathStep {
+    id: number;
+    stepNum: number;        // 1-based display number
+    choice?: 'a' | 'b';     // which alternative leads to the NEXT crumb; undefined on the target
+}
+
+export interface PathResult {
+    steps: PathStep[];
+    reachable: boolean;
+}
+
+/**
+ * Finds a path of alternatives from the first step (root) to `targetId`, following
+ * only resolved (linked) branches. Pure. Uses breadth-first search, so when a step
+ * is reachable by several routes (convergence) the shortest/canonical one wins; a
+ * visited set makes cycles safe. Unreachable or unknown targets return reachable:false.
+ */
+export function computePathFromRoot(key: readonly Couplet[], targetId: number): PathResult {
+    const empty: PathResult = { steps: [], reachable: false };
+    if (key.length === 0) return empty;
+
+    const idMap = new Map<number, Couplet>(key.map(c => [c.id, c]));
+    const idToIndex = new Map<number, number>();
+    key.forEach((c, index) => idToIndex.set(c.id, index));
+    if (!idMap.has(targetId)) return empty;
+
+    const rootId = key[0].id;
+    const cameFrom = new Map<number, { parentId: number; choice: 'a' | 'b' }>();
+    const visited = new Set<number>([rootId]);
+    const queue: number[] = [rootId];
+
+    while (queue.length > 0) {
+        const currentId = queue.shift()!;
+        if (currentId === targetId) break;
+
+        const couplet = idMap.get(currentId);
+        if (!couplet) continue;
+
+        const edges: Array<[Branch, 'a' | 'b']> = [[couplet.branch1, 'a'], [couplet.branch2, 'b']];
+        for (const [branch, choice] of edges) {
+            const next = branchTarget(branch);
+            if (next !== null && idMap.has(next) && !visited.has(next)) {
+                visited.add(next);
+                cameFrom.set(next, { parentId: currentId, choice });
+                queue.push(next);
+            }
+        }
+    }
+
+    if (!visited.has(targetId)) return empty;
+
+    // Walk back target→root, then reverse. Each crumb's `choice` is the edge that
+    // leads to the next crumb, so it belongs to the parent — shift them down by one.
+    const reverse: Array<{ id: number; choice?: 'a' | 'b' }> = [];
+    let cursor: number | undefined = targetId;
+    let incomingChoice: 'a' | 'b' | undefined = undefined;
+    while (cursor !== undefined) {
+        reverse.push({ id: cursor, choice: incomingChoice });
+        const parent = cameFrom.get(cursor);
+        incomingChoice = parent?.choice;
+        cursor = parent?.parentId;
+    }
+    reverse.reverse();
+
+    const steps: PathStep[] = reverse.map(node => ({
+        id: node.id,
+        stepNum: (idToIndex.get(node.id) ?? 0) + 1,
+        choice: node.choice,
+    }));
+
+    return { steps, reachable: true };
+}
+
 /**
  * Runs the full real-time diagnostics pass over a key, returning issues keyed by
  * couplet id. Pure: takes the key and figure list explicitly so callers can vet
@@ -108,6 +189,15 @@ export function diagnoseKey(key: Couplet[], figures: Figure[]): Map<number, KeyV
     const inboundParentMap = new Map<number, Set<number>>();
 
     const figureIds = new Set(figures.map(f => f.id));
+    const { displayNumToFig, filenameToFig } = buildFigureLookups(figures);
+
+    const rawFigTokenResolves = (value: string): boolean => {
+        const trimmed = value.trim();
+        if (trimmed === '') return false;
+        const n = parseInt(trimmed, 10);
+        if (!isNaN(n) && String(n) === trimmed) return displayNumToFig.has(n);
+        return filenameToFig.has(trimmed.toLowerCase());
+    };
 
     key.forEach((c, index) => {
         idMap.set(c.id, c);
@@ -166,7 +256,7 @@ export function diagnoseKey(key: Couplet[], figures: Figure[]): Map<number, KeyV
             const unresolved1: string[] = [];
             for (const match of c.alt1.matchAll(FIG_RAW_REGEX)) {
                 const token = match[1].trim();
-                if (!unresolved1.includes(token)) {
+                if (!rawFigTokenResolves(token) && !unresolved1.includes(token)) {
                     unresolved1.push(token);
                 }
             }
@@ -191,7 +281,7 @@ export function diagnoseKey(key: Couplet[], figures: Figure[]): Map<number, KeyV
             const unresolved2: string[] = [];
             for (const match of c.alt2.matchAll(FIG_RAW_REGEX)) {
                 const token = match[1].trim();
-                if (!unresolved2.includes(token)) {
+                if (!rawFigTokenResolves(token) && !unresolved2.includes(token)) {
                     unresolved2.push(token);
                 }
             }
@@ -236,17 +326,13 @@ export function diagnoseKey(key: Couplet[], figures: Figure[]): Map<number, KeyV
 export class KeyStore {
     private state: AppState;
     private hasUncommittedChanges: boolean = false;
-    // Which entity the open typing session is editing. Couplet and figure text
-    // edits only batch into one undo step while the scope matches; switching
-    // entity (or any session boundary) forces a fresh checkpoint so a key edit
-    // and a figure edit never collapse into a single undo.
     private editScope: 'key' | 'figures' | null = null;
     private persistedTitle: string = '';
     private activeProjectUid: string = newProjectUid();
     private onProjectPersisted?: (title: string) => void;
 
-    private undoStack: AppState[] = [];
-    private redoStack: AppState[] = [];
+    private undoStack: HistoryEntry[] = [];
+    private redoStack: HistoryEntry[] = [];
     private readonly maxHistoryLimit: number;
     private savedHistoryIndex: number = 0;
     private currentHistoryIndex: number = 0;
@@ -315,6 +401,10 @@ export class KeyStore {
         this.activeCoupletId = id;
     }
 
+    public getActiveCoupletId(): number | null {
+        return this.activeCoupletId;
+    }
+
     public clearActiveCouplet() {
         this.activeCoupletId = null;
     }
@@ -360,17 +450,27 @@ export class KeyStore {
     // HISTORY ENGINE (Undo / Redo)
     // ==========================================
 
+    /** Deep-enough clone of the editable metadata for a history frame. */
+    private captureState(): AppState {
+        return {
+            title: this.state.title,
+            dichotomousKey: this.state.dichotomousKey.map(c => ({ ...c })),
+            figures: (this.state.figures || []).map(f => ({ ...f }))
+        };
+    }
+
+    /** A history frame: current metadata paired with the current binary staging. */
+    private captureHistoryEntry(): HistoryEntry {
+        return { state: this.captureState(), staging: workspaceStorage.getStagingSnapshot() };
+    }
+
     private saveCheckpoint() {
         if (this.redoStack.length > 0 && this.savedHistoryIndex > this.currentHistoryIndex) {
             this.savedHistoryIndex = -1;
         }
 
         this.redoStack = [];
-        this.undoStack.push({
-            title: this.state.title,
-            dichotomousKey: this.state.dichotomousKey.map(c => ({ ...c })),
-            figures: (this.state.figures || []).map(f => ({ ...f }))
-        });
+        this.undoStack.push(this.captureHistoryEntry());
 
         if (this.undoStack.length > this.maxHistoryLimit) {
             this.undoStack.shift();
@@ -390,18 +490,17 @@ export class KeyStore {
     public undo(): boolean {
         if (this.undoStack.length === 0) return false;
 
-        this.redoStack.push({
-            title: this.state.title,
-            dichotomousKey: this.state.dichotomousKey.map(c => ({ ...c })),
-            figures: (this.state.figures || []).map(f => ({ ...f }))
-        });
+        this.redoStack.push(this.captureHistoryEntry());
 
         if (this.redoStack.length > this.maxHistoryLimit) {
             this.redoStack.shift();
         }
 
-        const nextState = this.undoStack.pop();
-        if (nextState) this.state = nextState;
+        const nextEntry = this.undoStack.pop();
+        if (nextEntry) {
+            this.state = nextEntry.state;
+            workspaceStorage.restoreStagingSnapshot(nextEntry.staging);
+        }
 
         this.currentHistoryIndex--;
         this.hasUncommittedChanges = false;
@@ -418,18 +517,16 @@ export class KeyStore {
     public redo(): boolean {
         if (this.redoStack.length === 0) return false;
 
-        this.undoStack.push({
-            title: this.state.title,
-            dichotomousKey: this.state.dichotomousKey.map(c => ({ ...c })),
-            figures: (this.state.figures || []).map(f => ({ ...f }))
-        });
+        this.undoStack.push(this.captureHistoryEntry());
 
         if (this.undoStack.length > this.maxHistoryLimit) {
             this.undoStack.shift();
         }
 
         this.currentHistoryIndex++;
-        this.state = this.redoStack.pop()!;
+        const nextEntry = this.redoStack.pop()!;
+        this.state = nextEntry.state;
+        workspaceStorage.restoreStagingSnapshot(nextEntry.staging);
         this.hasUncommittedChanges = false;
         this.editScope = null;
 
@@ -534,10 +631,12 @@ export class KeyStore {
     public addCouplet(): number {
         this.saveCheckpoint();
 
+        // Ids only need to be unique within the key (they are independent of the
+        // 1-based step number shown to the user), so seed from 0 like pasteCouplets.
         const maxId = this.state.dichotomousKey.reduce((currentMax, couplet) => {
             const validId = Number(couplet?.id);
             return !isNaN(validId) ? Math.max(currentMax, validId) : currentMax;
-        }, 100);
+        }, 0);
 
         const nextInternalId = maxId + 1;
         // Determine what the 1-based step number will be for the new step
@@ -1205,6 +1304,10 @@ export class KeyStore {
             this.saveCheckpoint();
             this.state.title = importedTitle;
             this.activeProjectUid = newProjectUid(); // Imported project is a new identity
+            // Sync the disk-tracking name to the imported title so the follow-up save is
+            // treated as a fresh save/overwrite of THIS project — not as a rename of the
+            // previously active one, which would delete that project's record.
+            this.persistedTitle = importedTitle;
             this.state.dichotomousKey = importedKey;
             this.state.figures = importedFigures;
 
