@@ -123,8 +123,7 @@ export function setupDialogs(store: KeyStore, uiState: UIStateStore, refreshAll:
                         if (remaining.length > 0) {
                             await store.loadProject(remaining[0].name);
                         } else {
-                            await store.createNewProject('Untitled Key');
-                            await store.saveToStorage(); // Persist baseline
+                            await store.createNewProject('Untitled Key'); // persists the baseline itself
                         }
                     }
 

@@ -110,13 +110,7 @@ export function setupFigurePanel(store: KeyStore, uiState: UIStateStore, refresh
             const card = target.closest('.figure-card') as HTMLElement;
             if (!card) return;
             const figId = Number(card.getAttribute('data-id'));
-
-            // Update metadata FIRST so the history checkpoint captures the binary
-            // staging as it was BEFORE this removal — otherwise undo can't restore
-            // the image (see the staging snapshot in the history engine).
             store.updateFigure(figId, { filename: '' });
-
-            // Stage the deletion instead of immediate DB mutation
             workspaceStorage.deleteFigureBinary(figId);
 
             const oldUrl = activeObjectURLs.get(figId);
@@ -203,12 +197,7 @@ export function setupFigurePanel(store: KeyStore, uiState: UIStateStore, refresh
             const figId = Number(card?.getAttribute('data-id'));
             if (isNaN(figId)) return;
 
-            // Update metadata FIRST so the history checkpoint captures the binary
-            // staging as it was BEFORE this upload — keeping undo/redo and the
-            // figure-binary layer in lockstep.
             store.updateFigure(figId, { filename: file.name });
-
-            // Commit binary stream payload directly into client IndexedDB space
             workspaceStorage.uploadFigureBinary(figId, file);
 
             // Evict and clean stale historical URL footprints from browser system memory
@@ -324,7 +313,6 @@ function setupFigureDragAndDrop(figureContainer: HTMLElement, store: KeyStore, r
         if (draggedFigId === targetFigId) return;
 
         const position = card.classList.contains('drag-drop-above') ? 'above' : 'below';
-
         const figures = store.getFigures();
         const srcIdx = figures.findIndex(f => f.id === draggedFigId);
         let targetIdx = figures.findIndex(f => f.id === targetFigId);
@@ -351,9 +339,6 @@ function setupFigureDragAndDrop(figureContainer: HTMLElement, store: KeyStore, r
  * menu command. The keyboard shortcut (Alt+F) lives in keyboardShortcuts.ts.
  */
 export function setupFigureReference(keyContainer: HTMLElement, signal: AbortSignal) {
-    // Keep the last alt1/alt2 caret fresh from any interaction, so the menu item can
-    // target it after the click moves focus away (focusout alone is unreliable, and
-    // never fires for keyboard-only callers).
     const captureCaret = (e: Event) => {
         if (isFigureTextarea(e.target)) {
             const t = e.target as HTMLTextAreaElement;

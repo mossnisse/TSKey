@@ -10,7 +10,7 @@
 import type { Figure } from './store.ts';
 
 export const figIdTokenRegex = (): RegExp => /\[figID:\s*(\d+)\s*\]/gi;
-export const figRawTokenRegex = (): RegExp => /\[fig:\s*([^\]]+)\s*\]/gi;
+export const figRawTokenRegex = (): RegExp => /\[fig:\s*([^\]]+?)\s*\]/gi;
 
 export interface FigureLookups {
     idToDisplayNum: Map<number, number>;

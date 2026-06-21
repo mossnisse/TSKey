@@ -38,8 +38,7 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
                 if (!confirmOverwrite) return;
             }
 
-            await store.createNewProject(chosenTitle);
-            await store.saveToStorage();
+            await store.createNewProject(chosenTitle); // persists the fresh workspace itself
 
             showToast(`📄 New workspace "${chosenTitle}" initiated!`, "success");
             batchedRefresh(refreshAll);

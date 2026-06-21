@@ -135,9 +135,6 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
                 return;
             }
 
-            // Let the browser handle copy/cut of a real text selection (e.g. text in
-            // the publication view); only route to the internal couplet clipboard when
-            // there is a couplet selection and no text is selected.
             const hasTextSelection = (window.getSelection()?.toString() ?? '').trim() !== '';
 
             if (hasModifier && e.key.toLowerCase() === 'c') {

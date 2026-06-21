@@ -189,6 +189,15 @@ export function diagnoseKey(key: Couplet[], figures: Figure[]): Map<number, KeyV
     const inboundParentMap = new Map<number, Set<number>>();
 
     const figureIds = new Set(figures.map(f => f.id));
+    const { displayNumToFig, filenameToFig } = buildFigureLookups(figures);
+
+    const rawFigTokenResolves = (value: string): boolean => {
+        const trimmed = value.trim();
+        if (trimmed === '') return false;
+        const n = parseInt(trimmed, 10);
+        if (!isNaN(n) && String(n) === trimmed) return displayNumToFig.has(n);
+        return filenameToFig.has(trimmed.toLowerCase());
+    };
 
     key.forEach((c, index) => {
         idMap.set(c.id, c);
@@ -247,7 +256,7 @@ export function diagnoseKey(key: Couplet[], figures: Figure[]): Map<number, KeyV
             const unresolved1: string[] = [];
             for (const match of c.alt1.matchAll(FIG_RAW_REGEX)) {
                 const token = match[1].trim();
-                if (!unresolved1.includes(token)) {
+                if (!rawFigTokenResolves(token) && !unresolved1.includes(token)) {
                     unresolved1.push(token);
                 }
             }
@@ -272,7 +281,7 @@ export function diagnoseKey(key: Couplet[], figures: Figure[]): Map<number, KeyV
             const unresolved2: string[] = [];
             for (const match of c.alt2.matchAll(FIG_RAW_REGEX)) {
                 const token = match[1].trim();
-                if (!unresolved2.includes(token)) {
+                if (!rawFigTokenResolves(token) && !unresolved2.includes(token)) {
                     unresolved2.push(token);
                 }
             }
@@ -317,18 +326,11 @@ export function diagnoseKey(key: Couplet[], figures: Figure[]): Map<number, KeyV
 export class KeyStore {
     private state: AppState;
     private hasUncommittedChanges: boolean = false;
-    // Which entity the open typing session is editing. Couplet and figure text
-    // edits only batch into one undo step while the scope matches; switching
-    // entity (or any session boundary) forces a fresh checkpoint so a key edit
-    // and a figure edit never collapse into a single undo.
     private editScope: 'key' | 'figures' | null = null;
     private persistedTitle: string = '';
     private activeProjectUid: string = newProjectUid();
     private onProjectPersisted?: (title: string) => void;
 
-    // History entries pair the metadata snapshot with the figure-binary staging at
-    // the same instant, so undo/redo restores uploaded/removed images alongside the
-    // rows rather than leaving the binary layer out of sync with the history.
     private undoStack: HistoryEntry[] = [];
     private redoStack: HistoryEntry[] = [];
     private readonly maxHistoryLimit: number;
@@ -1302,6 +1304,10 @@ export class KeyStore {
             this.saveCheckpoint();
             this.state.title = importedTitle;
             this.activeProjectUid = newProjectUid(); // Imported project is a new identity
+            // Sync the disk-tracking name to the imported title so the follow-up save is
+            // treated as a fresh save/overwrite of THIS project — not as a rename of the
+            // previously active one, which would delete that project's record.
+            this.persistedTitle = importedTitle;
             this.state.dichotomousKey = importedKey;
             this.state.figures = importedFigures;
 

@@ -1,5 +1,4 @@
 // ui/toast.ts
-// Non-blocking notification banner.
 
 /**
  * Spawns an asynchronous, non-blocking notification banner.

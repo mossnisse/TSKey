@@ -60,8 +60,6 @@ export function renderEditorCards(store: KeyStore) {
         const cardErrors = activeDiagnostics.get(couplet.id) || [];
         const computedTitle = `${displayNum}.`;
         const badgeClass = inboundLinks.length ? 'badge badge-linked' : (index === 0 ? 'badge badge-linked' : 'badge badge-isolated');
-        // Each inbound label ("1b") becomes a Ctrl/Cmd+click target back to that parent
-        // step. The label's leading number is the parent's 1-based step number.
         const badgeHtml = inboundLinks.length
             ? `← ${inboundLinks.map(label => {
                 const parentId = key[parseInt(label, 10) - 1]?.id;
