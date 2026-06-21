@@ -93,6 +93,80 @@ export function computeReachableNodes(key: Couplet[], idMap?: Map<number, Couple
     return reachable;
 }
 
+/** One step on the root→target path, with the alternative (a/b) taken to leave it. */
+export interface PathStep {
+    id: number;
+    stepNum: number;        // 1-based display number
+    choice?: 'a' | 'b';     // which alternative leads to the NEXT crumb; undefined on the target
+}
+
+export interface PathResult {
+    steps: PathStep[];
+    reachable: boolean;
+}
+
+/**
+ * Finds a path of alternatives from the first step (root) to `targetId`, following
+ * only resolved (linked) branches. Pure. Uses breadth-first search, so when a step
+ * is reachable by several routes (convergence) the shortest/canonical one wins; a
+ * visited set makes cycles safe. Unreachable or unknown targets return reachable:false.
+ */
+export function computePathFromRoot(key: readonly Couplet[], targetId: number): PathResult {
+    const empty: PathResult = { steps: [], reachable: false };
+    if (key.length === 0) return empty;
+
+    const idMap = new Map<number, Couplet>(key.map(c => [c.id, c]));
+    const idToIndex = new Map<number, number>();
+    key.forEach((c, index) => idToIndex.set(c.id, index));
+    if (!idMap.has(targetId)) return empty;
+
+    const rootId = key[0].id;
+    const cameFrom = new Map<number, { parentId: number; choice: 'a' | 'b' }>();
+    const visited = new Set<number>([rootId]);
+    const queue: number[] = [rootId];
+
+    while (queue.length > 0) {
+        const currentId = queue.shift()!;
+        if (currentId === targetId) break;
+
+        const couplet = idMap.get(currentId);
+        if (!couplet) continue;
+
+        const edges: Array<[Branch, 'a' | 'b']> = [[couplet.branch1, 'a'], [couplet.branch2, 'b']];
+        for (const [branch, choice] of edges) {
+            const next = branchTarget(branch);
+            if (next !== null && idMap.has(next) && !visited.has(next)) {
+                visited.add(next);
+                cameFrom.set(next, { parentId: currentId, choice });
+                queue.push(next);
+            }
+        }
+    }
+
+    if (!visited.has(targetId)) return empty;
+
+    // Walk back target→root, then reverse. Each crumb's `choice` is the edge that
+    // leads to the next crumb, so it belongs to the parent — shift them down by one.
+    const reverse: Array<{ id: number; choice?: 'a' | 'b' }> = [];
+    let cursor: number | undefined = targetId;
+    let incomingChoice: 'a' | 'b' | undefined = undefined;
+    while (cursor !== undefined) {
+        reverse.push({ id: cursor, choice: incomingChoice });
+        const parent = cameFrom.get(cursor);
+        incomingChoice = parent?.choice;
+        cursor = parent?.parentId;
+    }
+    reverse.reverse();
+
+    const steps: PathStep[] = reverse.map(node => ({
+        id: node.id,
+        stepNum: (idToIndex.get(node.id) ?? 0) + 1,
+        choice: node.choice,
+    }));
+
+    return { steps, reachable: true };
+}
+
 /**
  * Runs the full real-time diagnostics pass over a key, returning issues keyed by
  * couplet id. Pure: takes the key and figure list explicitly so callers can vet
@@ -313,6 +387,10 @@ export class KeyStore {
 
     public setActiveCouplet(id: number | null) {
         this.activeCoupletId = id;
+    }
+
+    public getActiveCoupletId(): number | null {
+        return this.activeCoupletId;
     }
 
     public clearActiveCouplet() {

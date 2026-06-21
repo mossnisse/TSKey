@@ -364,6 +364,29 @@ html, body {
     background: var(--color-primary-light);
 }
 
+/* ==========================================
+   NAVIGATION & LINK HIGHLIGHTS
+   ========================================== */
+/* Steps linked from / to the active step (inset bars so they coexist with the
+   .is-selected left border): outgoing = indigo on the left, incoming = green. */
+.key-card.is-link-out { box-shadow: inset 4px 0 0 var(--color-success); }
+.key-card.is-link-in  { box-shadow: inset 4px 0 0 var(--color-success); }
+.key-card.is-link-out.is-link-in {
+    box-shadow: inset 4px 0 0 var(--color-primary), inset -4px 0 0 var(--color-success);
+}
+
+/* Transient flash when a Ctrl+click / context-menu jump lands on a card.
+   Uses box-shadow so it overlays without shifting layout and coexists with the
+   inset link bars (the animation's shadow takes over for its 1s, then reverts). */
+.nav-flash { animation: navFlash 1s ease-out; }
+@keyframes navFlash {
+    0%   { box-shadow: 0 0 0 3px var(--color-primary), 0 0 12px 2px var(--color-primary); }
+    100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* Clickable figure citation in the publication view (Ctrl/Cmd+click to jump). */
+.fig-ref { color: var(--color-primary); text-decoration: underline dotted; cursor: pointer; }
+
 /* Unified styling for every editable field in the key editor and figure panels —
    descriptions, destinations, filenames and captions all look identical, with the
    same underline and focus highlight. (The menu-bar title input is separate.) */
@@ -661,6 +684,72 @@ html, body {
 @keyframes toastFadeOut {
     to { opacity: 0; transform: translateY(-10px); }
 }
+
+/* ==========================================
+   POPOVER (context menu / figure preview)
+   ========================================== */
+.popover {
+    position: fixed;
+    z-index: 2500; /* above modal overlay (2000) */
+    max-width: 320px;
+    padding: var(--space-sm);
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    font-family: sans-serif;
+    font-size: var(--text-base);
+    color: var(--color-text);
+}
+
+/* Breadcrumb of the path from the root step */
+.popover-crumbs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-xs);
+    padding-bottom: var(--space-sm);
+    margin-bottom: var(--space-sm);
+    border-bottom: 1px solid var(--color-border-light);
+}
+.popover-crumb-sep { color: var(--color-text-muted); }
+.popover-crumb {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 2px 6px;
+    cursor: pointer;
+    font-size: var(--text-sm);
+    font-weight: 600;
+}
+.popover-crumb:hover { background: var(--color-primary); color: var(--color-bg); }
+.popover-note { color: var(--color-text-muted); font-size: var(--text-sm); padding: 2px 0 var(--space-sm); }
+
+.popover-action {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    color: var(--color-text);
+    font-size: var(--text-base);
+}
+.popover-action:hover { background: var(--color-bg-muted); }
+
+/* Figure preview popup */
+.popover-fig-img {
+    display: block;
+    max-width: 300px;
+    max-height: 220px;
+    object-fit: contain;
+    border-radius: var(--radius-sm);
+}
+.popover-fig-caption { margin-top: var(--space-xs); color: var(--color-text-muted); font-size: var(--text-sm); }
+.popover-fig-title { font-weight: 600; margin-bottom: var(--space-xs); }
 
 /* ==========================================
    UNIFIED CONTROL OVERLAY PANEL MODAL

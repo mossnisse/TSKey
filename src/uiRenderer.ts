@@ -1,7 +1,9 @@
 // uiRenderer.ts
 import { KeyStore, APP_NAME, APP_VERSION } from './store.ts';
+import type { Figure } from './store.ts';
 import { UIStateStore } from './uiState.ts';
-import { escapeHTML, buildIdToIndexMap, resolveDestination, IS_MAC, buildFigureIdToDisplayNumMap, buildCoupletLeads, buildBackReferenceMap } from './utils.ts';
+import { escapeHTML, buildIdToIndexMap, resolveDestination, IS_MAC, buildFigureIdToDisplayNumMap, buildCoupletLeads, buildBackReferenceMap, branchTarget } from './utils.ts';
+import { buildFigureLookups } from './figureTokens.ts';
 import { workspaceStorage, activeObjectURLs } from './db.ts';
 
 // ==========================================
@@ -564,6 +566,28 @@ export function renderEditorCards(store: KeyStore) {
     const idToIndexMap = buildIdToIndexMap(key);
     const inboundLinksMap = store.generateInboundLinksMap();
 
+    // Link highlighting: the "focus step" is the single selected card, or — when
+    // nothing is selected — the step being edited. Multi-select is ambiguous → none.
+    const focusId = selectedIds.size === 1
+        ? [...selectedIds][0]
+        : selectedIds.size === 0 ? store.getActiveCoupletId() : null;
+    const linkOutIds = new Set<number>(); // steps the focus step links TO
+    const linkInIds = new Set<number>();  // steps that link TO the focus step
+    if (focusId !== null) {
+        const focusCouplet = key.find(c => c.id === focusId);
+        if (focusCouplet) {
+            const t1 = branchTarget(focusCouplet.branch1);
+            if (t1 !== null) linkOutIds.add(t1);
+            const t2 = branchTarget(focusCouplet.branch2);
+            if (t2 !== null) linkOutIds.add(t2);
+        }
+        key.forEach(c => {
+            if (branchTarget(c.branch1) === focusId || branchTarget(c.branch2) === focusId) {
+                linkInIds.add(c.id);
+            }
+        });
+    }
+
     const existingCards = Array.from(container.querySelectorAll('.key-card')) as HTMLElement[];
     const existingMap = new Map<number, HTMLElement>();
 
@@ -590,10 +614,15 @@ export function renderEditorCards(store: KeyStore) {
         });
         const warningBlockHtml = cardErrors.length > 0 ? `<div class="warning-block">${warningInnerHtml}</div>` : '';
 
+        const isLinkOut = couplet.id !== focusId && linkOutIds.has(couplet.id);
+        const isLinkIn = couplet.id !== focusId && linkInIds.has(couplet.id);
+
         let card = existingMap.get(couplet.id);
         if (card) {
             existingMap.delete(couplet.id);
             card.classList.toggle('is-selected', isSelected);
+            card.classList.toggle('is-link-out', isLinkOut);
+            card.classList.toggle('is-link-in', isLinkIn);
 
             const titleEl = card.querySelector('.card-title');
             if (titleEl && titleEl.textContent !== computedTitle) titleEl.textContent = computedTitle;
@@ -632,6 +661,8 @@ export function renderEditorCards(store: KeyStore) {
             card.setAttribute('data-id', couplet.id.toString());
             card.className = 'key-card';
             if (isSelected) card.classList.add('is-selected');
+            if (isLinkOut) card.classList.add('is-link-out');
+            if (isLinkIn) card.classList.add('is-link-in');
 
             card.innerHTML = `
                 <div class="card-header">
@@ -795,15 +826,59 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
 }
 
 /**
- * Escapes resolved print text and renders any unresolved figure markers
- * ([Broken Fig: …], produced by resolveTextReferences) in red. The red colour
- * conveys the problem, so the word "Broken" is dropped from the label here.
+ * Renders a couplet alternative for the publication view: escapes the literal text
+ * and converts each figure token into a clickable `(Fig. N)` citation that carries
+ * the figure's internal id (`data-fig-id`) for Ctrl/Cmd+click navigation. Resolved
+ * citations get the `.fig-ref` link style; unresolvable ones stay red and inert.
+ * Replaces the old resolveTextReferences + highlightBrokenFigures pipeline so the
+ * figure id survives to the DOM.
  */
-function highlightBrokenFigures(resolvedText: string): string {
-    return escapeHTML(resolvedText).replace(
-        /\[Broken Fig:([^\]]*)\]/g,
-        (_match, value) => `<span class="error-text">[Fig:${value}]</span>`
-    );
+const FIG_TOKEN_REGEX = /\[figID:\s*(\d+)\s*\]|\[fig:\s*([^\]]+?)\s*\]/gi;
+
+function figRefSpan(figId: number, displayNum: number): string {
+    return `<span class="fig-ref" data-fig-id="${figId}">(Fig. ${displayNum})</span>`;
+}
+
+function renderAltToPrintHtml(rawText: string, figures: readonly Figure[], idToDisplayNum: Map<number, number>): string {
+    if (!rawText) return '';
+    const { displayNumToFig, filenameToFig } = buildFigureLookups(figures);
+    const figureCount = figures.length;
+
+    let html = '';
+    let lastIndex = 0;
+    const re = new RegExp(FIG_TOKEN_REGEX.source, FIG_TOKEN_REGEX.flags);
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(rawText)) !== null) {
+        html += escapeHTML(rawText.slice(lastIndex, match.index));
+        lastIndex = match.index + match[0].length;
+
+        if (match[1] !== undefined) {
+            // [figID: N] — N is an internal figure id.
+            const figId = parseInt(match[1], 10);
+            const displayNum = idToDisplayNum.get(figId);
+            html += displayNum !== undefined
+                ? figRefSpan(figId, displayNum)
+                : `<span class="error-text">[Fig: ID ${figId}]</span>`;
+        } else {
+            // [fig: value] — value is a 1-based display number or a filename.
+            const value = (match[2] ?? '').trim();
+            let resolved: { figId: number; displayNum: number } | null = null;
+            const asNum = parseInt(value, 10);
+            if (!isNaN(asNum) && String(asNum) === value && asNum >= 1 && asNum <= figureCount) {
+                const fig = displayNumToFig.get(asNum);
+                if (fig) resolved = { figId: fig.id, displayNum: asNum };
+            } else {
+                const fig = filenameToFig.get(value.toLowerCase());
+                const displayNum = fig ? idToDisplayNum.get(fig.id) : undefined;
+                if (fig && displayNum !== undefined) resolved = { figId: fig.id, displayNum };
+            }
+            html += resolved
+                ? figRefSpan(resolved.figId, resolved.displayNum)
+                : `<span class="error-text">[Fig: ${escapeHTML(value)}]</span>`;
+        }
+    }
+    html += escapeHTML(rawText.slice(lastIndex));
+    return html;
 }
 
 /**
@@ -818,7 +893,8 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
     const key = store.getKey();
     const leadFormat = uiState.leadFormat;
     const idToIndexMap = buildIdToIndexMap(key);
-    const figDisplayMap = buildFigureIdToDisplayNumMap(store.getFigures());
+    const figures = store.getFigures();
+    const figDisplayMap = buildFigureIdToDisplayNumMap(figures);
     const backRefMap = uiState.showBackReference ? buildBackReferenceMap(key) : null;
 
     // Drives the dash-alignment rule for lettered/minimal styles (see style.css).
@@ -839,10 +915,8 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
         const dest1 = resolveDestination(c.branch1, idToIndexMap);
         const dest2 = resolveDestination(c.branch2, idToIndexMap);
 
-        const val1 = store.resolveTextReferences(c.alt1, figDisplayMap) || '___';
-        const val2 = store.resolveTextReferences(c.alt2, figDisplayMap) || '___';
-        const html1 = highlightBrokenFigures(val1);
-        const html2 = highlightBrokenFigures(val2);
+        const html1 = renderAltToPrintHtml(c.alt1, figures, figDisplayMap) || '___';
+        const html2 = renderAltToPrintHtml(c.alt2, figures, figDisplayMap) || '___';
 
         let block = existingMap.get(c.id);
 
