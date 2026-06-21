@@ -38,7 +38,6 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
                 if (!confirmOverwrite) return;
             }
 
-
             await store.createNewProject(chosenTitle);
             await store.saveToStorage();
 
@@ -106,8 +105,6 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
         } catch (error) {
             console.error("Atomic save/rename failed:", error);
 
-            // Controller Rollback: If store.saveToStorage failed during a rename operation,
-            // make sure the store is reverted back to its true persisted title name.
             if (oldTitle && oldTitle !== newTitle) {
                 store.setProjectName(oldTitle);
             }

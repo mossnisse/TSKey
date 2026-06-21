@@ -10,6 +10,16 @@ export interface ProjectRecord {
 }
 
 /**
+ * A point-in-time copy of the uncommitted figure-binary staging. Captured into the
+ * KeyStore's undo/redo history alongside each metadata checkpoint so that undoing a
+ * figure upload/removal/deletion restores the image too — not just the row.
+ */
+export interface StagingSnapshot {
+    uploads: Map<number, Blob>;
+    deletes: Set<number>;
+}
+
+/**
  * Resolves when a transaction commits; rejects on error or abort.
  * `abortMessage` gives the abort path a contextual error for debugging.
  */
@@ -238,7 +248,11 @@ export class WorkspaceManager {
     }
 
     public async deleteProject(title: string): Promise<void> {
-        this.clearStagedChanges();
+        // Do NOT clear staged changes here: the staging buffer belongs to the
+        // *active* project, which may be a different project than the one being
+        // deleted (e.g. deleting a row from the hub while editing another key).
+        // When the active project itself is deleted, the caller switches to another
+        // project (or a new one), and that load/create path resets the cache.
         // Resolve the project's stable uid so its figure blobs can be removed too.
         const project = await this.storage.loadProject(title);
         if (!project) return;
@@ -257,6 +271,37 @@ export class WorkspaceManager {
     public clearStagedChanges(): void {
         this.pendingUploads.clear();
         this.pendingDeletes.clear();
+    }
+
+    /** Shallow copy of the current staging buffer (Blobs are shared by reference). */
+    public getStagingSnapshot(): StagingSnapshot {
+        return {
+            uploads: new Map(this.pendingUploads),
+            deletes: new Set(this.pendingDeletes),
+        };
+    }
+
+    /**
+     * Restores a previously captured staging buffer (undo/redo). Any cached
+     * thumbnail object-URL whose pending binary state changes is revoked so the
+     * renderer rebuilds it from the restored staging + IndexedDB; untouched
+     * figures keep their cached URL, so a couplet-only undo doesn't reload every
+     * thumbnail.
+     */
+    public restoreStagingSnapshot(snap: StagingSnapshot): void {
+        const affected = new Set<number>([
+            ...this.pendingUploads.keys(), ...this.pendingDeletes,
+            ...snap.uploads.keys(), ...snap.deletes,
+        ]);
+        for (const id of affected) {
+            const url = activeObjectURLs.get(id);
+            if (url) {
+                URL.revokeObjectURL(url);
+                activeObjectURLs.delete(id);
+            }
+        }
+        this.pendingUploads = new Map(snap.uploads);
+        this.pendingDeletes = new Set(snap.deletes);
     }
 
     /**

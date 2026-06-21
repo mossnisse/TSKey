@@ -228,7 +228,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
               <tr><td>Cut Selected Key Step</td><td><code>${IS_MAC ? '⌘ + X' : 'Ctrl + X'}</code></td></tr>
               <tr><td>Copy Selected Key Steps</td><td><code>${IS_MAC ? '⌘ + C' : 'Ctrl + C'}</code></td></tr>
               <tr><td>Paste Key Step Below selected steps</td><td><code>${IS_MAC ? '⌘ + V' : 'Ctrl + V'}</code></td></tr>
-              <tr><td>Paste Key Step Above selected steps</td><td><code>Shift + ${IS_MAC ? 'Shift + ⌘ + V' : 'Shift + Ctrl + V'}</code></td></tr>
+              <tr><td>Paste Key Step Above selected steps</td><td><code>${IS_MAC ? 'Shift + ⌘ + V' : 'Shift + Ctrl + V'}</code></td></tr>
               <tr><td>Append New Key Step</td><td><code>Alt + N</code></td></tr>
               <tr><td>Insert figure reference <code>[fig: ]</code> (while editing a step's text)</td><td><code>${IS_MAC ? 'Option + F' : 'Alt + F'}</code></td></tr>
               <tr><td>Swap Alternative Rows in selected key steps</td><td><code>Alt + S</code></td></tr>

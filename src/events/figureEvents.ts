@@ -111,6 +111,11 @@ export function setupFigurePanel(store: KeyStore, uiState: UIStateStore, refresh
             if (!card) return;
             const figId = Number(card.getAttribute('data-id'));
 
+            // Update metadata FIRST so the history checkpoint captures the binary
+            // staging as it was BEFORE this removal — otherwise undo can't restore
+            // the image (see the staging snapshot in the history engine).
+            store.updateFigure(figId, { filename: '' });
+
             // Stage the deletion instead of immediate DB mutation
             workspaceStorage.deleteFigureBinary(figId);
 
@@ -118,7 +123,6 @@ export function setupFigurePanel(store: KeyStore, uiState: UIStateStore, refresh
             if (oldUrl) URL.revokeObjectURL(oldUrl);
             activeObjectURLs.delete(figId);
 
-            store.updateFigure(figId, { filename: '' });
             batchedRefresh(refreshAll);
             return;
         }
@@ -199,6 +203,11 @@ export function setupFigurePanel(store: KeyStore, uiState: UIStateStore, refresh
             const figId = Number(card?.getAttribute('data-id'));
             if (isNaN(figId)) return;
 
+            // Update metadata FIRST so the history checkpoint captures the binary
+            // staging as it was BEFORE this upload — keeping undo/redo and the
+            // figure-binary layer in lockstep.
+            store.updateFigure(figId, { filename: file.name });
+
             // Commit binary stream payload directly into client IndexedDB space
             workspaceStorage.uploadFigureBinary(figId, file);
 
@@ -209,7 +218,6 @@ export function setupFigurePanel(store: KeyStore, uiState: UIStateStore, refresh
             // Populate the sync cache directory immediately using raw object bindings
             const freshUrl = URL.createObjectURL(file);
             activeObjectURLs.set(figId, freshUrl);
-            store.updateFigure(figId, { filename: file.name });
             target.value = '';
 
             batchedRefresh(refreshAll);

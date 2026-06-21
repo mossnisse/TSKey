@@ -89,8 +89,13 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
                 if (!previewImg.hasAttribute('data-loading-state')) {
                     previewImg.setAttribute('data-loading-state', 'pending');
 
-                    workspaceStorage.getFigureBinary(store.getActiveProjectUid(), fig.id).then(blob => {
+                    // Remember which project this load belongs to; if the user switches
+                    // projects before it resolves, drop the result so a stale blob is not
+                    // cached under a figure id that also exists in the new project.
+                    const uidAtLoad = store.getActiveProjectUid();
+                    workspaceStorage.getFigureBinary(uidAtLoad, fig.id).then(blob => {
                         previewImg.removeAttribute('data-loading-state');
+                        if (store.getActiveProjectUid() !== uidAtLoad) return;
                         if (blob) {
                             const newUrl = URL.createObjectURL(blob);
                             activeObjectURLs.set(fig.id, newUrl);

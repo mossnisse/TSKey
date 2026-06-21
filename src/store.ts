@@ -2,6 +2,7 @@
 import { isValidCoupletArray, isValidFigureArray, isRecord, branchTarget, classifyBranch, EMPTY_BRANCH } from './utils.ts';
 import { figIdTokenRegex, figRawTokenRegex, buildFigureLookups } from './figureTokens.ts';
 import { workspaceStorage } from './db.ts';
+import type { StagingSnapshot } from './db.ts';
 
 export const APP_NAME = 'TSKey';
 export const APP_VERSION = '0.0.1';
@@ -57,6 +58,12 @@ interface AppState {
     title: string;
     dichotomousKey: Couplet[];
     figures: Figure[];
+}
+
+/** One undo/redo frame: the editable metadata plus the figure-binary staging. */
+interface HistoryEntry {
+    state: AppState;
+    staging: StagingSnapshot;
 }
 
 export interface ImportResult {
@@ -319,8 +326,11 @@ export class KeyStore {
     private activeProjectUid: string = newProjectUid();
     private onProjectPersisted?: (title: string) => void;
 
-    private undoStack: AppState[] = [];
-    private redoStack: AppState[] = [];
+    // History entries pair the metadata snapshot with the figure-binary staging at
+    // the same instant, so undo/redo restores uploaded/removed images alongside the
+    // rows rather than leaving the binary layer out of sync with the history.
+    private undoStack: HistoryEntry[] = [];
+    private redoStack: HistoryEntry[] = [];
     private readonly maxHistoryLimit: number;
     private savedHistoryIndex: number = 0;
     private currentHistoryIndex: number = 0;
@@ -438,17 +448,27 @@ export class KeyStore {
     // HISTORY ENGINE (Undo / Redo)
     // ==========================================
 
+    /** Deep-enough clone of the editable metadata for a history frame. */
+    private captureState(): AppState {
+        return {
+            title: this.state.title,
+            dichotomousKey: this.state.dichotomousKey.map(c => ({ ...c })),
+            figures: (this.state.figures || []).map(f => ({ ...f }))
+        };
+    }
+
+    /** A history frame: current metadata paired with the current binary staging. */
+    private captureHistoryEntry(): HistoryEntry {
+        return { state: this.captureState(), staging: workspaceStorage.getStagingSnapshot() };
+    }
+
     private saveCheckpoint() {
         if (this.redoStack.length > 0 && this.savedHistoryIndex > this.currentHistoryIndex) {
             this.savedHistoryIndex = -1;
         }
 
         this.redoStack = [];
-        this.undoStack.push({
-            title: this.state.title,
-            dichotomousKey: this.state.dichotomousKey.map(c => ({ ...c })),
-            figures: (this.state.figures || []).map(f => ({ ...f }))
-        });
+        this.undoStack.push(this.captureHistoryEntry());
 
         if (this.undoStack.length > this.maxHistoryLimit) {
             this.undoStack.shift();
@@ -468,18 +488,17 @@ export class KeyStore {
     public undo(): boolean {
         if (this.undoStack.length === 0) return false;
 
-        this.redoStack.push({
-            title: this.state.title,
-            dichotomousKey: this.state.dichotomousKey.map(c => ({ ...c })),
-            figures: (this.state.figures || []).map(f => ({ ...f }))
-        });
+        this.redoStack.push(this.captureHistoryEntry());
 
         if (this.redoStack.length > this.maxHistoryLimit) {
             this.redoStack.shift();
         }
 
-        const nextState = this.undoStack.pop();
-        if (nextState) this.state = nextState;
+        const nextEntry = this.undoStack.pop();
+        if (nextEntry) {
+            this.state = nextEntry.state;
+            workspaceStorage.restoreStagingSnapshot(nextEntry.staging);
+        }
 
         this.currentHistoryIndex--;
         this.hasUncommittedChanges = false;
@@ -496,18 +515,16 @@ export class KeyStore {
     public redo(): boolean {
         if (this.redoStack.length === 0) return false;
 
-        this.undoStack.push({
-            title: this.state.title,
-            dichotomousKey: this.state.dichotomousKey.map(c => ({ ...c })),
-            figures: (this.state.figures || []).map(f => ({ ...f }))
-        });
+        this.undoStack.push(this.captureHistoryEntry());
 
         if (this.undoStack.length > this.maxHistoryLimit) {
             this.undoStack.shift();
         }
 
         this.currentHistoryIndex++;
-        this.state = this.redoStack.pop()!;
+        const nextEntry = this.redoStack.pop()!;
+        this.state = nextEntry.state;
+        workspaceStorage.restoreStagingSnapshot(nextEntry.staging);
         this.hasUncommittedChanges = false;
         this.editScope = null;
 
@@ -612,10 +629,12 @@ export class KeyStore {
     public addCouplet(): number {
         this.saveCheckpoint();
 
+        // Ids only need to be unique within the key (they are independent of the
+        // 1-based step number shown to the user), so seed from 0 like pasteCouplets.
         const maxId = this.state.dichotomousKey.reduce((currentMax, couplet) => {
             const validId = Number(couplet?.id);
             return !isNaN(validId) ? Math.max(currentMax, validId) : currentMax;
-        }, 100);
+        }, 0);
 
         const nextInternalId = maxId + 1;
         // Determine what the 1-based step number will be for the new step

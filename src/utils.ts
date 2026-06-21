@@ -134,10 +134,10 @@ export const IS_MAC: boolean = (() => {
  */
 function isValidBranch(value: unknown): value is Branch {
     if (!value || typeof value !== 'object') return false;
-    const branch = value as { kind?: unknown; targetId?: unknown; step?: unknown; name?: unknown };
+    const branch = value as { kind?: unknown; targetId?: unknown; couplet?: unknown; name?: unknown };
     switch (branch.kind) {
         case 'linked': return typeof branch.targetId === 'number';
-        case 'unresolved': return typeof branch.step === 'number';
+        case 'unresolved': return typeof branch.couplet === 'number';
         case 'taxon': return typeof branch.name === 'string';
         case 'empty': return true;
         default: return false;
