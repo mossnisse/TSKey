@@ -320,8 +320,7 @@ export class KeyStore {
     private undoStack: HistoryEntry[] = [];
     private redoStack: HistoryEntry[] = [];
     private readonly maxHistoryLimit: number;
-    private savedHistoryIndex: number = 0;
-    private currentHistoryIndex: number = 0;
+    private savedDepth: number | null = 0;
 
     private selectedCoupletIds: Set<number> = new Set();
     private _draggedId: number | null = null;
@@ -408,13 +407,14 @@ export class KeyStore {
     }
 
     public markSaved() {
-        this.savedHistoryIndex = this.currentHistoryIndex;
+        this.savedDepth = this.undoStack.length;
         this.hasUncommittedChanges = false;
         this.editScope = null;
     }
 
     public hasUnsavedChanges(): boolean {
-        return this.currentHistoryIndex !== this.savedHistoryIndex || this.hasUncommittedChanges;
+        // Current position is just the undo-stack size; unsaved if it left the saved depth.
+        return this.undoStack.length !== this.savedDepth || this.hasUncommittedChanges;
     }
 
     /**
@@ -423,8 +423,7 @@ export class KeyStore {
     private resetTrackingContext(): void {
         this.undoStack = [];
         this.redoStack = [];
-        this.currentHistoryIndex = 0;
-        this.savedHistoryIndex = 0;
+        this.savedDepth = 0;
         this.hasUncommittedChanges = false;
         this.editScope = null;
         this.selectedCoupletIds.clear();
@@ -435,6 +434,12 @@ export class KeyStore {
     // ==========================================
     // HISTORY ENGINE (Undo / Redo)
     // ==========================================
+    //
+    // Two stacks of frames: undoStack holds past states, redoStack holds states we
+    // undid away from, and the live state sits between them. The current position is
+    // simply undoStack.length. undo() and redo() only ever hand a single frame from
+    // one stack to the other, so undoStack.length + redoStack.length never grows —
+    // the one size cap in saveCheckpoint() suffices and undo/redo need no trimming.
 
     /** Deep-enough clone of the editable metadata for a history frame. */
     private captureState(): AppState {
@@ -451,24 +456,22 @@ export class KeyStore {
     }
 
     private saveCheckpoint() {
-        if (this.redoStack.length > 0 && this.savedHistoryIndex > this.currentHistoryIndex) {
-            this.savedHistoryIndex = -1;
+        if (this.savedDepth !== null && this.savedDepth > this.undoStack.length) {
+            this.savedDepth = null;
         }
-
         this.redoStack = [];
+
         this.undoStack.push(this.captureHistoryEntry());
 
+        // Enforce the cap by dropping the oldest frame. Every frame shifts down a slot,
+        // so the saved marker follows — or is lost if that oldest frame WAS the save.
         if (this.undoStack.length > this.maxHistoryLimit) {
             this.undoStack.shift();
-            this.currentHistoryIndex--;
-            if (this.savedHistoryIndex > 0) {
-                this.savedHistoryIndex--;
-            } else {
-                this.savedHistoryIndex = -1;
+            if (this.savedDepth !== null) {
+                this.savedDepth = this.savedDepth > 0 ? this.savedDepth - 1 : null;
             }
         }
 
-        this.currentHistoryIndex++;
         this.hasUncommittedChanges = false;
         this.editScope = null;
     }
@@ -484,22 +487,14 @@ export class KeyStore {
     public undo(): boolean {
         if (this.undoStack.length === 0) return false;
 
+        // Park the live state on the redo stack, then restore the previous frame.
         this.redoStack.push(this.captureHistoryEntry());
+        const previous = this.undoStack.pop()!;
+        this.state = previous.state;
+        workspaceStorage.restoreStagingSnapshot(previous.staging);
 
-        if (this.redoStack.length > this.maxHistoryLimit) {
-            this.redoStack.shift();
-        }
-
-        const nextEntry = this.undoStack.pop();
-        if (nextEntry) {
-            this.state = nextEntry.state;
-            workspaceStorage.restoreStagingSnapshot(nextEntry.staging);
-        }
-
-        this.currentHistoryIndex--;
         this.hasUncommittedChanges = false;
         this.editScope = null;
-
         this.discardCutBuffer();
 
         return true;
@@ -507,20 +502,13 @@ export class KeyStore {
 
     public redo(): boolean {
         if (this.redoStack.length === 0) return false;
-
         this.undoStack.push(this.captureHistoryEntry());
+        const next = this.redoStack.pop()!;
+        this.state = next.state;
+        workspaceStorage.restoreStagingSnapshot(next.staging);
 
-        if (this.undoStack.length > this.maxHistoryLimit) {
-            this.undoStack.shift();
-        }
-
-        this.currentHistoryIndex++;
-        const nextEntry = this.redoStack.pop()!;
-        this.state = nextEntry.state;
-        workspaceStorage.restoreStagingSnapshot(nextEntry.staging);
         this.hasUncommittedChanges = false;
         this.editScope = null;
-
         this.discardCutBuffer();
 
         return true;
@@ -1267,10 +1255,7 @@ export class KeyStore {
 
             this.saveCheckpoint();
             this.state.title = importedTitle;
-            this.activeProjectUid = newProjectUid(); // Imported project is a new identity
-            // Sync the disk-tracking name to the imported title so the follow-up save is
-            // treated as a fresh save/overwrite of THIS project — not as a rename of the
-            // previously active one, which would delete that project's record.
+            this.activeProjectUid = newProjectUid();
             this.persistedTitle = importedTitle;
             this.state.dichotomousKey = importedKey;
             this.state.figures = importedFigures;

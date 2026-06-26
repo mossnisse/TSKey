@@ -195,7 +195,7 @@ export function setupCoupletFocus(keyContainer: HTMLElement, store: KeyStore, ui
                 // Trigger the warning toast if the field has an unresolved destination
                 if (target.classList.contains('input-error') && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) && card) {
                     const invalidVal = target.value;
-                    showToast(`⚠️ Destination "${invalidVal}" is unresolved. Saved as text context.`, "error");
+                    showToast(`⚠️ Step "${invalidVal}" doesn't exist yet — kept as a pending link.`, "error");
                 }
 
                 // Evaluate next target context defensively (ensuring target is an Element node)
