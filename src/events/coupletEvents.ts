@@ -4,7 +4,7 @@
 // menu and keyboard handlers.
 import type { KeyStore, Couplet } from '../store.ts';
 import type { UIStateStore } from '../uiState.ts';
-import { batchedRefresh, DEBOUNCE_TYPING_MS, AUTO_SCROLL_THRESHOLD_PX, AUTO_SCROLL_SPEED_PX } from './shared.ts';
+import { batchedRefresh, DEBOUNCE_TYPING_MS, setupCardDragReorder } from './shared.ts';
 import { resolveDestination, parseDestinationInput, buildIdToIndexMap } from '../utils.ts';
 import { showToast } from '../uiRenderer.ts';
 
@@ -220,107 +220,17 @@ export function setupCoupletFocus(keyContainer: HTMLElement, store: KeyStore, ui
 
 /** HTML5 drag-and-drop reordering for couplet cards, with edge auto-scroll. */
 export function setupCoupletDragAndDrop(keyContainer: HTMLElement, store: KeyStore, refreshAll: () => void, signal: AbortSignal) {
-    let activeDropCard: HTMLElement | null = null;
-    let activeDropClass: 'drag-drop-above' | 'drag-drop-below' | null = null;
-    let activeDropRect: DOMRect | null = null;        // Cached bounding metrics to prevent layout thrashing
-    let cachedScrollY = 0;
-
-    const clearDropMarkers = () => {
-        if (activeDropCard) {
-            activeDropCard.classList.remove('drag-drop-above', 'drag-drop-below');
-            activeDropCard = null;
-            activeDropClass = null;
-            activeDropRect = null;
-        }
-    };
-
-    const updateTargetTrackers = (clientY: number, cardEl: HTMLElement) => {
-        const actualCard = cardEl.closest('.key-card') as HTMLElement;
-
-        if (!actualCard) {
-            clearDropMarkers();
-            return;
-        }
-
-        const currentScrollY = keyContainer.scrollTop;
-
-        if (activeDropCard !== actualCard || !activeDropRect || cachedScrollY !== currentScrollY) {
-            activeDropRect = actualCard.getBoundingClientRect();
-            cachedScrollY = currentScrollY;
-        }
-
-        const relativeMouseY = clientY - activeDropRect.top;
-        const currentClass = relativeMouseY < activeDropRect.height / 2 ? 'drag-drop-above' : 'drag-drop-below';
-
-        if (activeDropCard !== actualCard || activeDropClass !== currentClass) {
-            const rectToPreserve = activeDropRect;
-
-            clearDropMarkers();
-
-            actualCard.classList.add(currentClass);
-            activeDropCard = actualCard;
-            activeDropClass = currentClass;
-            activeDropRect = rectToPreserve;
-        }
-    };
-
-    keyContainer.addEventListener('dragstart', (e) => {
-        const target = e.target as HTMLElement;
-        const card = target.closest('.key-card') as HTMLElement;
-        if (!card) return;
-
-        const id = Number(card.getAttribute('data-id'));
-        store.startDraggingCouplet(id);
-        requestAnimationFrame(() => {
-            card.style.opacity = '0.4';
-        });
-    }, { signal });
-
-    keyContainer.addEventListener('dragend', (e) => {
-        const target = e.target as HTMLElement;
-        const card = target.closest('.key-card') as HTMLElement;
-        if (!card) return;
-
-        card.style.opacity = '1';
-        store.stopDraggingCouplet();
-        clearDropMarkers();
-    }, { signal });
-
-    keyContainer.addEventListener('dragover', (e: DragEvent) => {
-        if (store.draggedCoupletId === null) return;
-        e.preventDefault();
-
-        const containerRect = keyContainer.getBoundingClientRect();
-
-        if (e.clientY - containerRect.top < AUTO_SCROLL_THRESHOLD_PX) {
-            keyContainer.scrollBy(0, -AUTO_SCROLL_SPEED_PX);
-        } else if (containerRect.bottom - e.clientY < AUTO_SCROLL_THRESHOLD_PX) {
-            keyContainer.scrollBy(0, AUTO_SCROLL_SPEED_PX);
-        }
-
-        updateTargetTrackers(e.clientY, e.target as HTMLElement);
-    }, { signal });
-
-    keyContainer.addEventListener('dragleave', (e: DragEvent) => {
-        const target = e.relatedTarget as HTMLElement;
-        if (!target || !keyContainer.contains(target)) {
-            clearDropMarkers();
-        }
-    }, { signal });
-
-    keyContainer.addEventListener('drop', (e) => {
-        e.preventDefault();
-        const target = e.target as HTMLElement;
-        const card = target.closest('.key-card') as HTMLElement;
-        if (!card) return;
-        const coupletId = Number(card.getAttribute('data-id'));
-        if (store.draggedCoupletId === null || store.draggedCoupletId === coupletId) return;
-
-        const position: 'above' | 'below' = card.classList.contains('drag-drop-above') ? 'above' : 'below';
-
-        store.reorderCouplets(store.draggedCoupletId, coupletId, position);
-        batchedRefresh(refreshAll);
-    }, { signal });
+    setupCardDragReorder({
+        container: keyContainer,
+        cardSelector: '.key-card',
+        getDraggedId: () => store.draggedCoupletId,
+        setDraggedId: (id) => id === null ? store.stopDraggingCouplet() : store.startDraggingCouplet(id),
+        signal,
+        onDrop: (draggedId, targetId, position) => {
+            store.reorderCouplets(draggedId, targetId, position);
+            batchedRefresh(refreshAll);
+        },
+    });
 }
 
 /** Appends a new step and focuses its first description field. */

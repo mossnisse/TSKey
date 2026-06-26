@@ -4,7 +4,7 @@
 // are also used by the keyboard shortcut (Alt+F).
 import type { KeyStore } from '../store.ts';
 import type { UIStateStore } from '../uiState.ts';
-import { batchedRefresh, DEBOUNCE_TYPING_MS, AUTO_SCROLL_THRESHOLD_PX, AUTO_SCROLL_SPEED_PX } from './shared.ts';
+import { batchedRefresh, DEBOUNCE_TYPING_MS, setupCardDragReorder } from './shared.ts';
 import { showToast } from '../uiRenderer.ts';
 import { workspaceStorage, activeObjectURLs } from '../db.ts';
 
@@ -213,124 +213,34 @@ export function setupFigurePanel(store: KeyStore, uiState: UIStateStore, refresh
         }
     }, { signal });
 
-    setupFigureDragAndDrop(figureContainer, store, refreshAll, signal);
-}
-
-/** HTML5 drag-and-drop reordering for figure cards, with edge auto-scroll. */
-function setupFigureDragAndDrop(figureContainer: HTMLElement, store: KeyStore, refreshAll: () => void, signal: AbortSignal) {
+    // Figures track their own drag id locally (unlike couplets, the store doesn't
+    // need it for rendering). reorderFigures takes raw array indices, so the drop
+    // handler converts the above/below position into a target index.
     let draggedFigId: number | null = null;
-    let activeFigDropCard: HTMLElement | null = null;
-    let activeFigDropClass: 'drag-drop-above' | 'drag-drop-below' | null = null;
-    let activeFigDropRect: DOMRect | null = null;
-    let cachedFigScrollY = 0;
+    setupCardDragReorder({
+        container: figureContainer,
+        cardSelector: '.figure-card',
+        getDraggedId: () => draggedFigId,
+        setDraggedId: (id) => { draggedFigId = id; },
+        signal,
+        onDrop: (draggedId, targetId, position) => {
+            const figures = store.getFigures();
+            const srcIdx = figures.findIndex(f => f.id === draggedId);
+            let targetIdx = figures.findIndex(f => f.id === targetId);
+            if (srcIdx === -1 || targetIdx === -1) return;
 
-    const clearFigDropMarkers = () => {
-        if (activeFigDropCard) {
-            activeFigDropCard.classList.remove('drag-drop-above', 'drag-drop-below');
-            activeFigDropCard = null;
-            activeFigDropClass = null;
-            activeFigDropRect = null;
-        }
-    };
+            if (position === 'below') {
+                targetIdx = srcIdx < targetIdx ? targetIdx : targetIdx + 1;
+            } else {
+                targetIdx = srcIdx < targetIdx ? targetIdx - 1 : targetIdx;
+            }
 
-    const updateFigTargetTrackers = (clientY: number, cardEl: HTMLElement) => {
-        const actualCard = cardEl.closest('.figure-card') as HTMLElement;
-        if (!actualCard) {
-            clearFigDropMarkers();
-            return;
-        }
-
-        const currentScrollY = figureContainer.scrollTop;
-
-        if (activeFigDropCard !== actualCard || !activeFigDropRect || cachedFigScrollY !== currentScrollY) {
-            activeFigDropRect = actualCard.getBoundingClientRect();
-            cachedFigScrollY = currentScrollY;
-        }
-
-        const relativeMouseY = clientY - activeFigDropRect.top;
-        const currentClass = relativeMouseY < activeFigDropRect.height / 2 ? 'drag-drop-above' : 'drag-drop-below';
-
-        if (activeFigDropCard !== actualCard || activeFigDropClass !== currentClass) {
-            const rectToPreserve = activeFigDropRect;
-            clearFigDropMarkers();
-            actualCard.classList.add(currentClass);
-            activeFigDropCard = actualCard;
-            activeFigDropClass = currentClass;
-            activeFigDropRect = rectToPreserve;
-        }
-    };
-
-    figureContainer.addEventListener('dragstart', (e) => {
-        const target = e.target as HTMLElement;
-        const card = target.closest('.figure-card') as HTMLElement;
-        if (!card) return;
-
-        draggedFigId = Number(card.getAttribute('data-id'));
-        requestAnimationFrame(() => {
-            card.style.opacity = '0.4';
-        });
-    }, { signal });
-
-    figureContainer.addEventListener('dragend', (e) => {
-        const target = e.target as HTMLElement;
-        const card = target.closest('.figure-card') as HTMLElement;
-        if (card) card.style.opacity = '1';
-        draggedFigId = null;
-        clearFigDropMarkers();
-    }, { signal });
-
-    figureContainer.addEventListener('dragover', (e: DragEvent) => {
-        if (draggedFigId === null) return;
-        e.preventDefault();
-
-        // Edge-scrolling logic targeting the figure container specifically
-        const containerRect = figureContainer.getBoundingClientRect();
-
-        if (e.clientY - containerRect.top < AUTO_SCROLL_THRESHOLD_PX) {
-            figureContainer.scrollBy(0, -AUTO_SCROLL_SPEED_PX);
-        } else if (containerRect.bottom - e.clientY < AUTO_SCROLL_THRESHOLD_PX) {
-            figureContainer.scrollBy(0, AUTO_SCROLL_SPEED_PX);
-        }
-
-        updateFigTargetTrackers(e.clientY, e.target as HTMLElement);
-    }, { signal });
-
-    figureContainer.addEventListener('dragleave', (e: DragEvent) => {
-        const target = e.relatedTarget as HTMLElement;
-        if (!target || !figureContainer.contains(target)) {
-            clearFigDropMarkers();
-        }
-    }, { signal });
-
-    figureContainer.addEventListener('drop', (e) => {
-        e.preventDefault();
-        const target = e.target as HTMLElement;
-        const card = target.closest('.figure-card') as HTMLElement;
-
-        if (!card || draggedFigId === null) return;
-
-        const targetFigId = Number(card.getAttribute('data-id'));
-        if (draggedFigId === targetFigId) return;
-
-        const position = card.classList.contains('drag-drop-above') ? 'above' : 'below';
-        const figures = store.getFigures();
-        const srcIdx = figures.findIndex(f => f.id === draggedFigId);
-        let targetIdx = figures.findIndex(f => f.id === targetFigId);
-
-        if (srcIdx === -1 || targetIdx === -1) return;
-
-        // Shift index logic based on array splicing behavior
-        if (position === 'below') {
-            targetIdx = srcIdx < targetIdx ? targetIdx : targetIdx + 1;
-        } else {
-            targetIdx = srcIdx < targetIdx ? targetIdx - 1 : targetIdx;
-        }
-
-        if (srcIdx !== targetIdx) {
-            store.reorderFigures(srcIdx, targetIdx);
-            batchedRefresh(refreshAll);
-        }
-    }, { signal });
+            if (srcIdx !== targetIdx) {
+                store.reorderFigures(srcIdx, targetIdx);
+                batchedRefresh(refreshAll);
+            }
+        },
+    });
 }
 
 /**
