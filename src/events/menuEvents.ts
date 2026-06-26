@@ -49,7 +49,7 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
     }, { signal });
 
     document.querySelector('#cmd-save-as')?.addEventListener('click', async () => {
-        const originalTitle = store.getProjectName();
+        const originalTitle = store.getTitle();
         const titleInput = prompt("Save current configuration under a new title:", originalTitle);
         if (titleInput === null) return;
 
@@ -79,7 +79,7 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
 
     document.querySelector('#cmd-save')?.addEventListener('click', async () => {
         const oldTitle = store.getPersistedTitle();
-        const newTitle = store.getProjectName(); // Extracted from memory state
+        const newTitle = store.getTitle(); // Extracted from memory state
 
         try {
             // SCENARIO A: The user renamed the project in the UI input before clicking save
@@ -105,7 +105,7 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
             console.error("Atomic save/rename failed:", error);
 
             if (oldTitle && oldTitle !== newTitle) {
-                store.setProjectName(oldTitle);
+                store.setTitle(oldTitle);
             }
 
             showToast("⚠️ Save failed. Your changes were kept in memory.", "error");
@@ -171,7 +171,7 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
                 return;
             }
 
-            store.setProjectName(targetName);
+            store.setTitle(targetName);
 
             const failedFigureIds: number[] = [];
             if (importResult.importedFigures && importResult.importedFigures.length > 0) {
@@ -219,7 +219,7 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
 
             // ROLLBACK: Revert the title state if mutation halfway broke down
             if (originalTitle) {
-                store.setProjectName(originalTitle);
+                store.setTitle(originalTitle);
             }
             workspaceStorage.clearStagedChanges();
 

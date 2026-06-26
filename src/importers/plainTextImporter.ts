@@ -698,7 +698,7 @@ async function confirmImport(store: KeyStore, uiState: UIStateStore, refreshAll:
 
         // store.importJsonData resets the image cache internally; a plain-text import
         // brings no figures, so there's nothing further to stage here.
-        store.setProjectName(targetName);
+        store.setTitle(targetName);
         uiState.setActiveProjectTitle(targetName);
 
         await store.saveToStorage();
@@ -709,7 +709,7 @@ async function confirmImport(store: KeyStore, uiState: UIStateStore, refreshAll:
     } catch (err) {
         console.error('Plain text import failed:', err);
         if (originalTitle) {
-            store.setProjectName(originalTitle);
+            store.setTitle(originalTitle);
             uiState.setActiveProjectTitle(originalTitle);
         }
         workspaceStorage.clearStagedChanges();

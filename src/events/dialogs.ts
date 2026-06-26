@@ -116,7 +116,7 @@ export function setupDialogs(store: KeyStore, uiState: UIStateStore, refreshAll:
                     await workspaceStorage.deleteProject(projectName);
                     showToast(`🗑️ Workspace "${projectName}" deleted.`, "success");
 
-                    const currentOpenName = store.getProjectName();
+                    const currentOpenName = store.getTitle();
 
                     if (currentOpenName === projectName) {
                         const remaining = await workspaceStorage.getProjectList();

@@ -224,6 +224,33 @@ export function diagnoseKey(key: Couplet[], figures: Figure[]): Map<number, KeyV
     const FIG_ID_REGEX = figIdTokenRegex();
     const FIG_RAW_REGEX = figRawTokenRegex();
 
+    // Collects figure-reference issues for one alternative's text: stored [figID: N]
+    // tokens whose figure is gone, and raw [fig: value] tokens that don't resolve.
+    const figureIssues = (text: string, label: 'A' | 'B'): KeyValidationError[] => {
+        const out: KeyValidationError[] = [];
+        if (!text) return out;
+
+        const missingIds: number[] = [];
+        for (const match of text.matchAll(FIG_ID_REGEX)) {
+            const figId = parseInt(match[1], 10);
+            if (!figureIds.has(figId) && !missingIds.includes(figId)) missingIds.push(figId);
+        }
+        missingIds.forEach(id => {
+            out.push({ severity: 'warning', message: `Choice ${label} references a missing or deleted figure (Internal ID: ${id}).` });
+        });
+
+        const unresolved: string[] = [];
+        for (const match of text.matchAll(FIG_RAW_REGEX)) {
+            const token = match[1].trim();
+            if (!rawFigTokenResolves(token) && !unresolved.includes(token)) unresolved.push(token);
+        }
+        unresolved.forEach(token => {
+            out.push({ severity: 'warning', message: `Choice ${label} references an unresolved figure reference '[fig: ${token}]'.` });
+        });
+
+        return out;
+    };
+
     key.forEach((c, index) => {
         const issues: KeyValidationError[] = [];
 
@@ -240,55 +267,8 @@ export function diagnoseKey(key: Couplet[], figures: Figure[]): Map<number, KeyV
         }
 
         // --- Unresolved Figure Reference Diagnostics ---
-        // Check Choice A
-        if (c.alt1) {
-            const missingIds1: number[] = [];
-            for (const match of c.alt1.matchAll(FIG_ID_REGEX)) {
-                const figId = parseInt(match[1], 10);
-                if (!figureIds.has(figId) && !missingIds1.includes(figId)) {
-                    missingIds1.push(figId);
-                }
-            }
-            missingIds1.forEach(id => {
-                issues.push({ severity: 'warning', message: `Choice A references a missing or deleted figure (Internal ID: ${id}).` });
-            });
-
-            const unresolved1: string[] = [];
-            for (const match of c.alt1.matchAll(FIG_RAW_REGEX)) {
-                const token = match[1].trim();
-                if (!rawFigTokenResolves(token) && !unresolved1.includes(token)) {
-                    unresolved1.push(token);
-                }
-            }
-            unresolved1.forEach(token => {
-                issues.push({ severity: 'warning', message: `Choice A references an unresolved figure reference '[fig: ${token}]'.` });
-            });
-        }
-
-        // Check Choice B
-        if (c.alt2) {
-            const missingIds2: number[] = [];
-            for (const match of c.alt2.matchAll(FIG_ID_REGEX)) {
-                const figId = parseInt(match[1], 10);
-                if (!figureIds.has(figId) && !missingIds2.includes(figId)) {
-                    missingIds2.push(figId);
-                }
-            }
-            missingIds2.forEach(id => {
-                issues.push({ severity: 'warning', message: `Choice B references a missing or deleted figure (Internal ID: ${id}).` });
-            });
-
-            const unresolved2: string[] = [];
-            for (const match of c.alt2.matchAll(FIG_RAW_REGEX)) {
-                const token = match[1].trim();
-                if (!rawFigTokenResolves(token) && !unresolved2.includes(token)) {
-                    unresolved2.push(token);
-                }
-            }
-            unresolved2.forEach(token => {
-                issues.push({ severity: 'warning', message: `Choice B references an unresolved figure reference '[fig: ${token}]'.` });
-            });
-        }
+        issues.push(...figureIssues(c.alt1, 'A'));
+        issues.push(...figureIssues(c.alt2, 'B'));
 
         if (index > 0 && !reachableNodes.has(c.id)) {
             issues.push({ severity: 'warning', message: 'Orphaned: This step is unreachable from Step #1.' });
@@ -493,6 +473,14 @@ export class KeyStore {
         this.editScope = null;
     }
 
+    /** Reverts a pending cut back to a plain copy, dropping the severed-link buffer. */
+    private discardCutBuffer(): void {
+        if (this.clipboardMode === 'cut') {
+            this.clipboardMode = 'copy';
+            this.cutIncomingLinksBuffer = [];
+        }
+    }
+
     public undo(): boolean {
         if (this.undoStack.length === 0) return false;
 
@@ -512,10 +500,7 @@ export class KeyStore {
         this.hasUncommittedChanges = false;
         this.editScope = null;
 
-        if (this.clipboardMode === 'cut') {
-            this.clipboardMode = 'copy';
-            this.cutIncomingLinksBuffer = [];
-        }
+        this.discardCutBuffer();
 
         return true;
     }
@@ -536,10 +521,7 @@ export class KeyStore {
         this.hasUncommittedChanges = false;
         this.editScope = null;
 
-        if (this.clipboardMode === 'cut') {
-            this.clipboardMode = 'copy';
-            this.cutIncomingLinksBuffer = [];
-        }
+        this.discardCutBuffer();
 
         return true;
     }
@@ -595,14 +577,6 @@ export class KeyStore {
         });
 
         return map;
-    }
-
-    /**
-     * Executes a DFS starting from the root node (Index 0).
-     * Returns a Set containing all unique, reachable internal IDs.
-     */
-    public getReachableNodes(idMap?: Map<number, Couplet>): Set<number> {
-        return computeReachableNodes(this.state.dichotomousKey, idMap);
     }
 
     // ==========================================
@@ -1241,22 +1215,6 @@ export class KeyStore {
         this.hasUncommittedChanges = true;
     }
 
-    /**
-     * Packages the current core application status state into the unified `.tskey` JSON file format structure.
-     */
-    public exportJsonData() {
-        return {
-            type: APP_NAME,
-            version: APP_VERSION,
-            title: this.state.title,
-            data: {
-                title: this.state.title,
-                key: this.state.dichotomousKey,
-                figures: this.state.figures
-            }
-        };
-    }
-
     public importJsonData(rawData: unknown): ImportResult {
         try {
             let importedKey: Couplet[] | null = null;
@@ -1344,14 +1302,6 @@ export class KeyStore {
     // ==========================================
     // WORKSPACE & PROJECT ENGINE
     // ==========================================
-
-    public getProjectName(): string {
-        return this.state.title;
-    }
-
-    public setProjectName(newTitle: string): void {
-        this.setTitle(newTitle);
-    }
 
     public setProjectPersistedListener(cb: (title: string) => void): void {
         this.onProjectPersisted = cb;

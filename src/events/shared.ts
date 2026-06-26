@@ -23,7 +23,7 @@ export function batchedRefresh(refreshFn: () => void) {
 
 /** Refreshes and populates rows inside the workspace project selector hub. */
 export async function refreshHubView(store: KeyStore) {
-    const currentTitle = store.getProjectName();
+    const currentTitle = store.getTitle();
     const projects = await workspaceStorage.getProjectList();
     renderProjectHubList(projects, currentTitle);
 }

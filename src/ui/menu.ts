@@ -23,7 +23,7 @@ export function renderMenu(store: KeyStore, uiState: UIStateStore) {
     const hasClipboard = store.hasClipboardData();
 
     // Contextual Sync for current key title & modification indicators
-    const currentTitle = store.getProjectName();
+    const currentTitle = store.getTitle();
     const isUnsaved = store.hasUnsavedChanges();
     const formattedTitleText = `${currentTitle}${isUnsaved ? ' *' : ''}`;
 

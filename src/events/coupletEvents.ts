@@ -22,7 +22,7 @@ export function setupTitleEditing(store: KeyStore, refreshAll: () => void, signa
 
         const newTitle = titleInput.value.trim();
         if (!newTitle) {
-            titleInput.value = store.getProjectName();
+            titleInput.value = store.getTitle();
             return;
         }
 
