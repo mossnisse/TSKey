@@ -293,6 +293,12 @@ export function diagnoseKey(key: Couplet[], figures: Figure[]): Map<number, KeyV
         if (index > 0 && !reachableNodes.has(c.id)) {
             issues.push({ severity: 'warning', message: 'Orphaned: This step is unreachable from Step #1.' });
         }
+
+        // The first step is the key's entry point, so nothing should link back into it.
+        // inboundParentMap only holds ids that have a parent, so its presence is the test.
+        if (index === 0 && inboundParentMap.has(c.id)) {
+            issues.push({ severity: 'warning', message: "Step #1 should be the key's starting point, but other steps link here." });
+        }
         if (c.branch1.kind === 'linked') {
             if (c.branch1.targetId === c.id) issues.push({ severity: 'error', message: 'Choice A loops directly into its own key step.' });
             else if (!idMap.has(c.branch1.targetId)) issues.push({ severity: 'error', message: 'Choice A points to an invalid or deleted step.' });
