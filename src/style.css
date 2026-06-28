@@ -1098,10 +1098,10 @@ button.popover-path-row:hover { background: var(--color-bg-muted); }
 
 .import-preview-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-sm); }
 .import-preview-step { display: flex; gap: var(--space-md); padding: var(--space-sm) var(--space-md); background: var(--color-bg); border: 1px solid var(--color-border-light); border-radius: var(--radius-sm); }
-.import-preview-num { font-family: monospace; font-weight: 700; color: var(--color-primary); }
+.import-preview-lead { flex: 0 0 auto; min-width: 2.5em; font-family: monospace; font-weight: 700; color: var(--color-primary); }
 .import-preview-rows { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: var(--space-xs); }
-.import-preview-row { display: flex; justify-content: space-between; gap: var(--space-md); font-size: var(--text-base); }
-.import-preview-text { color: var(--color-text); }
+.import-preview-row { display: flex; gap: var(--space-md); align-items: baseline; font-size: var(--text-base); }
+.import-preview-text { flex: 1 1 auto; min-width: 0; color: var(--color-text); }
 .import-preview-dest { flex: 0 0 auto; color: var(--color-text-muted); font-weight: 500; white-space: nowrap; }
 
 .import-diagnostics-summary {

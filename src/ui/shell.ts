@@ -323,6 +323,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
         <label class="import-option"><input type="checkbox" id="pt-opt-ws" checked /> Spaces/Tab separator</label>
         <label class="import-option"><input type="checkbox" id="pt-opt-lettered" checked /> Lettered (1a/1b)</label>
         <label class="import-option"><input type="checkbox" id="pt-opt-dash" checked /> Dash second line</label>
+        <label class="import-option"><input type="checkbox" id="pt-opt-backref" checked /> Back-refs "2 (1)"</label>
         <label class="import-option"><input type="checkbox" id="pt-opt-fill" checked /> Fill missing key steps</label>
         <label class="import-option import-option-num">Min leader dots
           <input type="number" id="pt-opt-min-dots" min="2" max="10" step="1" value="3" />

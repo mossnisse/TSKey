@@ -1,9 +1,7 @@
 // plainTextImporter.ts
 //
-// Imports a dichotomous key from a plain-text document. This is the inverse of
-// exporters/plainTextExporter.ts and is tolerant of light hand-editing of that
-// format. The heavy lifting lives here so the parser can grow independently of
-// the event wiring in eventController.ts.
+// Imports a dichotomous key from a plain-text document — the inverse of
+// exporters/plainTextExporter.ts, tolerant of light hand-editing of that format.
 //
 // Expected source layout (tab-delimited, as produced by the plain text exporter):
 //
@@ -14,7 +12,6 @@
 //
 // A "Destination" is either a step number (→ link) or a taxon name (→ taxa).
 // "..." marks an empty destination and "___" marks an empty description.
-// An optional "FIGURES DATA" appendix is parsed into figure records.
 
 import type { Branch, Couplet, Figure, KeyStore } from '../store.ts';
 import type { UIStateStore } from '../uiState.ts';
@@ -23,7 +20,6 @@ import { showToast } from '../uiRenderer.ts';
 import { escapeHTML } from '../utils.ts';
 import { workspaceStorage } from '../db.ts';
 
-const EMPTY_DEST_TOKEN = '...';
 const EMPTY_ALT_TOKEN = '___';
 
 // ==========================================
@@ -135,6 +131,8 @@ export interface PlainTextParseOptions {
     recognizeLetteredCouplets: boolean;
     /** Recognize a leading dash ( - – — ) as the second alternative of a couplet. */
     recognizeDashSecondLead: boolean;
+    /** Ignore a parenthesized back-reference after the step number, e.g. "2 (1)". */
+    recognizeBackReferences: boolean;
     /** Generate empty couplets for any step numbers missing from the source. */
     fillMissingCouplets: boolean;
 }
@@ -146,6 +144,7 @@ export const DEFAULT_PARSE_OPTIONS: PlainTextParseOptions = {
     dehyphenate: true,
     recognizeLetteredCouplets: true,
     recognizeDashSecondLead: true,
+    recognizeBackReferences: true,
     fillMissingCouplets: true,
 };
 
@@ -195,7 +194,11 @@ function parseMarker(line: string, opts: PlainTextParseOptions): LeadMarker | nu
     // The marker must be followed by whitespace then text, which keeps wrapped
     // continuations like "3F) on inner side" from being mistaken for markers.
     const letterClass = opts.recognizeLetteredCouplets ? '([a-bA-B])?' : '()?';
-    const numbered = line.match(new RegExp(`^\\s*(\\d{1,4})\\s*${letterClass}\\s*[.)]?\\s+(\\S.*)$`));
+    // Optional parenthesized back-reference to the parent couplet, e.g. "2 (1)".
+    // Non-capturing so numbered[1..3] keep their meaning; digit-led content avoids
+    // swallowing in-text parentheticals like "(Fig. 4)".
+    const backRef = opts.recognizeBackReferences ? '(?:\\s*\\(\\s*\\d[\\d\\s,.–-]*\\))?' : '';
+    const numbered = line.match(new RegExp(`^\\s*(\\d{1,4})\\s*${letterClass}\\s*[.)]?${backRef}\\s+(\\S.*)$`));
     if (numbered) {
         const num = parseInt(numbered[1], 10);
         const letter = (numbered[2] || '').toLowerCase();
@@ -203,7 +206,6 @@ function parseMarker(line: string, opts: PlainTextParseOptions): LeadMarker | nu
         if (opts.recognizeLetteredCouplets && letter === 'b') {
             return { kind: 'second', coupletNum: num, rest };
         }
-        // 'a' (or no letter) opens the first alternative.
         return { kind: 'first', coupletNum: num, rest };
     }
 
@@ -227,6 +229,14 @@ function joinContinuation(body: string, line: string, opts: PlainTextParseOption
     return `${left} ${right}`;
 }
 
+/** Returns the last match of a global regex in a string, or null if none. */
+function lastMatch(re: RegExp, s: string): RegExpExecArray | null {
+    let last: RegExpExecArray | null = null;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(s)) !== null) last = m;
+    return last;
+}
+
 /**
  * Splits a lead body into its description text and its raw destination, using
  * the strongest available separator: tab, then dotted leader, then wide
@@ -241,19 +251,14 @@ function splitBody(body: string, opts: PlainTextParseOptions): { text: string; d
 
     // 2. Dotted leader (a run of dots, optionally single-spaced).
     const minDots = Math.max(2, Math.floor(opts.minLeaderDots) || 2);
-    const leaderRe = new RegExp(`\\.(?:\\s?\\.){${minDots - 1},}`, 'g');
-    let leader: RegExpExecArray | null = null;
-    let m: RegExpExecArray | null;
-    while ((m = leaderRe.exec(body)) !== null) leader = m;
+    const leader = lastMatch(new RegExp(`\\.(?:\\s?\\.){${minDots - 1},}`, 'g'), body);
     if (leader) {
         return { text: body.slice(0, leader.index), dest: body.slice(leader.index + leader[0].length) };
     }
 
     // 3. Wide whitespace (2+ spaces).
     if (opts.useWhitespaceSeparator) {
-        const wsRe = /\s{2,}/g;
-        let ws: RegExpExecArray | null = null;
-        while ((m = wsRe.exec(body)) !== null) ws = m;
+        const ws = lastMatch(/\s{2,}/g, body);
         if (ws) {
             return { text: body.slice(0, ws.index), dest: body.slice(ws.index + ws[0].length) };
         }
@@ -271,7 +276,8 @@ function splitBody(body: string, opts: PlainTextParseOptions): { text: string; d
 /** Classifies a raw destination string into a couplet-number link or a taxon name. */
 function classifyDest(dest: string): { linkNum: number; taxa: string } {
     const trimmed = dest.trim();
-    if (trimmed === '' || trimmed === EMPTY_DEST_TOKEN || /^[.\s]+$/.test(trimmed)) {
+    // An empty cell, the "..." placeholder, or any run of dots all mean "no destination".
+    if (trimmed === '' || /^[.\s]+$/.test(trimmed)) {
         return { linkNum: 0, taxa: '' };
     }
     const numMatch = trimmed.match(/^(\d{1,4})\.?$/);
@@ -303,7 +309,6 @@ function accToBranch(link: number, taxa: string, present: Set<number>): Branch {
     }
     const trimmed = taxa.trim();
     if (trimmed === '') return { kind: 'empty' };
-    if (/^\d+$/.test(trimmed)) return { kind: 'unresolved', couplet: parseInt(trimmed, 10) };
     return { kind: 'taxon', name: trimmed };
 }
 
@@ -402,7 +407,7 @@ export function parsePlainTextKey(
         let { linkNum, taxa } = classifyDest(dest);
 
         if (linkNum > MAX_COUPLET_NUMBER) {
-            // Implausible link target — keep the raw number as an unresolved taxon.
+            // Implausible link target — keep the raw number as text.
             taxa = String(linkNum);
             linkNum = 0;
             cappedLink = true;
@@ -491,6 +496,7 @@ function gatherOptions(): PlainTextParseOptions {
         dehyphenate: checked('pt-opt-dehyphen', DEFAULT_PARSE_OPTIONS.dehyphenate),
         recognizeLetteredCouplets: checked('pt-opt-lettered', DEFAULT_PARSE_OPTIONS.recognizeLetteredCouplets),
         recognizeDashSecondLead: checked('pt-opt-dash', DEFAULT_PARSE_OPTIONS.recognizeDashSecondLead),
+        recognizeBackReferences: checked('pt-opt-backref', DEFAULT_PARSE_OPTIONS.recognizeBackReferences),
         fillMissingCouplets: checked('pt-opt-fill', DEFAULT_PARSE_OPTIONS.fillMissingCouplets),
     };
 }
@@ -582,9 +588,7 @@ function renderPreviewHtml(result: PlainTextParseResult): string {
         html += `</div>`;
     }
 
-    // Run the same diagnostics engine the live editor uses, so problems in the
-    // imported key (orphaned steps, dead-end choices, convergence, unresolved
-    // links/figures) surface here before the user commits the import.
+    // Run the editor's diagnostics so key problems surface before the import is committed.
     const diagnostics = diagnoseKey(result.couplets, result.figures);
     let errorCount = 0;
     let warningCount = 0;
@@ -606,10 +610,10 @@ function renderPreviewHtml(result: PlainTextParseResult): string {
         switch (branch.kind) {
             case 'linked': {
                 const step = idToStep.get(branch.targetId);
-                return step !== undefined ? `→ step ${step}` : '→ ?';
+                return step !== undefined ? `→ ${step}` : '→ ?';
             }
             case 'unresolved':
-                return `→ step ${branch.couplet}`;
+                return `→ ${branch.couplet}`;
             case 'taxon':
                 return escapeHTML(branch.name);
             case 'empty':
@@ -633,13 +637,14 @@ function renderPreviewHtml(result: PlainTextParseResult): string {
         const hasIssues = diagnostics.has(c.id);
         html += `
             <li class="import-preview-step${hasIssues ? ' has-issues' : ''}">
-                <div class="import-preview-num">${index + 1}.</div>
                 <div class="import-preview-rows">
                     <div class="import-preview-row">
+                        <span class="import-preview-lead">${index + 1}.</span>
                         <span class="import-preview-text">${escapeHTML(c.alt1) || '<span class="import-preview-muted">(blank)</span>'}</span>
                         <span class="import-preview-dest">${destLabel(c.branch1)}</span>
                     </div>
                     <div class="import-preview-row">
+                        <span class="import-preview-lead">-</span>
                         <span class="import-preview-text">${escapeHTML(c.alt2) || '<span class="import-preview-muted">(blank)</span>'}</span>
                         <span class="import-preview-dest">${destLabel(c.branch2)}</span>
                     </div>
@@ -696,8 +701,7 @@ async function confirmImport(store: KeyStore, uiState: UIStateStore, refreshAll:
             return;
         }
 
-        // store.importJsonData resets the image cache internally; a plain-text import
-        // brings no figures, so there's nothing further to stage here.
+        // importJsonData resets the image cache; a plain-text import has no figures to stage.
         store.setTitle(targetName);
         uiState.setActiveProjectTitle(targetName);
 
@@ -740,7 +744,7 @@ export function setupPlainTextImporter(
     // Re-parse whenever any parsing option changes so the user can tune live.
     const optionIds = [
         'pt-opt-min-dots', 'pt-opt-ws', 'pt-opt-join', 'pt-opt-dehyphen',
-        'pt-opt-lettered', 'pt-opt-dash', 'pt-opt-fill',
+        'pt-opt-lettered', 'pt-opt-dash', 'pt-opt-backref', 'pt-opt-fill',
     ];
     optionIds.forEach(id => {
         const el = getEl(id);
