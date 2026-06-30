@@ -17,7 +17,8 @@ export function renderMenu(store: KeyStore, uiState: UIStateStore) {
 
     const selectedCoupletCount = store.getSelectedCoupletIds().size;
     const selectedFigureCount = store.getSelectedFigureIds().size;
-    const hasSelection = selectedCoupletCount > 0 || selectedFigureCount > 0;
+    const selectedTaxonCount = store.getSelectedTaxonIds().size;
+    const hasSelection = selectedCoupletCount > 0 || selectedFigureCount > 0 || selectedTaxonCount > 0;
     const hasCoupletSelection = selectedCoupletCount > 0;
     const hasKeyElements = store.getKey().length > 0;
     const hasClipboard = store.hasClipboardData();
@@ -83,6 +84,7 @@ export function renderMenu(store: KeyStore, uiState: UIStateStore) {
     // View submenus
     const toggleFiguresBtn = getBtn('cmd-toggle-figures');
     const toggleImagesBtn = getBtn('cmd-toggle-images');
+    const toggleTaxaBtn = getBtn('cmd-toggle-taxa');
     const togglePrintBtn = getBtn('cmd-toggle-print');
 
     if (toggleFiguresBtn) {
@@ -96,6 +98,13 @@ export function renderMenu(store: KeyStore, uiState: UIStateStore) {
         const label = toggleImagesBtn.querySelector('span');
         if (label) {
             label.textContent = uiState.isImagesHidden ? '🖼️ Show Images in Figures Panel' : '🖼️ Hide Images in Figures Panel';
+        }
+    }
+
+    if (toggleTaxaBtn) {
+        const label = toggleTaxaBtn.querySelector('span');
+        if (label) {
+            label.textContent = uiState.isTaxaHidden ? '🦋 Show Taxa Panel' : '🦋 Hide Taxa Panel';
         }
     }
 

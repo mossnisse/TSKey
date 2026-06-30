@@ -3,7 +3,7 @@
 // clickable `(Fig. N)` citations carrying the figure id for Ctrl/Cmd+click navigation.
 import type { KeyStore, Figure } from '../store.ts';
 import type { UIStateStore } from '../uiState.ts';
-import { escapeHTML, buildIdToIndexMap, resolveDestination, buildFigureIdToDisplayNumMap, buildCoupletLeads, buildBackReferenceMap } from '../utils.ts';
+import { escapeHTML, buildIdToIndexMap, resolveDestination, buildFigureIdToDisplayNumMap, buildCoupletLeads, buildBackReferenceMap, buildTaxaContext } from '../utils.ts';
 import { buildFigureLookups } from '../figureTokens.ts';
 
 const FIG_TOKEN_REGEX = /\[figID:\s*(\d+)\s*\]|\[fig:\s*([^\]]+?)\s*\]/gi;
@@ -75,6 +75,7 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
     const figures = store.getFigures();
     const figDisplayMap = buildFigureIdToDisplayNumMap(figures);
     const backRefMap = uiState.showBackReference ? buildBackReferenceMap(key) : null;
+    const taxaCtx = buildTaxaContext(store.getTaxa(), uiState.nameDisplayMode);
 
     // Drives the dash-alignment rule for lettered/minimal styles (see style.css).
     container.dataset.leadFormat = leadFormat;
@@ -91,8 +92,8 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
         const currentDisplayNum = index + 1;
         const { lead1, lead2 } = buildCoupletLeads(leadFormat, currentDisplayNum, backRefMap?.get(c.id));
 
-        const dest1 = resolveDestination(c.branch1, idToIndexMap);
-        const dest2 = resolveDestination(c.branch2, idToIndexMap);
+        const dest1 = resolveDestination(c.branch1, idToIndexMap, taxaCtx);
+        const dest2 = resolveDestination(c.branch2, idToIndexMap, taxaCtx);
 
         const html1 = renderAltToPrintHtml(c.alt1, figures, figDisplayMap) || '___';
         const html2 = renderAltToPrintHtml(c.alt2, figures, figDisplayMap) || '___';

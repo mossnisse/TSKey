@@ -1,8 +1,22 @@
 // store.ts
-import { isValidCoupletArray, isValidFigureArray, isRecord, branchTarget, classifyBranch, EMPTY_BRANCH } from './utils.ts';
+import { isValidCoupletArray, isValidFigureArray, isRecord, branchTarget } from './utils.ts';
 import { figIdTokenRegex, figRawTokenRegex, buildFigureLookups } from './figureTokens.ts';
 import { workspaceStorage } from './db.ts';
-import type { StagingSnapshot } from './db.ts';
+import type { StagingSnapshot, ProjectData } from './db.ts';
+import { nextEntityId, updateEntity, deleteEntities, reorderEntity } from './collectionOps.ts';
+import {
+    addCouplet as addCoupletOp,
+    pasteCouplets as pasteCoupletsOp,
+    cutCouplets as cutCoupletsOp,
+    deleteCouplets as deleteCoupletsOp,
+    swapCouplets as swapCoupletsOp,
+    reorderCouplets as reorderCoupletsOp,
+    autoOrderCouplets as autoOrderCoupletsOp,
+    type CutLink,
+} from './coupletOps.ts';
+import { orderFiguresByReference } from './figureOps.ts';
+import { resolveTextReferences, encodeFigureTokens, decodeTextReferencesForEditor } from './figureRefs.ts';
+import { createTaxon, resolveDrafts, migrateLegacyTaxa, deleteTaxaAndSever, findTaxonByName } from './taxonOps.ts';
 
 export const APP_NAME = 'TSKey';
 export const APP_VERSION = '0.0.1';
@@ -13,12 +27,16 @@ function newProjectUid(): string {
 }
 
 /**
- * A couplet choice's destination. 
+ * A couplet choice's destination.
  * Exactly one of:
  *
  *   linked     — points at another couplet's permanent id
  *   unresolved — a step number was typed before that step exists
- *   taxon      — a terminal taxon name (the branch ends here)
+ *   taxon      — a terminal, normalized reference to a Taxon record (by id)
+ *   taxonDraft — a taxon name typed but not yet committed to a record. Transient:
+ *                resolved to a `taxon` (find-or-create) on blur, mirroring how raw
+ *                [fig: …] tokens encode to stable [figID: …]. Essentially never
+ *                persisted, but handled defensively wherever a branch is read.
  *   empty      — nothing entered yet
  *
  * A "broken" destination (a `linked` branch whose target no longer exists) is
@@ -28,7 +46,8 @@ function newProjectUid(): string {
 export type Branch =
     | { kind: 'linked'; targetId: number }
     | { kind: 'unresolved'; couplet: number }
-    | { kind: 'taxon'; name: string }
+    | { kind: 'taxon'; taxonId: number }
+    | { kind: 'taxonDraft'; name: string }
     | { kind: 'empty' };
 
 export interface Couplet {
@@ -49,20 +68,57 @@ export interface FigureWithBinary extends Figure {
     binaryData?: string;
 }
 
+/** A confusable species and how to tell it apart from the taxon. */
+export interface ConfusableSpecies {
+    name: string;          // scientific name of the confusable species
+    distinction: string;   // how to distinguish the two
+}
+
+/**
+ * A taxon "chapter": the terminal that key leads point at (by id), carrying the
+ * descriptive text shown alongside the key. Several leads may share one record.
+ */
+export interface Taxon {
+    id: number;                       // Permanent internal unique ID
+    scientificName: string;           // e.g. "Bufo bufo" — the find-or-create key
+    auctor: string;                   // author citation, e.g. "Linnaeus, 1758"
+    vernacularName: string;           // common name
+    synonyms: string[];               // alternative scientific names
+    description: string;              // morphological description
+    biology: string;                  // biology / ecology notes
+    distribution: string;             // geographic distribution
+    confusables: ConfusableSpecies[]; // confusable species + how to distinguish
+}
+
 export interface KeyValidationError {
     severity: 'warning' | 'error';
     message: string;
 }
 
-interface AppState {
+/**
+ * The full editable document: the title plus every id-keyed collection. This is
+ * the single serializable unit — its collections are listed in
+ * DOCUMENT_COLLECTIONS so history cloning and (later) new entity types extend in
+ * one place. Ready to gain `taxa` / `glossary` / `references`.
+ */
+interface KeyDocument {
     title: string;
     dichotomousKey: Couplet[];
     figures: Figure[];
+    taxa: Taxon[];
 }
 
-/** One undo/redo frame: the editable metadata plus the figure-binary staging. */
+/**
+ * The array-valued collections of KeyDocument. Adding a new entity type means
+ * adding its field to KeyDocument and its key here — captureState() then clones
+ * it automatically.
+ */
+type CollectionKey = 'dichotomousKey' | 'figures' | 'taxa';
+const DOCUMENT_COLLECTIONS: CollectionKey[] = ['dichotomousKey', 'figures', 'taxa'];
+
+/** One undo/redo frame: the editable document plus the figure-binary staging. */
 interface HistoryEntry {
-    state: AppState;
+    state: KeyDocument;
     staging: StagingSnapshot;
 }
 
@@ -310,9 +366,9 @@ export function diagnoseKey(key: Couplet[], figures: Figure[]): Map<number, KeyV
 }
 
 export class KeyStore {
-    private state: AppState;
+    private state: KeyDocument;
     private hasUncommittedChanges: boolean = false;
-    private editScope: 'key' | 'figures' | null = null;
+    private editScope: string | null = null;
     private persistedTitle: string = '';
     private activeProjectUid: string = newProjectUid();
     private onProjectPersisted?: (title: string) => void;
@@ -329,16 +385,20 @@ export class KeyStore {
     // Shared clipboard state structure
     private clipboardBuffer: Couplet[] = [];
     private clipboardMode: 'copy' | 'cut' = 'copy';
-    private cutIncomingLinksBuffer: Array<{ sourceId: number, field: 'branch1' | 'branch2', targetOldId: number }> = [];
+    private cutIncomingLinksBuffer: CutLink[] = [];
 
     // Figures
     private selectedFigureIds: Set<number> = new Set();
 
-    constructor(initialKey: Couplet[], initialFigures: Figure[] = [], initialTitle = 'Untitled Key', maxHistoryLimit = 100) {
+    // Taxa
+    private selectedTaxonIds: Set<number> = new Set();
+
+    constructor(initialKey: Couplet[], initialFigures: Figure[] = [], initialTitle = 'Untitled Key', maxHistoryLimit = 100, initialTaxa: Taxon[] = []) {
         this.state = {
             title: initialTitle,
             dichotomousKey: initialKey,
-            figures: initialFigures
+            figures: initialFigures,
+            taxa: initialTaxa
         };
         this.maxHistoryLimit = maxHistoryLimit;
         this.hasUncommittedChanges = false;
@@ -376,6 +436,10 @@ export class KeyStore {
 
     public getFigures(): readonly Figure[] {
         return this.state.figures || [];
+    }
+
+    public getTaxa(): readonly Taxon[] {
+        return this.state.taxa || [];
     }
 
     public getSelectedCoupletIds(): ReadonlySet<number> {
@@ -427,6 +491,8 @@ export class KeyStore {
         this.hasUncommittedChanges = false;
         this.editScope = null;
         this.selectedCoupletIds.clear();
+        this.selectedFigureIds.clear();
+        this.selectedTaxonIds.clear();
         this.activeCoupletId = null;
         this._draggedId = null;
     }
@@ -441,13 +507,18 @@ export class KeyStore {
     // one stack to the other, so undoStack.length + redoStack.length never grows —
     // the one size cap in saveCheckpoint() suffices and undo/redo need no trimming.
 
-    /** Deep-enough clone of the editable metadata for a history frame. */
-    private captureState(): AppState {
-        return {
-            title: this.state.title,
-            dichotomousKey: this.state.dichotomousKey.map(c => ({ ...c })),
-            figures: (this.state.figures || []).map(f => ({ ...f }))
-        };
+    /**
+     * Deep-enough clone of the editable document for a history frame. Each
+     * collection in DOCUMENT_COLLECTIONS is shallow-cloned per item, so a new
+     * entity type joins the timeline just by being listed there.
+     */
+    private captureState(): KeyDocument {
+        const clone = { title: this.state.title } as KeyDocument;
+        for (const key of DOCUMENT_COLLECTIONS) {
+            const items = (this.state[key] || []) as ReadonlyArray<{ id: number }>;
+            (clone[key] as unknown[]) = items.map(item => ({ ...item }));
+        }
+        return clone;
     }
 
     /** A history frame: current metadata paired with the current binary staging. */
@@ -585,12 +656,8 @@ export class KeyStore {
         }
         this.editScope = 'key';
 
-        const index = this.state.dichotomousKey.findIndex(c => c.id === id);
-        if (index === -1) return;
-
-        const updatedCouplet = { ...this.state.dichotomousKey[index], ...fields };
-        const newKey = [...this.state.dichotomousKey];
-        newKey[index] = updatedCouplet;
+        const newKey = updateEntity(this.state.dichotomousKey, id, fields);
+        if (!newKey) return;
         this.state.dichotomousKey = newKey;
 
         this.hasUncommittedChanges = true;
@@ -599,66 +666,11 @@ export class KeyStore {
     public addCouplet(): number {
         this.saveCheckpoint();
 
-        // Ids only need to be unique within the key (they are independent of the
-        // 1-based step number shown to the user), so seed from 0 like pasteCouplets.
-        const maxId = this.state.dichotomousKey.reduce((currentMax, couplet) => {
-            const validId = Number(couplet?.id);
-            return !isNaN(validId) ? Math.max(currentMax, validId) : currentMax;
-        }, 0);
-
-        const nextInternalId = maxId + 1;
-        // Determine what the 1-based step number will be for the new step
-        const newStepNumber = this.state.dichotomousKey.length + 1;
-
-        // Find which slot we want to auto-link (searching backwards)
-        let targetLinkIndex = -1;
-        let targetField: 'branch1' | 'branch2' | null = null;
-
-        for (let i = this.state.dichotomousKey.length - 1; i >= 0; i--) {
-            const couplet = this.state.dichotomousKey[i];
-            if (couplet.branch1.kind === 'empty') {
-                targetLinkIndex = i;
-                targetField = 'branch1';
-                break;
-            } else if (couplet.branch2.kind === 'empty') {
-                targetLinkIndex = i;
-                targetField = 'branch2';
-                break;
-            }
-        }
-
-        const linkedToNew: Branch = { kind: 'linked', targetId: nextInternalId };
-
-        // An unresolved branch that was waiting for this exact step now resolves to it
-        const resolveIfWaiting = (branch: Branch): Branch =>
-            branch.kind === 'unresolved' && branch.couplet === newStepNumber ? linkedToNew : branch;
-
-        const updatedKey = this.state.dichotomousKey.map((couplet, index) => {
-            let updated = { ...couplet };
-
-            updated.branch1 = resolveIfWaiting(updated.branch1);
-            updated.branch2 = resolveIfWaiting(updated.branch2);
-
-            // Apply standard backward auto-linking if this step matched an open slot
-            if (index === targetLinkIndex && targetField) {
-                updated[targetField] = linkedToNew;
-            }
-
-            return updated;
-        });
-
-        // Append the new step block to our new array reference
-        this.state.dichotomousKey = [
-            ...updatedKey,
-            {
-                id: nextInternalId,
-                alt1: "", alt2: "",
-                branch1: EMPTY_BRANCH, branch2: EMPTY_BRANCH
-            }
-        ];
+        const { key, newId } = addCoupletOp(this.state.dichotomousKey);
+        this.state.dichotomousKey = key;
         this.hasUncommittedChanges = true;
 
-        return nextInternalId; // Return the new ID for UI targeting focus
+        return newId; // Return the new ID for UI targeting focus
     }
 
 
@@ -670,70 +682,23 @@ export class KeyStore {
 
         this.saveCheckpoint();
 
-        let insertIndex = this.state.dichotomousKey.length;
+        const { key, newIds } = pasteCoupletsOp(
+            this.state.dichotomousKey,
+            this.clipboardBuffer,
+            targetId,
+            position,
+            this.clipboardMode === 'cut',
+            this.cutIncomingLinksBuffer
+        );
 
-        if (targetId !== undefined) {
-            const targetIndex = this.state.dichotomousKey.findIndex(c => c.id === targetId);
-            if (targetIndex !== -1) {
-                insertIndex = position === 'above' ? targetIndex : targetIndex + 1;
-            }
-        }
-
-        const maxId = this.state.dichotomousKey.reduce((currentMax, couplet) => {
-            return Math.max(currentMax, couplet.id);
-        }, 0);
-
-        const idTranslationMap = new Map<number, number>();
-
-        this.clipboardBuffer.forEach((item, index) => {
-            const newId = maxId + index + 1;
-            idTranslationMap.set(item.id, newId);
-        });
-
-        // Re-point a linked branch to the pasted copy of its target when that target
-        // was part of the same paste; external links keep their original id.
-        const remapBranch = (branch: Branch): Branch =>
-            branch.kind === 'linked' && idTranslationMap.has(branch.targetId)
-                ? { kind: 'linked', targetId: idTranslationMap.get(branch.targetId)! }
-                : branch;
-
-        const newCouplets: Couplet[] = this.clipboardBuffer.map((item) => {
-            return {
-                ...item,
-                id: idTranslationMap.get(item.id)!,
-                branch1: remapBranch(item.branch1),
-                branch2: remapBranch(item.branch2)
-            };
-        });
-
-        // Splice items into a new shallow copy of the key array
-        let newKey = [...this.state.dichotomousKey];
-        newKey.splice(insertIndex, 0, ...newCouplets);
-
-        // Restore incoming links if this was a Cut operation
+        // A cut's severed links have now been consumed — revert to a plain copy.
         if (this.clipboardMode === 'cut' && this.cutIncomingLinksBuffer.length > 0) {
-            newKey = newKey.map(couplet => {
-                let updated = { ...couplet };
-
-                // Find any broken links in the buffer that belong to this specific couplet
-                const linksToRestore = this.cutIncomingLinksBuffer.filter(b => b.sourceId === couplet.id);
-
-                linksToRestore.forEach(b => {
-                    const newTargetId = idTranslationMap.get(b.targetOldId);
-                    if (newTargetId !== undefined) {
-                        updated[b.field] = { kind: 'linked', targetId: newTargetId };
-                    }
-                });
-
-                return updated;
-            });
-
             this.clipboardMode = 'copy';
             this.cutIncomingLinksBuffer = [];
         }
 
-        this.state.dichotomousKey = newKey;
-        this.setSelectionBatch(newCouplets.map(c => c.id));
+        this.state.dichotomousKey = key;
+        this.setSelectionBatch(newIds);
         this.hasUncommittedChanges = true;
 
         return true;
@@ -755,26 +720,12 @@ export class KeyStore {
             .map(c => ({ ...c }));
 
         this.clipboardMode = 'cut';
-        this.cutIncomingLinksBuffer = [];
 
-        //  Identify incoming links, buffer them in memory, and safely sever them
-        //    while removing the selected couplets from the key array.
-        this.state.dichotomousKey = this.state.dichotomousKey
-            .filter(c => !selectedIds.has(c.id))
-            .map(c => {
-                let updated = { ...c };
-                const t1 = branchTarget(c.branch1);
-                if (t1 !== null && selectedIds.has(t1)) {
-                    this.cutIncomingLinksBuffer.push({ sourceId: c.id, field: 'branch1', targetOldId: t1 });
-                    updated.branch1 = EMPTY_BRANCH;
-                }
-                const t2 = branchTarget(c.branch2);
-                if (t2 !== null && selectedIds.has(t2)) {
-                    this.cutIncomingLinksBuffer.push({ sourceId: c.id, field: 'branch2', targetOldId: t2 });
-                    updated.branch2 = EMPTY_BRANCH;
-                }
-                return updated;
-            });
+        // Remove the selected couplets, buffering any incoming links so a later
+        // paste can restore them.
+        const { key, severedLinks } = cutCoupletsOp(this.state.dichotomousKey, selectedIds);
+        this.state.dichotomousKey = key;
+        this.cutIncomingLinksBuffer = severedLinks;
 
         this.selectedCoupletIds = new Set();
         this.hasUncommittedChanges = true;
@@ -790,19 +741,7 @@ export class KeyStore {
             this.activeCoupletId = null;
         }
 
-        // Any branch pointing at a removed couplet is reset to empty.
-        const severIfRemoved = (branch: Branch): Branch => {
-            const target = branchTarget(branch);
-            return target !== null && removedIds.has(target) ? EMPTY_BRANCH : branch;
-        };
-
-        this.state.dichotomousKey = this.state.dichotomousKey
-            .filter(c => !removedIds.has(c.id))
-            .map(c => ({
-                ...c,
-                branch1: severIfRemoved(c.branch1),
-                branch2: severIfRemoved(c.branch2),
-            }));
+        this.state.dichotomousKey = deleteCoupletsOp(this.state.dichotomousKey, removedIds);
 
         this.selectedCoupletIds = new Set();
         this.hasUncommittedChanges = true;
@@ -815,20 +754,8 @@ export class KeyStore {
         if (this.selectedCoupletIds.size === 0) return false;
 
         this.saveCheckpoint();
-        let modified = false;
-        this.state.dichotomousKey = this.state.dichotomousKey.map(couplet => {
-            if (this.selectedCoupletIds.has(couplet.id)) {
-                modified = true;
-                return {
-                    ...couplet,
-                    alt1: couplet.alt2,
-                    alt2: couplet.alt1,
-                    branch1: couplet.branch2,
-                    branch2: couplet.branch1
-                };
-            }
-            return couplet;
-        });
+        const { key, modified } = swapCoupletsOp(this.state.dichotomousKey, this.selectedCoupletIds);
+        this.state.dichotomousKey = key;
 
         if (modified) {
             this.hasUncommittedChanges = true;
@@ -839,201 +766,24 @@ export class KeyStore {
     }
 
     public reorderCouplets(srcId: number, targetId: number, position: 'above' | 'below' = 'above'): boolean {
-        if (srcId === targetId) return false;
-
-        const arr = [...this.state.dichotomousKey];
-        const srcIdx = arr.findIndex(c => c.id === srcId);
-        const targetIdx = arr.findIndex(c => c.id === targetId);
-
-        if (srcIdx === -1 || targetIdx === -1) {
-            console.warn(`Aborted reordering: srcIdx (${srcIdx}) or targetIdx (${targetIdx}) was invalid.`);
-            return false;
-        }
+        // Compute first so an invalid/no-op move skips the history checkpoint.
+        const next = reorderCoupletsOp(this.state.dichotomousKey, srcId, targetId, position);
+        if (next === null) return false;
 
         this.saveCheckpoint();
-        const [movedItem] = arr.splice(srcIdx, 1);
-
-        let insertIdx = targetIdx;
-        if (position === 'above' && srcIdx < targetIdx) {
-            insertIdx--; // Target shifted left because we removed an item before it
-        } else if (position === 'below' && srcIdx > targetIdx) {
-            insertIdx++; // Target stayed put, but we want to place it after the target
-        }
-
-        arr.splice(insertIdx, 0, movedItem);
-
-        this.state.dichotomousKey = arr;
+        this.state.dichotomousKey = next;
         this.hasUncommittedChanges = true;
         return true;
     }
 
 
-    // order they key with shorter branches first. unresolved links are implied to have longer branches the higher number, 
-    // empty/broken links are implied to be long. When the branches are the same length they should not be changed.
+    // Orders the key with shorter branches first, flattened into depth-first
+    // reading order. See autoOrderCouplets in coupletOps.ts for the full rules.
     public autoOrderCouplets() {
         if (this.state.dichotomousKey.length === 0) return;
 
         this.saveCheckpoint();
-
-        // Build an efficient lookup map of the current state
-        const idToCoupletMap = new Map<number, Couplet>(
-            this.state.dichotomousKey.map(c => [c.id, c])
-        );
-
-        // A branch that continues into an existing couplet, or null otherwise.
-        const linkTarget = (branch: Branch): number | null => {
-            const t = branchTarget(branch);
-            return t !== null && idToCoupletMap.has(t) ? t : null;
-        };
-
-        // Declarative rank lookup keyed by the shared branch classifier.
-        // Shorter/terminal branches rank lower so they sort into Alt1.
-        const rankMap: Record<ReturnType<typeof classifyBranch>, number> = {
-            taxon: 1,
-            linked: 2,
-            unresolved: 2, // Both imply continuing paths
-            broken: 3,     // Implies a long/broken branch
-            empty: 3       // Treated as a long/dangling branch
-        };
-
-        // Compute branch depths recursively (Memoized to prevent infinite loops on cycles)
-        const depthCache = new Map<number, number>();
-        const dynamicVisited = new Set<number>();
-
-        // infer depth natively from the branch state if unresolved
-        const getEdgeDepth = (branch: Branch): number => {
-            switch (classifyBranch(branch, idToCoupletMap)) {
-                case 'taxon': return 0;
-                case 'linked': return calculateBranchDepth((branch as { targetId: number }).targetId);
-                // Treat the unresolved step number as its simulated depth (higher number = deeper branch)
-                case 'unresolved': return (branch as { couplet: number }).couplet || 0;
-                default: return 10000; // broken/empty: count it as a long branch
-            }
-        };
-
-        const calculateBranchDepth = (id: number): number => {
-            if (!idToCoupletMap.has(id)) return 0;
-            if (depthCache.has(id)) return depthCache.get(id)!;
-            if (dynamicVisited.has(id)) return 0; // Handle cyclic loops gracefully
-
-            dynamicVisited.add(id);
-            const couplet = idToCoupletMap.get(id)!;
-
-            // Compute utilizing our new edge depth evaluator
-            const d1 = getEdgeDepth(couplet.branch1);
-            const d2 = getEdgeDepth(couplet.branch2);
-
-            dynamicVisited.delete(id);
-
-            const totalDepth = 1 + Math.max(d1, d2);
-            depthCache.set(id, totalDepth);
-            return totalDepth;
-        };
-
-        // Populate depth cache for all items so parents inherit the weight of unresolved numbers
-        this.state.dichotomousKey.forEach(c => calculateBranchDepth(c.id));
-
-        // Mirror Pass: Re-map and swap alt1/alt2 fields using the Rank Engine
-        const optimizedKey = this.state.dichotomousKey.map(c => {
-            const type1 = classifyBranch(c.branch1, idToCoupletMap);
-            const type2 = classifyBranch(c.branch2, idToCoupletMap);
-
-            const rank1 = rankMap[type1];
-            const rank2 = rankMap[type2];
-
-            let shouldSwap = false;
-
-            if (rank1 > rank2) {
-                shouldSwap = true;
-            } else if (rank1 === rank2) {
-                // Tie-breakers when both alternatives share the same structural rank
-                if (rank1 === 2) {
-                    // Both are continuing paths (Linked vs Unresolved vs Both)
-                    const depth1 = getEdgeDepth(c.branch1);
-                    const depth2 = getEdgeDepth(c.branch2);
-
-                    // Shorter branches (actual or inferred) go to Alt1
-                    if (depth2 < depth1) {
-                        shouldSwap = true;
-                    } else if (depth2 === depth1) {
-                        // Depth ties. Prefer resolving actual linked paths first as convention.
-                        if (type1 !== type2) {
-                            if (type2 === 'linked') shouldSwap = true;
-                        }
-                    }
-                }
-            }
-
-            if (shouldSwap) {
-                return {
-                    ...c,
-                    alt1: c.alt2,
-                    alt2: c.alt1,
-                    branch1: c.branch2,
-                    branch2: c.branch1
-                };
-            }
-            return { ...c };
-        });
-
-        // Rebuild updated maps using optimized instances
-        const optimizedIdMap = new Map<number, Couplet>(optimizedKey.map(c => [c.id, c]));
-
-        // Trace incoming references to identify top-level structural root items
-        const incomingCounts = new Map<number, number>();
-        optimizedKey.forEach(c => {
-            const t1 = linkTarget(c.branch1);
-            if (t1 !== null) incomingCounts.set(t1, (incomingCounts.get(t1) || 0) + 1);
-            const t2 = linkTarget(c.branch2);
-            if (t2 !== null) incomingCounts.set(t2, (incomingCounts.get(t2) || 0) + 1);
-        });
-
-        const roots = optimizedKey.filter(c => !incomingCounts.has(c.id));
-        if (roots.length === 0 && optimizedKey.length > 0) {
-            roots.push(optimizedKey[0]);
-        }
-
-        const visited = new Set<number>();
-        const orderedCouplets: Couplet[] = [];
-
-        // Topology Flattening Pass: O(1) Stack Engine Traversal (Pre-order Depth First)
-        const traverseTreeBranch = (startId: number) => {
-            const stack: number[] = [startId];
-
-            while (stack.length > 0) {
-                const currentId = stack.pop()!;
-                if (currentId === 0 || visited.has(currentId)) continue;
-
-                const couplet = optimizedIdMap.get(currentId);
-                if (!couplet) continue;
-
-                visited.add(currentId);
-                orderedCouplets.push(couplet);
-
-                // Push branch2's target first, then branch1's, onto the stack.
-                const t2 = linkTarget(couplet.branch2);
-                if (t2 !== null && !visited.has(t2)) {
-                    stack.push(t2);
-                }
-                const t1 = linkTarget(couplet.branch1);
-                if (t1 !== null && !visited.has(t1)) {
-                    stack.push(t1);
-                }
-            }
-        };
-
-        // Run traversal on main root nodes
-        roots.forEach(root => traverseTreeBranch(root.id));
-
-        // Cleanup Sweep (Capture detached orphaned/cyclical sub-graphs)
-        optimizedKey.forEach(c => {
-            if (!visited.has(c.id)) {
-                traverseTreeBranch(c.id);
-            }
-        });
-
-        // Commit the cleanly structured hierarchical array back to application state
-        this.state.dichotomousKey = orderedCouplets;
+        this.state.dichotomousKey = autoOrderCoupletsOp(this.state.dichotomousKey);
         this.hasUncommittedChanges = true;
     }
 
@@ -1073,10 +823,8 @@ export class KeyStore {
         if (this.selectedFigureIds.size === 0) return;
 
         this.saveCheckpoint(); // Integrates directly with your Undo/Redo engine
-        const removedIds = this.selectedFigureIds;
 
-        // Filter out selected figures
-        this.state.figures = this.state.figures.filter(f => !removedIds.has(f.id));
+        this.state.figures = deleteEntities(this.state.figures, this.selectedFigureIds);
 
         // Clear the selection set
         this.selectedFigureIds = new Set();
@@ -1087,8 +835,7 @@ export class KeyStore {
         this.saveCheckpoint();
 
         const figures = this.state.figures || [];
-        const maxId = figures.reduce((max, f) => Math.max(max, f.id), 0);
-        const nextId = maxId + 1;
+        const nextId = nextEntityId(figures);
 
         this.state.figures = [
             ...figures,
@@ -1110,12 +857,8 @@ export class KeyStore {
         }
         this.editScope = 'figures';
 
-        const index = this.state.figures.findIndex(f => f.id === id);
-        if (index === -1) return;
-
-        const updatedFigure = { ...this.state.figures[index], ...fields };
-        const newFigures = [...this.state.figures];
-        newFigures[index] = updatedFigure;
+        const newFigures = updateEntity(this.state.figures, id, fields);
+        if (!newFigures) return;
         this.state.figures = newFigures;
 
         this.hasUncommittedChanges = true;
@@ -1125,11 +868,7 @@ export class KeyStore {
         if (!this.state.figures || srcIdx === targetIdx) return;
         this.saveCheckpoint();
 
-        const arr = [...this.state.figures];
-        const [movedItem] = arr.splice(srcIdx, 1);
-        arr.splice(targetIdx, 0, movedItem);
-
-        this.state.figures = arr;
+        this.state.figures = reorderEntity(this.state.figures, srcIdx, targetIdx);
         this.hasUncommittedChanges = true;
     }
 
@@ -1140,73 +879,120 @@ export class KeyStore {
         // Create a history checkpoint before mutating state
         this.saveCheckpoint();
 
-        const { idToFig, displayNumToFig, filenameToFig } = buildFigureLookups(figures);
-
-        const orderedFigures: Figure[] = [];
-        const seenFigureIds = new Set<number>();
-
-        // Scan couplets sequentially in their current key order
-        for (const couplet of this.state.dichotomousKey) {
-            const taxon1 = couplet.branch1.kind === 'taxon' ? couplet.branch1.name : '';
-            const taxon2 = couplet.branch2.kind === 'taxon' ? couplet.branch2.name : '';
-            const fieldsToScan = [couplet.alt1, couplet.alt2, taxon1, taxon2];
-
-            for (const text of fieldsToScan) {
-                if (!text) continue;
-
-                let match: RegExpExecArray | null;
-
-                // Stored references [figID: N] — value is always an internal figure ID
-                const idTokenRegex = figIdTokenRegex();
-                while ((match = idTokenRegex.exec(text)) !== null) {
-                    const id = parseInt(match[1].trim(), 10);
-                    const matchedFig = idToFig.get(id);
-                    if (matchedFig && !seenFigureIds.has(matchedFig.id)) {
-                        seenFigureIds.add(matchedFig.id);
-                        orderedFigures.push(matchedFig);
-                    }
-                }
-
-                // Unresolved references [fig: VALUE] — numeric = 1-based display number, text = filename
-                const rawTokenRegex = figRawTokenRegex();
-                while ((match = rawTokenRegex.exec(text)) !== null) {
-                    const trimmedValue = match[1].trim();
-                    let matchedFig: Figure | undefined = undefined;
-
-                    const displayNum = parseInt(trimmedValue, 10);
-                    if (!isNaN(displayNum) && String(displayNum) === trimmedValue && displayNumToFig.has(displayNum)) {
-                        matchedFig = displayNumToFig.get(displayNum);
-                    } else {
-                        const lowercaseFilename = trimmedValue.toLowerCase();
-                        if (filenameToFig.has(lowercaseFilename)) {
-                            matchedFig = filenameToFig.get(lowercaseFilename);
-                        }
-                    }
-
-                    if (matchedFig && !seenFigureIds.has(matchedFig.id)) {
-                        seenFigureIds.add(matchedFig.id);
-                        orderedFigures.push(matchedFig);
-                    }
-                }
-            }
-        }
-
-        // Cleanup Sweep: Append any figures that aren't referenced anywhere to the end
-        for (const fig of figures) {
-            if (!seenFigureIds.has(fig.id)) {
-                orderedFigures.push(fig);
-            }
-        }
-
-        // Commit the reordered array back to state and activate change tracking
-        this.state.figures = orderedFigures;
+        this.state.figures = orderFiguresByReference(figures, this.state.dichotomousKey);
         this.hasUncommittedChanges = true;
+    }
+
+    /* taxa mutators */
+
+    // ==========================================
+    // TAXA SELECTION & MUTATORS
+    // ==========================================
+
+    public getSelectedTaxonIds(): ReadonlySet<number> {
+        return this.selectedTaxonIds;
+    }
+
+    /** Toggles a taxon's selection; multiSelect adds/removes, otherwise selects only it. */
+    public toggleTaxonSelection(id: number, multiSelect: boolean) {
+        if (multiSelect) {
+            if (this.selectedTaxonIds.has(id)) {
+                this.selectedTaxonIds.delete(id);
+            } else {
+                this.selectedTaxonIds.add(id);
+            }
+        } else {
+            this.selectedTaxonIds = new Set([id]);
+        }
+    }
+
+    public clearTaxonSelection() {
+        this.selectedTaxonIds.clear();
+    }
+
+    /** Deletes selected taxa and severs any branch that pointed at one of them. */
+    public deleteSelectedTaxa() {
+        if (this.selectedTaxonIds.size === 0) return;
+        this.saveCheckpoint();
+
+        const removedIds = this.selectedTaxonIds;
+        this.state.taxa = deleteEntities(this.state.taxa, removedIds);
+        this.state.dichotomousKey = deleteTaxaAndSever(this.state.dichotomousKey, removedIds).key;
+
+        this.selectedTaxonIds = new Set();
+        this.hasUncommittedChanges = true;
+    }
+
+    public addTaxon(scientificName = ''): number {
+        this.saveCheckpoint();
+
+        const taxa = this.state.taxa || [];
+        const nextId = nextEntityId(taxa);
+        this.state.taxa = [...taxa, createTaxon(nextId, scientificName)];
+
+        this.hasUncommittedChanges = true;
+        return nextId;
+    }
+
+    public updateTaxon(id: number, fields: Partial<Omit<Taxon, 'id'>>) {
+        // Batch consecutive taxon edits, but never merge with a couplet/figure edit.
+        if (this.editScope !== 'taxa') {
+            this.saveCheckpoint();
+        }
+        this.editScope = 'taxa';
+
+        const next = updateEntity(this.state.taxa, id, fields);
+        if (!next) return;
+        this.state.taxa = next;
+
+        this.hasUncommittedChanges = true;
+    }
+
+    public reorderTaxa(srcIdx: number, targetIdx: number) {
+        if (!this.state.taxa || srcIdx === targetIdx) return;
+        this.saveCheckpoint();
+
+        this.state.taxa = reorderEntity(this.state.taxa, srcIdx, targetIdx);
+        this.hasUncommittedChanges = true;
+    }
+
+    /**
+     * Explicitly turns one lead's unlinked taxon draft into a real record and links
+     * the branch to it (find-or-create by scientific name, so it reuses a match made
+     * since the draft was typed). Returns the taxon id, or null when the branch isn't
+     * a draft. This is the deliberate "create taxon" action from the editor.
+     */
+    public createTaxonForBranch(coupletId: number, field: 'branch1' | 'branch2'): number | null {
+        const couplet = this.state.dichotomousKey.find(c => c.id === coupletId);
+        if (!couplet) return null;
+
+        const branch = couplet[field];
+        if (branch.kind !== 'taxonDraft') return null;
+
+        this.saveCheckpoint();
+
+        const existing = findTaxonByName(this.state.taxa, branch.name);
+        let taxonId: number;
+        if (existing) {
+            taxonId = existing.id;
+        } else {
+            taxonId = nextEntityId(this.state.taxa);
+            this.state.taxa = [...this.state.taxa, createTaxon(taxonId, branch.name)];
+        }
+
+        this.state.dichotomousKey = updateEntity(this.state.dichotomousKey, coupletId, {
+            [field]: { kind: 'taxon', taxonId },
+        } as Partial<Omit<Couplet, 'id'>>) ?? this.state.dichotomousKey;
+
+        this.hasUncommittedChanges = true;
+        return taxonId;
     }
 
     public importJsonData(rawData: unknown): ImportResult {
         try {
             let importedKey: Couplet[] | null = null;
             let importedFigures: Figure[] = [];
+            let importedTaxa: Taxon[] = [];
             let importedTitle = 'Untitled Key';
 
             if (isRecord(rawData) && isRecord(rawData.data)) {
@@ -1217,6 +1003,12 @@ export class KeyStore {
 
                     if (isValidFigureArray(payload.figures)) {
                         importedFigures = payload.figures;
+                    }
+
+                    // Taxa are taken as-is; migrateLegacyTaxa below reconciles them
+                    // with the key (and folds any legacy name-string branches).
+                    if (Array.isArray(payload.taxa)) {
+                        importedTaxa = payload.taxa as Taxon[];
                     }
                 }
 
@@ -1253,12 +1045,18 @@ export class KeyStore {
                 });
             }
 
+            // Normalize legacy name-string taxon branches, then (bulk import) commit
+            // any drafts into records — an import is a deliberate bulk creation.
+            const migrated = migrateLegacyTaxa(importedKey, importedTaxa);
+            const resolved = resolveDrafts(migrated.key, migrated.taxa);
+
             this.saveCheckpoint();
             this.state.title = importedTitle;
             this.activeProjectUid = newProjectUid();
             this.persistedTitle = importedTitle;
-            this.state.dichotomousKey = importedKey;
+            this.state.dichotomousKey = resolved.key;
             this.state.figures = importedFigures;
+            this.state.taxa = resolved.taxa;
 
             workspaceStorage.resetActiveImageCache();
 
@@ -1303,6 +1101,7 @@ export class KeyStore {
         this.commitPersistedTitle(title); // Sync the disk tracking name
         this.state.dichotomousKey = [];
         this.state.figures = [];
+        this.state.taxa = [];
         this.resetTrackingContext();
 
         workspaceStorage.resetActiveImageCache();
@@ -1316,7 +1115,10 @@ export class KeyStore {
             // Legacy records predate projectUid; mint one so figures re-key cleanly.
             this.activeProjectUid = data.projectUid || newProjectUid();
             this.commitPersistedTitle(data.title); // Sync the disk tracking name
-            this.state.dichotomousKey = data.dichotomousKey;
+            // Normalize any legacy name-string taxon branches into records on load.
+            const migrated = migrateLegacyTaxa(data.dichotomousKey, data.taxa);
+            this.state.dichotomousKey = migrated.key;
+            this.state.taxa = migrated.taxa;
             this.state.figures = data.figures;
             this.resetTrackingContext();
 
@@ -1325,14 +1127,23 @@ export class KeyStore {
         return false;
     }
 
+    /** The persistable collections of the live document (one object so new entity
+     *  types flow to storage without changing saveProject's signature). */
+    private getProjectData(): ProjectData {
+        return {
+            dichotomousKey: this.state.dichotomousKey,
+            figures: this.state.figures,
+            taxa: this.state.taxa,
+        };
+    }
+
     public async saveToStorage(): Promise<void> {
         const isRename = this.persistedTitle && this.persistedTitle !== this.state.title;
         const oldTitle = this.persistedTitle;
 
         try {
 
-            const currentData = this.state.dichotomousKey;
-            await workspaceStorage.saveProject(this.state.title, this.activeProjectUid, currentData, this.state.figures);
+            await workspaceStorage.saveProject(this.state.title, this.activeProjectUid, this.getProjectData());
 
             if (isRename && oldTitle) {
                 await workspaceStorage.deleteProjectRecord(oldTitle);
@@ -1363,7 +1174,7 @@ export class KeyStore {
             this.state.title = newTitle;
             this.activeProjectUid = newUid;
 
-            await workspaceStorage.saveProject(newTitle, newUid, this.state.dichotomousKey, this.state.figures);
+            await workspaceStorage.saveProject(newTitle, newUid, this.getProjectData());
 
             this.commitPersistedTitle(newTitle);
             this.markSaved();
@@ -1376,15 +1187,20 @@ export class KeyStore {
         }
     }
 
-    public async loadFromStorage(fallbackData: Couplet[] = [], fallbackFigures: Figure[] = [], lastActiveTitle = 'Untitled Key'): Promise<boolean> {
+    public async loadFromStorage(fallbackData: Couplet[] = [], fallbackFigures: Figure[] = [], lastActiveTitle = 'Untitled Key', fallbackTaxa: Taxon[] = []): Promise<boolean> {
         const lastActive = lastActiveTitle;
         const success = await this.loadProject(lastActive);
 
         if (!success) {
+            // The fallback is seed data: migrate legacy branches and bulk-create any
+            // draft taxa so the sample opens with real, linked taxon cards.
+            const migrated = migrateLegacyTaxa(fallbackData, fallbackTaxa);
+            const resolved = resolveDrafts(migrated.key, migrated.taxa);
             this.state = {
                 title: lastActive,
-                dichotomousKey: fallbackData,
-                figures: fallbackFigures
+                dichotomousKey: resolved.key,
+                figures: fallbackFigures,
+                taxa: resolved.taxa
             };
             this.persistedTitle = lastActive;
             this.activeProjectUid = newProjectUid();
@@ -1432,88 +1248,18 @@ export class KeyStore {
         return diagnoseKey(this.state.dichotomousKey, this.state.figures);
     }
 
+    // Figure-token helpers — thin wrappers over the pure functions in figureRefs.ts,
+    // bound to the live figure list. See that module for the token-form details.
+
     public resolveTextReferences(text: string, idToDisplayNum: Map<number, number>): string {
-        if (!text) return text;
-
-        const figureCount = this.state.figures.length;
-        const { filenameToFig } = buildFigureLookups(this.state.figures);
-
-        // Stored references [figID: N] — value is always an internal figure ID.
-        text = text.replace(figIdTokenRegex(), (_match, value) => {
-            const id = parseInt(value.trim(), 10);
-            const displayNum = idToDisplayNum.get(id);
-            return displayNum !== undefined
-                ? `(Fig. ${displayNum})`
-                : `[Broken Fig: ID ${id}]`;
-        });
-
-        // Unresolved references [fig: value] — numeric = 1-based display number, text = filename.
-        text = text.replace(figRawTokenRegex(), (_match, value) => {
-            const trimmedValue = value.trim();
-
-            const displayNum = parseInt(trimmedValue, 10);
-            if (!isNaN(displayNum) && String(displayNum) === trimmedValue && displayNum >= 1 && displayNum <= figureCount) {
-                return `(Fig. ${displayNum})`;
-            }
-
-            const fig = filenameToFig.get(trimmedValue.toLowerCase());
-            if (fig) {
-                const fileDisplayNum = idToDisplayNum.get(fig.id);
-                if (fileDisplayNum !== undefined) return `(Fig. ${fileDisplayNum})`;
-            }
-
-            return `[Broken Fig: ${trimmedValue}]`;
-        });
-
-        return text;
+        return resolveTextReferences(text, this.state.figures, idToDisplayNum);
     }
 
-    /**
-     * Converts user-written [fig: N] (display number) or [fig: filename.jpg] tokens
-     * into stable internal storage tokens [figID: N] that survive figure reordering.
-     * Incomplete or unresolvable tokens are left unchanged.
-     */
     public encodeFigureTokens(text: string): string {
-        if (!text) return '';
-
-        const { displayNumToFig, filenameToFig } = buildFigureLookups(this.state.figures);
-
-        return text.replace(figRawTokenRegex(), (match, value) => {
-            const trimmed = value.trim();
-
-            // Try as a 1-based display number (the primary user-facing format)
-            const displayNum = parseInt(trimmed, 10);
-            if (!isNaN(displayNum) && String(displayNum) === trimmed && displayNumToFig.has(displayNum)) {
-                return `[figID: ${displayNumToFig.get(displayNum)!.id}]`;
-            }
-
-            // Try as a filename (case-insensitive)
-            const fig = filenameToFig.get(trimmed.toLowerCase());
-            if (fig) {
-                return `[figID: ${fig.id}]`;
-            }
-
-            // Cannot resolve — keep the original token so the user sees the problem
-            return match;
-        });
+        return encodeFigureTokens(text, this.state.figures);
     }
 
-    /**
-     * Converts stored [figID: N] tokens back to user-readable [fig: N] display numbers
-     * for rendering inside editor textareas. The display number reflects the figure's
-     * current position and automatically updates when figures are reordered.
-     */
     public decodeTextReferencesForEditor(text: string): string {
-        if (!text) return '';
-
-        const { idToDisplayNum } = buildFigureLookups(this.state.figures);
-
-        return text.replace(figIdTokenRegex(), (match, value) => {
-            const id = parseInt(value.trim(), 10);
-            const displayNum = idToDisplayNum.get(id);
-            return displayNum !== undefined
-                ? `[fig: ${displayNum}]`
-                : match; // Keep broken token visible so the user knows it needs attention
-        });
+        return decodeTextReferencesForEditor(text, this.state.figures);
     }
 }

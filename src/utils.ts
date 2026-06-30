@@ -1,5 +1,5 @@
 // utils.ts
-import type { Branch, Couplet, Figure } from './store.ts';
+import type { Branch, Couplet, Figure, Taxon } from './store.ts';
 
 /**
  * The shared empty destination. Branches are treated as immutable values
@@ -24,7 +24,9 @@ export function classifyBranch(branch: Branch, idMap: ReadonlyMap<number, unknow
     switch (branch.kind) {
         case 'linked': return idMap.has(branch.targetId) ? 'linked' : 'broken';
         case 'unresolved': return 'unresolved';
+        // Both a committed taxon and a still-typing draft are terminal taxon ends.
         case 'taxon': return 'taxon';
+        case 'taxonDraft': return 'taxon';
         case 'empty': return 'empty';
     }
 }
@@ -134,11 +136,14 @@ export const IS_MAC: boolean = (() => {
  */
 function isValidBranch(value: unknown): value is Branch {
     if (!value || typeof value !== 'object') return false;
-    const branch = value as { kind?: unknown; targetId?: unknown; couplet?: unknown; name?: unknown };
+    const branch = value as { kind?: unknown; targetId?: unknown; couplet?: unknown; taxonId?: unknown; name?: unknown };
     switch (branch.kind) {
         case 'linked': return typeof branch.targetId === 'number';
         case 'unresolved': return typeof branch.couplet === 'number';
-        case 'taxon': return typeof branch.name === 'string';
+        // Accept normalized (taxonId) and legacy (name) taxon branches so old
+        // .tskey files still import; migration normalizes legacy ones on load.
+        case 'taxon': return typeof branch.taxonId === 'number' || typeof branch.name === 'string';
+        case 'taxonDraft': return typeof branch.name === 'string';
         case 'empty': return true;
         default: return false;
     }
@@ -221,16 +226,47 @@ export function buildFigureIdToDisplayNumMap(figures: readonly Figure[]): Map<nu
  * functions for handling Destination links
  */
 export interface DestinationResolution {
-    inputValue: string;    // Raw text to bind inside edit input boxes
-    printText: string;     // Formatted layout text for the publication panel
-    printClass: string;    // Target CSS class mapping for styles/errors
-    isUnresolved: boolean; // Flag to trigger immediate error styling highlights
+    inputValue: string;        // Raw text to bind inside edit input boxes
+    printText: string;         // Formatted layout text for the publication panel
+    printClass: string;        // Target CSS class mapping for styles/errors
+    isUnresolved: boolean;     // Flag to trigger immediate error styling highlights
+    isUnlinkedTaxon?: boolean; // A typed taxon name that isn't a record yet (offer "create")
+}
+
+/** Which name a key shows for a taxon. Persisted in UIStateStore, chosen in Options. */
+export type NameDisplayMode = 'scientific' | 'vernacular';
+export const DEFAULT_NAME_DISPLAY_MODE: NameDisplayMode = 'scientific';
+
+/** Narrows an arbitrary value (persisted prefs / user input) to a valid NameDisplayMode. */
+export function isNameDisplayMode(value: unknown): value is NameDisplayMode {
+    return value === 'scientific' || value === 'vernacular';
+}
+
+/** Read-time taxon lookup passed to resolveDestination so a `taxon` branch can show a name. */
+export interface TaxaContext {
+    byId: Map<number, Taxon>;
+    nameMode: NameDisplayMode;
+}
+
+/** Builds a TaxaContext (id → record map) for the current taxa list and display mode. */
+export function buildTaxaContext(taxa: readonly Taxon[], nameMode: NameDisplayMode): TaxaContext {
+    const byId = new Map<number, Taxon>();
+    taxa.forEach(t => byId.set(t.id, t));
+    return { byId, nameMode };
+}
+
+/** The name to display for a taxon: vernacular when chosen and present, else scientific. */
+export function displayTaxonName(taxon: Taxon, mode: NameDisplayMode): string {
+    if (mode === 'vernacular' && taxon.vernacularName.trim() !== '') return taxon.vernacularName;
+    return taxon.scientificName;
 }
 
 /**
- * Resolves a destination's raw link and taxa state into a explicit UI and print configuration.
+ * Resolves a destination's link/taxon state into an explicit UI and print configuration.
+ * `taxaCtx` resolves a `taxon` branch's id to a record; the editor `inputValue` always
+ * stays the scientific name so free-typing round-trips regardless of display mode.
  */
-export function resolveDestination(branch: Branch, idToIndexMap: Map<number, number>): DestinationResolution {
+export function resolveDestination(branch: Branch, idToIndexMap: Map<number, number>, taxaCtx?: TaxaContext): DestinationResolution {
     switch (branch.kind) {
         // Points at an internal step ID — resolve it to a 1-based step number
         case 'linked': {
@@ -249,9 +285,25 @@ export function resolveDestination(branch: Branch, idToIndexMap: Map<number, num
             return { inputValue: stepStr, printText: stepStr, printClass: 'error-text', isUnresolved: true };
         }
 
-        // Standard descriptive taxon string (e.g., "Homo sapiens")
-        case 'taxon':
-            return { inputValue: branch.name, printText: branch.name, printClass: 'print-dest-taxon', isUnresolved: false };
+        // Normalized reference to a taxon record (by id).
+        case 'taxon': {
+            const taxon = taxaCtx?.byId.get(branch.taxonId);
+            if (!taxon) {
+                // Referenced record is gone (deleted) — flag it like a broken link.
+                return { inputValue: '', printText: '[missing taxon]', printClass: 'error-text', isUnresolved: true };
+            }
+            return {
+                inputValue: taxon.scientificName,
+                printText: displayTaxonName(taxon, taxaCtx!.nameMode),
+                printClass: 'print-dest-taxon',
+                isUnresolved: false,
+            };
+        }
+
+        // A typed taxon name that doesn't (yet) match a taxon record. Shown amber
+        // with a "create" affordance; not an error, just not linked yet.
+        case 'taxonDraft':
+            return { inputValue: branch.name, printText: branch.name, printClass: 'print-dest-taxon-unlinked', isUnresolved: false, isUnlinkedTaxon: true };
 
         // Nothing entered yet
         case 'empty':
@@ -359,8 +411,9 @@ export function parseDestinationInput(input: string, key: readonly Couplet[]): B
         return { kind: 'unresolved', couplet: stepNum };
     }
 
-    // Descriptive textual taxon identification
-    return { kind: 'taxon', name: trimmed };
+    // Descriptive textual taxon identification — a draft until committed (on blur)
+    // to a real record via the store's commitTaxonDrafts (find-or-create).
+    return { kind: 'taxonDraft', name: trimmed };
 }
 
 export function sanitizeFilename(title: string, extension = '.tskey'): string {

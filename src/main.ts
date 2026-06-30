@@ -4,14 +4,15 @@ import './style.css';
 import { KeyStore } from './store.ts';
 import type { Couplet } from './store.ts';
 import { UIStateStore } from './uiState.ts';
-import { initializeShell, applyPanelVisibility, renderEditorCards, renderPrintView, renderMenu, renderFigures } from './uiRenderer.ts';
+import { initializeShell, applyPanelVisibility, renderEditorCards, renderPrintView, renderMenu, renderFigures, renderTaxa } from './uiRenderer.ts';
 import { setupGlobalListeners, setupKeyboardShortcuts } from './eventController.ts';
 
-// Baseline fallback blueprint structure
+// Baseline fallback blueprint structure. Taxon ends are seeded as drafts; the
+// store migrates them into real taxon records on load (loadFromStorage).
 const fallbackData: Couplet[] = [
-    { id: 101, alt1: "Has feathers [figID: 101]", alt2: "Lacks feathers", branch1: { kind: 'taxon', name: "Bird" }, branch2: { kind: 'linked', targetId: 102 } },
-    { id: 102, alt1: "Has fur [figID: 102]", alt2: "Scales or bare skin", branch1: { kind: 'taxon', name: "Mammal" }, branch2: { kind: 'linked', targetId: 103 } },
-    { id: 103, alt1: "Has scales [figID: 103]", alt2: "Skin is smooth and moist", branch1: { kind: 'taxon', name: "Reptile2" }, branch2: { kind: 'taxon', name: "Amphibian" } }
+    { id: 101, alt1: "Has feathers [figID: 101]", alt2: "Lacks feathers", branch1: { kind: 'taxonDraft', name: "Bird" }, branch2: { kind: 'linked', targetId: 102 } },
+    { id: 102, alt1: "Has fur [figID: 102]", alt2: "Scales or bare skin", branch1: { kind: 'taxonDraft', name: "Mammal" }, branch2: { kind: 'linked', targetId: 103 } },
+    { id: 103, alt1: "Has scales [figID: 103]", alt2: "Skin is smooth and moist", branch1: { kind: 'taxonDraft', name: "Reptile2" }, branch2: { kind: 'taxonDraft', name: "Amphibian" } }
 ];
 
 const fallbackFigures = [
@@ -57,6 +58,7 @@ async function bootstrapApp() {
         renderEditorCards(store);
         renderPrintView(store, uiState);
         renderFigures(store, uiState, refreshAll);
+        renderTaxa(store, uiState);
     };
 
     const cleanups: Array<() => void> = [];

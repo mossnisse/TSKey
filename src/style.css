@@ -91,6 +91,7 @@ html, body {
 
 .editor-column,
 .figure-column,
+.taxa-column,
 .print-column {
     display: flex;
     flex-direction: column;
@@ -100,6 +101,7 @@ html, body {
 
 .editor-column { flex: 1.2; }
 .figure-column { flex: 1; }
+.taxa-column   { flex: 1; }
 .print-column  { flex: 0.8; }
 
 /* ==========================================
@@ -107,6 +109,7 @@ html, body {
    ========================================== */
 #editor-container,
 #figure-container,
+#taxa-container,
 #print-view-container {
     flex: 1;
     overflow-y: auto;
@@ -118,12 +121,14 @@ html, body {
 
 /* Tighter inner padding for the working panels; the publication view stays roomier. */
 #editor-container,
-#figure-container { padding: var(--space-lg); }
+#figure-container,
+#taxa-container { padding: var(--space-lg); }
 #print-view-container { padding: var(--space-2xl); }
 
 /* Clean alignment for headers and separators at the top of columns */
 .editor-column h2,
 .figure-column h2,
+.taxa-column h2,
 .print-column h2 {
     margin-top: 0;
     margin-bottom: var(--space-md);
@@ -486,6 +491,25 @@ html, body {
     border-bottom-color: var(--color-danger-hover);
 }
 
+/* A typed taxon name that isn't a record yet: amber, with the inline create button. */
+.input-destination.input-taxon-unlinked {
+    color: var(--color-warning);
+    border-bottom-color: var(--color-warning);
+}
+.btn-create-taxon {
+    align-self: flex-start;
+    margin-top: calc(-1 * var(--space-sm));
+    padding: 2px var(--space-sm);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--color-warning);
+    background: var(--color-warning-light);
+    border: 1px solid var(--color-warning);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+.btn-create-taxon:hover { filter: brightness(0.97); }
+
 /* ==========================================
    DIAGNOSTIC VISUAL MARKERS
    ========================================== */
@@ -536,6 +560,59 @@ html, body {
 .figure-card-header { display: flex; justify-content: space-between; align-items: center; user-select: none; margin-bottom: var(--space-xs); }
 .figure-card-title  { margin: 0; color: var(--color-primary); font-weight: 700; font-size: var(--text-lg); font-family: monospace; }
 .figure-field-row   { display: flex; align-items: flex-start; gap: var(--space-md); }
+
+/* ==========================================
+   TAXA PANEL ("chapter" cards)
+   ========================================== */
+.taxon-card {
+    border: none;
+    border-bottom: 1px solid var(--color-border-light);
+    border-left: 3px solid transparent;
+    border-radius: var(--radius-sm);
+    padding: var(--space-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    cursor: pointer;
+    position: relative;
+}
+.taxon-card:last-of-type { border-bottom: none; }
+.taxon-card:hover { background-color: var(--color-bg-muted); }
+.taxon-card.is-selected { border-left-color: var(--color-primary); background: var(--color-primary-light); }
+
+.taxon-card-header { display: flex; justify-content: space-between; align-items: center; user-select: none; }
+.taxon-card-title  { margin: 0; color: var(--color-primary); font-weight: 700; font-size: var(--text-lg); font-family: monospace; }
+
+.taxon-field-row { display: flex; flex-direction: column; gap: 2px; }
+.taxon-field-row > label { font-size: var(--text-sm); color: var(--color-text-muted); font-weight: 500; }
+.taxon-input,
+.taxon-textarea {
+    font-family: sans-serif;
+    font-size: var(--text-base);
+    width: 100%;
+    box-sizing: border-box;
+    padding: var(--space-xs) var(--space-sm);
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+}
+.taxon-input:focus,
+.taxon-textarea:focus { outline: none; border-color: var(--color-primary); }
+.taxon-textarea { resize: vertical; line-height: 1.4; }
+.taxon-input[data-field="scientificName"] { font-style: italic; font-weight: 600; }
+
+.taxon-card.drag-drop-above::before,
+.taxon-card.drag-drop-below::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--color-primary);
+}
+.taxon-card.drag-drop-above::before { top: -2px; }
+.taxon-card.drag-drop-below::after { bottom: -2px; }
 
 .figure-field-row label {
     font-family: sans-serif;
@@ -682,6 +759,8 @@ html, body {
 
 .print-dest-strong { font-weight: bold; }
 .print-dest-taxon  { font-weight: bold; font-style: italic; }
+/* A typed taxon name not yet created as a record — amber to flag it needs action. */
+.print-dest-taxon-unlinked { font-weight: bold; font-style: italic; color: var(--color-warning); }
 
 /* ==========================================
    TOAST NOTIFICATION ENGINE

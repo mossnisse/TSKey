@@ -246,9 +246,9 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
         openPlainTextImportDialog();
     }, { signal });
 
-    document.querySelector('#cmd-export-text')?.addEventListener('click', () => exportKeyToPlainText(store, uiState.leadFormat, uiState.showBackReference), { signal });
-    document.querySelector('#cmd-export-html')?.addEventListener('click', () => exportKeyToHTML(store, uiState.leadFormat, uiState.showBackReference), { signal });
-    document.querySelector('#cmd-export-latex')?.addEventListener('click', () => exportKeyToLaTeX(store, uiState.leadFormat, uiState.showBackReference), { signal });
+    document.querySelector('#cmd-export-text')?.addEventListener('click', () => exportKeyToPlainText(store, uiState.leadFormat, uiState.showBackReference, uiState.nameDisplayMode), { signal });
+    document.querySelector('#cmd-export-html')?.addEventListener('click', () => exportKeyToHTML(store, uiState.leadFormat, uiState.showBackReference, uiState.nameDisplayMode), { signal });
+    document.querySelector('#cmd-export-latex')?.addEventListener('click', () => exportKeyToLaTeX(store, uiState.leadFormat, uiState.showBackReference, uiState.nameDisplayMode), { signal });
 }
 
 /** Edit, View, and Tools menu command bindings (undo/redo, clipboard, toggles, auto-order). */
@@ -297,6 +297,14 @@ export function setupEditMenu(store: KeyStore, uiState: UIStateStore, refreshAll
     document.querySelector('#cmd-delete')?.addEventListener('click', () => {
         const selectedKeyCount = store.getSelectedCoupletIds().size;
         const selectedFigCount = store.getSelectedFigureIds().size;
+        const selectedTaxonCount = store.getSelectedTaxonIds().size;
+        if (selectedTaxonCount > 0) {
+            if (confirm("Confirm removing highlighted taxa? Any key leads pointing at them will be cleared.")) {
+                store.deleteSelectedTaxa();
+                showToast(`Deleted ${selectedTaxonCount} taxon(a).`, 'success');
+                batchedRefresh(refreshAll);
+            }
+        }
         if (selectedKeyCount > 0) {
             if (confirm("Confirm removing highlighted key steps?")) {
                 store.deleteSelectedCouplets();
@@ -338,6 +346,7 @@ export function setupEditMenu(store: KeyStore, uiState: UIStateStore, refreshAll
     document.querySelector('#cmd-clear')?.addEventListener('click', () => {
         store.clearSelection();
         store.clearFigureSelection();
+        store.clearTaxonSelection();
         batchedRefresh(refreshAll);
     }, { signal });
 
@@ -354,6 +363,11 @@ export function setupEditMenu(store: KeyStore, uiState: UIStateStore, refreshAll
 
     document.querySelector('#cmd-toggle-images')?.addEventListener('click', () => {
         uiState.toggleImages();
+        batchedRefresh(refreshAll);
+    }, { signal });
+
+    document.querySelector('#cmd-toggle-taxa')?.addEventListener('click', () => {
+        uiState.toggleTaxa();
         batchedRefresh(refreshAll);
     }, { signal });
 

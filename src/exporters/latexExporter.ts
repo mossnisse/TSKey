@@ -1,7 +1,7 @@
 // latexExporter.ts
 import type { KeyStore } from '../store.ts';
-import { triggerFileDownload, resolveDestination, buildIdToIndexMap, buildFigureIdToDisplayNumMap, sanitizeFilename, buildCoupletLeads, buildBackReferenceMap } from '../utils.ts';
-import type { LeadFormat } from '../utils.ts';
+import { triggerFileDownload, resolveDestination, buildIdToIndexMap, buildFigureIdToDisplayNumMap, sanitizeFilename, buildCoupletLeads, buildBackReferenceMap, buildTaxaContext } from '../utils.ts';
+import type { LeadFormat, NameDisplayMode } from '../utils.ts';
 import { figIdTokenRegex } from '../figureTokens.ts';
 import { showToast } from '../uiRenderer.ts';
 
@@ -39,7 +39,7 @@ function latexLeadBox(lead: string, width: string): string {
  * Compiles the current KeyStore state into a valid standalone LaTeX structure
  * using classic inline notation and dot leaders to prevent layout overlap.
  */
-export function exportKeyToLaTeX(store: KeyStore, leadFormat: LeadFormat, showBackReference: boolean): void {
+export function exportKeyToLaTeX(store: KeyStore, leadFormat: LeadFormat, showBackReference: boolean, nameMode: NameDisplayMode): void {
 
     try {
         const key = store.getKey();
@@ -48,6 +48,7 @@ export function exportKeyToLaTeX(store: KeyStore, leadFormat: LeadFormat, showBa
         const idToIndexMap = buildIdToIndexMap(key);
         const figureIdToDisplayNum = buildFigureIdToDisplayNumMap(figures);
         const backRefMap = showBackReference ? buildBackReferenceMap(key) : null;
+        const taxaCtx = buildTaxaContext(store.getTaxa(), nameMode);
         // The back-reference widens the lead ("2 (1)"), so give the fixed box and
         // matching hang-indent extra room to avoid overprinting the diagnosis text.
         const leadWidth = showBackReference ? '4.5em' : '2.5em';
@@ -80,7 +81,8 @@ export function exportKeyToLaTeX(store: KeyStore, leadFormat: LeadFormat, showBa
                 // Render a destination: italic-bold taxon name, bold step number,
                 // or \dots when the branch is empty/broken.
                 const renderEnd = (dest: ReturnType<typeof resolveDestination>): string => {
-                    if (dest.printClass === 'print-dest-taxon') {
+                    // A linked taxon and a not-yet-created draft both render as the name.
+                    if (dest.printClass === 'print-dest-taxon' || dest.printClass === 'print-dest-taxon-unlinked') {
                         return `\\mbox{\\textbf{\\textit{${escapeLaTeX(dest.printText)}}}}`;
                     }
                     if (dest.printClass === 'print-dest-strong') {
@@ -89,8 +91,8 @@ export function exportKeyToLaTeX(store: KeyStore, leadFormat: LeadFormat, showBa
                     return `\\dots`;
                 };
 
-                const end1 = renderEnd(resolveDestination(c.branch1, idToIndexMap));
-                const end2 = renderEnd(resolveDestination(c.branch2, idToIndexMap));
+                const end1 = renderEnd(resolveDestination(c.branch1, idToIndexMap, taxaCtx));
+                const end2 = renderEnd(resolveDestination(c.branch2, idToIndexMap, taxaCtx));
 
                 // Escape text first, then convert [figID: N] tokens into inline (Fig.~N) citations.
                 const alt1Text = resolveFigCitations(escapeLaTeX(c.alt1));

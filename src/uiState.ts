@@ -2,8 +2,8 @@
 // Manages persistent UI preferences, separate from key data in KeyStore.
 // Panel visibility and other display settings survive page reloads via localStorage.
 
-import { DEFAULT_LEAD_FORMAT, isLeadFormat } from './utils.ts';
-import type { LeadFormat } from './utils.ts';
+import { DEFAULT_LEAD_FORMAT, isLeadFormat, DEFAULT_NAME_DISPLAY_MODE, isNameDisplayMode } from './utils.ts';
+import type { LeadFormat, NameDisplayMode } from './utils.ts';
 
 export const UI_STATE_STORAGE_KEY = 'dichotomous_key_ui';
 
@@ -11,18 +11,22 @@ export interface UIPanelState {
     isFiguresHidden: boolean;
     isPrintHidden: boolean;
     isImagesHidden: boolean;
+    isTaxaHidden: boolean;
     activeProjectTitle: string;
     leadFormat: LeadFormat;
     showBackReference: boolean;
+    nameDisplayMode: NameDisplayMode;
 }
 
 const DEFAULTS: UIPanelState = {
     isFiguresHidden: false,
     isPrintHidden: false,
     isImagesHidden: false,
+    isTaxaHidden: false,
     activeProjectTitle: 'Untitled Key',
     leadFormat: DEFAULT_LEAD_FORMAT,
     showBackReference: false,
+    nameDisplayMode: DEFAULT_NAME_DISPLAY_MODE,
 };
 
 /**
@@ -99,6 +103,7 @@ export class TypingSession {
 export class TypingSessionManager {
     public readonly couplets = new TypingSession();
     public readonly figures = new TypingSession();
+    public readonly taxa = new TypingSession();
 }
 
 export class UIStateStore {
@@ -120,6 +125,14 @@ export class UIStateStore {
 
     get isImagesHidden(): boolean {
         return this.state.isImagesHidden;
+    }
+
+    get isTaxaHidden(): boolean {
+        return this.state.isTaxaHidden;
+    }
+
+    get nameDisplayMode(): NameDisplayMode {
+        return this.state.nameDisplayMode;
     }
 
     get isPrintHidden(): boolean {
@@ -162,6 +175,17 @@ export class UIStateStore {
         this.persist();
     }
 
+    public toggleTaxa(): void {
+        this.state = { ...this.state, isTaxaHidden: !this.state.isTaxaHidden };
+        this.persist();
+    }
+
+    public setNameDisplayMode(mode: NameDisplayMode): void {
+        if (!isNameDisplayMode(mode) || this.state.nameDisplayMode === mode) return;
+        this.state = { ...this.state, nameDisplayMode: mode };
+        this.persist();
+    }
+
     public setLeadFormat(format: LeadFormat): void {
         if (!isLeadFormat(format) || this.state.leadFormat === format) return;
         this.state = { ...this.state, leadFormat: format };
@@ -183,8 +207,9 @@ export class UIStateStore {
             const raw = localStorage.getItem(UI_STATE_STORAGE_KEY);
             if (!raw) return { ...DEFAULTS };
             const merged: UIPanelState = { ...DEFAULTS, ...JSON.parse(raw) };
-            // Guard against a stale/invalid persisted value from an older build.
+            // Guard against stale/invalid persisted values from an older build.
             if (!isLeadFormat(merged.leadFormat)) merged.leadFormat = DEFAULT_LEAD_FORMAT;
+            if (!isNameDisplayMode(merged.nameDisplayMode)) merged.nameDisplayMode = DEFAULT_NAME_DISPLAY_MODE;
             return merged;
         } catch {
             return { ...DEFAULTS };

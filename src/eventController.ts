@@ -14,6 +14,7 @@ import {
     setupCoupletDragAndDrop,
 } from './events/coupletEvents.ts';
 import { setupFigurePanel, setupFigureReference } from './events/figureEvents.ts';
+import { setupTaxaPanel } from './events/taxaEvents.ts';
 import { setupDialogs } from './events/dialogs.ts';
 import { setupFileMenu, setupEditMenu, setupMenuBarNavigation } from './events/menuEvents.ts';
 import { setupNavigationClicks, setupContextMenu } from './events/navigationEvents.ts';
@@ -34,6 +35,7 @@ export function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, ref
     setupCoupletFocus(keyContainer, store, uiState, refreshAll, signal);
     setupCoupletDragAndDrop(keyContainer, store, refreshAll, signal);
     setupFigurePanel(store, uiState, refreshAll, signal);
+    setupTaxaPanel(store, uiState, refreshAll, signal);
     setupDialogs(store, uiState, refreshAll, signal);
     setupFileMenu(store, uiState, refreshAll, signal);
     setupEditMenu(store, uiState, refreshAll, signal);

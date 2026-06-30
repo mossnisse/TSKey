@@ -3,8 +3,14 @@
 // Ctrl-click parent links), field values, the link-highlight classes, and diagnostics
 // without tearing down focused fields.
 import type { KeyStore } from '../store.ts';
-import { escapeHTML, buildIdToIndexMap, resolveDestination, branchTarget } from '../utils.ts';
+import { escapeHTML, buildIdToIndexMap, resolveDestination, branchTarget, buildTaxaContext } from '../utils.ts';
 import { syncField } from './shared.ts';
+
+/** Shows the inline "＋ taxon" create button only when that lead is an unlinked draft. */
+function syncCreateTaxonBtn(card: HTMLElement, field: 'dest1' | 'dest2', isUnlinkedTaxon?: boolean) {
+    const btn = card.querySelector(`.btn-create-taxon[data-for="${field}"]`) as HTMLElement | null;
+    if (btn) btn.hidden = !isUnlinkedTaxon;
+}
 
 /**
  * High-Performance Incremental DOM Reconciliation.
@@ -20,6 +26,9 @@ export function renderEditorCards(store: KeyStore) {
 
     const idToIndexMap = buildIdToIndexMap(key);
     const inboundLinksMap = store.generateInboundLinksMap();
+    // The editor box always shows the scientific name (inputValue), so the display
+    // mode here is irrelevant — 'scientific' keeps the round-trip canonical.
+    const taxaCtx = buildTaxaContext(store.getTaxa(), 'scientific');
 
     // Link highlighting: the "focus step" is the single selected card, or — when
     // nothing is selected — the step being edited. Multi-select is ambiguous → none.
@@ -55,8 +64,8 @@ export function renderEditorCards(store: KeyStore) {
         const displayNum = index + 1;
         const isSelected = selectedIds.has(couplet.id);
         const inboundLinks = inboundLinksMap.get(couplet.id) || [];
-        const dest1 = resolveDestination(couplet.branch1, idToIndexMap);
-        const dest2 = resolveDestination(couplet.branch2, idToIndexMap);
+        const dest1 = resolveDestination(couplet.branch1, idToIndexMap, taxaCtx);
+        const dest2 = resolveDestination(couplet.branch2, idToIndexMap, taxaCtx);
         const cardErrors = activeDiagnostics.get(couplet.id) || [];
         const computedTitle = `${displayNum}.`;
         const badgeClass = inboundLinks.length ? 'badge badge-linked' : (index === 0 ? 'badge badge-linked' : 'badge badge-isolated');
@@ -98,10 +107,14 @@ export function renderEditorCards(store: KeyStore) {
             syncField(card, 'textarea[data-field="alt1"]', store.decodeTextReferencesForEditor(couplet.alt1));
             const dest1El = syncField(card, 'input[data-field="dest1"]', dest1.inputValue);
             dest1El?.classList.toggle('input-error', dest1.isUnresolved);
+            dest1El?.classList.toggle('input-taxon-unlinked', !!dest1.isUnlinkedTaxon);
+            syncCreateTaxonBtn(card, 'dest1', dest1.isUnlinkedTaxon);
 
             syncField(card, 'textarea[data-field="alt2"]', store.decodeTextReferencesForEditor(couplet.alt2));
             const dest2El = syncField(card, 'input[data-field="dest2"]', dest2.inputValue);
             dest2El?.classList.toggle('input-error', dest2.isUnresolved);
+            dest2El?.classList.toggle('input-taxon-unlinked', !!dest2.isUnlinkedTaxon);
+            syncCreateTaxonBtn(card, 'dest2', dest2.isUnlinkedTaxon);
 
             const currentWarningBlock = card.querySelector('.warning-block');
             if (cardErrors.length > 0) {
@@ -138,16 +151,18 @@ export function renderEditorCards(store: KeyStore) {
                   <textarea class="input-sync card-textarea" data-field="alt1" placeholder="Enter diagnostic trait details [fig: 1]...">${escapeHTML(store.decodeTextReferencesForEditor(couplet.alt1))}</textarea>
                   <div class="card-meta-pane">
                     <label class="meta-label">→
-                      <input type="text" class="input-sync input-destination ${dest1.isUnresolved ? 'input-error' : ''}" data-field="dest1" placeholder="Taxon or Step #" value="${escapeHTML(dest1.inputValue)}" />
+                      <input type="text" class="input-sync input-destination ${dest1.isUnresolved ? 'input-error' : ''} ${dest1.isUnlinkedTaxon ? 'input-taxon-unlinked' : ''}" data-field="dest1" placeholder="Taxon or Step #" value="${escapeHTML(dest1.inputValue)}" />
                     </label>
+                    <button type="button" class="btn-create-taxon" data-for="dest1" title="Create a Taxa card for this name"${dest1.isUnlinkedTaxon ? '' : ' hidden'}>＋ taxon</button>
                   </div>
                 </div>
                 <div class="card-row">
                   <textarea class="input-sync card-textarea" data-field="alt2" placeholder="Enter contrast alternative description...">${escapeHTML(store.decodeTextReferencesForEditor(couplet.alt2))}</textarea>
                   <div class="card-meta-pane">
                     <label class="meta-label">→
-                      <input type="text" class="input-sync input-destination ${dest2.isUnresolved ? 'input-error' : ''}" data-field="dest2" placeholder="Taxon or Step #" value="${escapeHTML(dest2.inputValue)}" />
+                      <input type="text" class="input-sync input-destination ${dest2.isUnresolved ? 'input-error' : ''} ${dest2.isUnlinkedTaxon ? 'input-taxon-unlinked' : ''}" data-field="dest2" placeholder="Taxon or Step #" value="${escapeHTML(dest2.inputValue)}" />
                     </label>
+                    <button type="button" class="btn-create-taxon" data-for="dest2" title="Create a Taxa card for this name"${dest2.isUnlinkedTaxon ? '' : ' hidden'}>＋ taxon</button>
                   </div>
                 </div>
                 ${warningBlockHtml}

@@ -1,15 +1,15 @@
 // plainTextExporter.ts
 import type { KeyStore } from '../store.ts';
 import { showToast } from '../uiRenderer.ts';
-import { resolveDestination, triggerFileDownload, buildIdToIndexMap, buildFigureIdToDisplayNumMap, sanitizeFilename, buildCoupletLeads, buildBackReferenceMap
+import { resolveDestination, triggerFileDownload, buildIdToIndexMap, buildFigureIdToDisplayNumMap, sanitizeFilename, buildCoupletLeads, buildBackReferenceMap, buildTaxaContext
 } from '../utils.ts';
-import type { LeadFormat } from '../utils.ts';
+import type { LeadFormat, NameDisplayMode } from '../utils.ts';
 
 /**
  * Compiles the dichotomous key into a tab-separated plain-text document,
  * fully resolving embedded figure references and appending a metadata block.
  */
-export function exportKeyToPlainText(store: KeyStore, leadFormat: LeadFormat, showBackReference: boolean): void {
+export function exportKeyToPlainText(store: KeyStore, leadFormat: LeadFormat, showBackReference: boolean, nameMode: NameDisplayMode): void {
     try {
         const key = store.getKey();
         const figures = store.getFigures();
@@ -17,6 +17,7 @@ export function exportKeyToPlainText(store: KeyStore, leadFormat: LeadFormat, sh
         const idToIndexMap = buildIdToIndexMap(key);
         const idToDisplayNum = buildFigureIdToDisplayNumMap(figures);
         const backRefMap = showBackReference ? buildBackReferenceMap(key) : null;
+        const taxaCtx = buildTaxaContext(store.getTaxa(), nameMode);
         
         let content = '';
 
@@ -32,8 +33,8 @@ export function exportKeyToPlainText(store: KeyStore, leadFormat: LeadFormat, sh
             const currentDisplayNum = index + 1;
 
             // Resolve destinations (taxon name, step number, or '...' when empty)
-            const dest1 = resolveDestination(c.branch1, idToIndexMap).printText;
-            const dest2 = resolveDestination(c.branch2, idToIndexMap).printText;
+            const dest1 = resolveDestination(c.branch1, idToIndexMap, taxaCtx).printText;
+            const dest2 = resolveDestination(c.branch2, idToIndexMap, taxaCtx).printText;
 
             // Resolve figure shorthand macros (e.g. converting [figID: 101] to [fig: 1])
             const alt1Text = store.resolveTextReferences(c.alt1, idToDisplayNum) || '___';

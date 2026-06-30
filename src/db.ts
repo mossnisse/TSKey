@@ -1,11 +1,29 @@
 // db.ts - Complete zero-dependency client-side storage engine
-import type { Couplet, Figure } from './store.ts';
+import type { Couplet, Figure, Taxon } from './store.ts';
 
-export interface ProjectRecord {
-    title: string;
-    projectUid: string;   // Stable identity; figure blobs are keyed by this, not the title
+/**
+ * Bumped whenever the persisted document gains a collection or changes shape.
+ * Stored on each ProjectRecord so future loads can migrate older records.
+ *   v1 — couplets + figures
+ *   v2 — adds the taxa collection (normalized terminal records)
+ */
+export const SCHEMA_VERSION = 2;
+
+/**
+ * The serializable document collections, passed as one object so adding a new
+ * collection (taxa, glossary, references…) never grows saveProject's argument
+ * list. Title and projectUid are passed alongside as they key the record.
+ */
+export interface ProjectData {
     dichotomousKey: Couplet[];
     figures: Figure[];
+    taxa: Taxon[];
+}
+
+export interface ProjectRecord extends ProjectData {
+    title: string;
+    projectUid: string;   // Stable identity; figure blobs are keyed by this, not the title
+    schemaVersion?: number;
     lastModified: number;
 }
 
@@ -97,17 +115,20 @@ class IndexedDBEngine {
             .sort((a, b) => b.lastModified - a.lastModified);
     }
 
-    public async saveProject(title: string, projectUid: string, key: Couplet[], figures: Figure[]): Promise<void> {
+    public async saveProject(title: string, projectUid: string, data: ProjectData): Promise<void> {
         const db = await this.getDB();
         const tx = db.transaction(this.projectsStoreName, 'readwrite');
 
-        tx.objectStore(this.projectsStoreName).put({
+        const record: ProjectRecord = {
             title,
             projectUid,
-            dichotomousKey: key,
-            figures,
+            schemaVersion: SCHEMA_VERSION,
+            dichotomousKey: data.dichotomousKey,
+            figures: data.figures,
+            taxa: data.taxa,
             lastModified: Date.now()
-        });
+        };
+        tx.objectStore(this.projectsStoreName).put(record);
 
         // Resolving on complete ensures that data is successfully committed to disk
         return txDone(tx, `Transaction aborted while saving project: ${title}`);
@@ -117,7 +138,14 @@ class IndexedDBEngine {
         const db = await this.getDB();
         const tx = db.transaction(this.projectsStoreName, 'readonly');
         const result = await reqValue(tx.objectStore(this.projectsStoreName).get(title) as IDBRequest<ProjectRecord | undefined>);
-        return result || null;
+        if (!result) return null;
+
+        // Default any collection a legacy record predates, so callers can rely on
+        // every collection being a present array regardless of when it was saved.
+        result.dichotomousKey = result.dichotomousKey || [];
+        result.figures = result.figures || [];
+        result.taxa = result.taxa || [];
+        return result;
     }
 
     public async deleteProject(title: string, projectUid: string): Promise<void> {
@@ -230,9 +258,9 @@ export class WorkspaceManager {
         return this.storage.getProjectList();
     }
 
-    public async saveProject(title: string, projectUid: string, key: Couplet[], figures: Figure[]): Promise<void> {
-        await this.storage.saveProject(title, projectUid, key, figures);
-        await this.commitStagedChanges(projectUid, figures);
+    public async saveProject(title: string, projectUid: string, data: ProjectData): Promise<void> {
+        await this.storage.saveProject(title, projectUid, data);
+        await this.commitStagedChanges(projectUid, data.figures);
     }
 
     public async loadProject(title: string): Promise<ProjectRecord | null> {

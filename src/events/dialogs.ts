@@ -5,7 +5,7 @@ import type { KeyStore } from '../store.ts';
 import type { UIStateStore } from '../uiState.ts';
 import { batchedRefresh, refreshHubView } from './shared.ts';
 import { showToast } from '../uiRenderer.ts';
-import { isLeadFormat } from '../utils.ts';
+import { isLeadFormat, isNameDisplayMode } from '../utils.ts';
 import { workspaceStorage } from '../db.ts';
 
 /** Modal open/close triggers and the project workspace hub row actions (load / delete). */
@@ -15,14 +15,18 @@ export function setupDialogs(store: KeyStore, uiState: UIStateStore, refreshAll:
     const modalAbout = document.getElementById('modal-about') as HTMLElement;
     const modalProjectHub = document.getElementById('modal-open-project') as HTMLElement;
 
-    // --- OPTIONS: KEY LEADING FORMAT + BACK-REFERENCE ---
+    // --- OPTIONS: KEY LEADING FORMAT + BACK-REFERENCE + TAXON NAME DISPLAY ---
     const leadFormatGroup = document.getElementById('opt-lead-format');
     const backRefCheckbox = document.getElementById('opt-backref') as HTMLInputElement | null;
+    const nameDisplayGroup = document.getElementById('opt-name-display');
     const syncOptionControls = () => {
         leadFormatGroup
             ?.querySelectorAll<HTMLInputElement>('input[name="lead-format"]')
             .forEach(radio => { radio.checked = radio.value === uiState.leadFormat; });
         if (backRefCheckbox) backRefCheckbox.checked = uiState.showBackReference;
+        nameDisplayGroup
+            ?.querySelectorAll<HTMLInputElement>('input[name="name-display"]')
+            .forEach(radio => { radio.checked = radio.value === uiState.nameDisplayMode; });
     };
     leadFormatGroup?.addEventListener('change', (e) => {
         const target = e.target as HTMLInputElement;
@@ -32,6 +36,12 @@ export function setupDialogs(store: KeyStore, uiState: UIStateStore, refreshAll:
     }, { signal });
     backRefCheckbox?.addEventListener('change', () => {
         uiState.setShowBackReference(backRefCheckbox.checked);
+        batchedRefresh(refreshAll);
+    }, { signal });
+    nameDisplayGroup?.addEventListener('change', (e) => {
+        const target = e.target as HTMLInputElement;
+        if (target.name !== 'name-display' || !isNameDisplayMode(target.value)) return;
+        uiState.setNameDisplayMode(target.value);
         batchedRefresh(refreshAll);
     }, { signal });
 

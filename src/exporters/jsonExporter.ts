@@ -34,7 +34,8 @@ export async function exportKeyToJSON(store: KeyStore): Promise<void> {
             data: {
                 title: store.getTitle(), // Embed title into the payload
                 key: store.getKey(),
-                figures: exportedFigures
+                figures: exportedFigures,
+                taxa: store.getTaxa()
             }
         };
 

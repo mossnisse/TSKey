@@ -1,12 +1,13 @@
 import type { KeyStore } from '../store.ts';
-import { escapeHTML, buildIdToIndexMap, buildFigureIdToDisplayNumMap, triggerFileDownload, resolveDestination, sanitizeFilename, buildCoupletLeads, buildBackReferenceMap } from '../utils.ts';
-import type { DestinationResolution, LeadFormat } from '../utils.ts';
+import { escapeHTML, buildIdToIndexMap, buildFigureIdToDisplayNumMap, triggerFileDownload, resolveDestination, sanitizeFilename, buildCoupletLeads, buildBackReferenceMap, buildTaxaContext } from '../utils.ts';
+import type { DestinationResolution, LeadFormat, NameDisplayMode } from '../utils.ts';
 import { showToast } from '../uiRenderer.ts';
 import { workspaceStorage, blobToBase64 } from '../db.ts';
 
 function destinationToHtml(dest: DestinationResolution): string {
     const escaped = escapeHTML(dest.printText);
-    if (dest.printClass === 'print-dest-taxon') {
+    // A linked taxon and a not-yet-created draft both export as the taxon name.
+    if (dest.printClass === 'print-dest-taxon' || dest.printClass === 'print-dest-taxon-unlinked') {
         return `<strong class="print-dest-taxon">${escaped}</strong>`;
     }
     if (dest.printClass === 'print-dest-strong') {
@@ -21,7 +22,7 @@ function destinationToHtml(dest: DestinationResolution): string {
 /**
  * Compiles the current KeyStore state into a single standalone static HTML document.
  */
-export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, showBackReference: boolean): Promise<void> {
+export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, showBackReference: boolean, nameMode: NameDisplayMode): Promise<void> {
     try {
         const projectUid = store.getActiveProjectUid();
         const key = store.getKey();
@@ -30,6 +31,7 @@ export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, s
         const idToIndexMap = buildIdToIndexMap(key);
         const idToDisplayNum = buildFigureIdToDisplayNumMap(figures);
         const backRefMap = showBackReference ? buildBackReferenceMap(key) : null;
+        const taxaCtx = buildTaxaContext(store.getTaxa(), nameMode);
 
         // COMPILE GLOBAL FIGURES PANEL SIDEBAR (CONCURRENT PIPELINE)
         const figureCards = await Promise.all(
@@ -69,8 +71,8 @@ export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, s
             const c = key[index];
             const currentDisplayNum = index + 1;
 
-            const dest1 = resolveDestination(c.branch1, idToIndexMap);
-            const dest2 = resolveDestination(c.branch2, idToIndexMap);
+            const dest1 = resolveDestination(c.branch1, idToIndexMap, taxaCtx);
+            const dest2 = resolveDestination(c.branch2, idToIndexMap, taxaCtx);
 
             const end1 = destinationToHtml(dest1);
             const end2 = destinationToHtml(dest2);

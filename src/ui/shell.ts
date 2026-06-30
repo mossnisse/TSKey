@@ -127,6 +127,9 @@ export function initializeShell(appDiv: HTMLDivElement) {
             <button id="cmd-toggle-images" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🖼️ Hide Images in Figures Panel</span>
             </button>
+            <button id="cmd-toggle-taxa" class="dropdown-action" role="menuitem" tabindex="-1">
+              <span>🦋 Hide Taxa Panel</span>
+            </button>
             <button id="cmd-toggle-print" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🖨️ Hide Print Preview</span>
               <span class="menu-shortcut">Ctrl+Shift+P</span>
@@ -181,6 +184,12 @@ export function initializeShell(appDiv: HTMLDivElement) {
           <h2>Figure References</h2>
           <div id="figure-container"></div>
           <button id="add-figure-btn" class="btn-add-block">+ Add New Figure</button>
+        </div>
+
+        <div class="taxa-column">
+          <h2>Taxa</h2>
+          <div id="taxa-container"></div>
+          <button id="add-taxon-btn" class="btn-add-block">+ Add New Taxon</button>
         </div>
 
         <div class="print-column">
@@ -283,6 +292,27 @@ export function initializeShell(appDiv: HTMLDivElement) {
                 <span class="settings-hint settings-checkbox-hint">Append the step this couplet is reached from, in parentheses — e.g. <strong>2&nbsp;(1)</strong>. Handy for navigating a printed key upwards.</span>
               </span>
             </label>
+          </div>
+
+          <div class="settings-group">
+            <h4>Taxon names in the key</h4>
+            <p class="settings-hint">Choose which name terminal taxa show in the Live Publication View and exports. Vernacular falls back to the scientific name when a taxon has no common name.</p>
+            <div class="settings-options" id="opt-name-display" role="radiogroup" aria-label="Taxon names in the key">
+              <label class="settings-option">
+                <input type="radio" name="name-display" value="scientific" />
+                <span class="settings-option-main">
+                  <span class="settings-option-title">Scientific name</span>
+                  <span class="settings-option-sample"><em>Bufo bufo</em></span>
+                </span>
+              </label>
+              <label class="settings-option">
+                <input type="radio" name="name-display" value="vernacular" />
+                <span class="settings-option-main">
+                  <span class="settings-option-title">Vernacular name</span>
+                  <span class="settings-option-sample">Common toad</span>
+                </span>
+              </label>
+            </div>
           </div>
         </div>
       </div>
@@ -390,5 +420,6 @@ export function initializeShell(appDiv: HTMLDivElement) {
  */
 export function applyPanelVisibility(uiState: UIStateStore): void {
     document.querySelector('.figure-column')?.classList.toggle('is-hidden', uiState.isFiguresHidden);
+    document.querySelector('.taxa-column')?.classList.toggle('is-hidden', uiState.isTaxaHidden);
     document.querySelector('.print-column')?.classList.toggle('is-hidden', uiState.isPrintHidden);
 }

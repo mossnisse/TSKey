@@ -309,7 +309,8 @@ function accToBranch(link: number, taxa: string, present: Set<number>): Branch {
     }
     const trimmed = taxa.trim();
     if (trimmed === '') return { kind: 'empty' };
-    return { kind: 'taxon', name: trimmed };
+    // Emit a draft; importJsonData's migration find-or-creates the taxon record.
+    return { kind: 'taxonDraft', name: trimmed };
 }
 
 /**
@@ -614,8 +615,12 @@ function renderPreviewHtml(result: PlainTextParseResult): string {
             }
             case 'unresolved':
                 return `→ ${branch.couplet}`;
-            case 'taxon':
+            // The parser only produces draft taxon branches; `taxon` (by id) can't
+            // appear here, but the switch stays exhaustive over the Branch union.
+            case 'taxonDraft':
                 return escapeHTML(branch.name);
+            case 'taxon':
+                return '→ taxon';
             case 'empty':
                 return '<span class="import-preview-muted">(empty)</span>';
         }
