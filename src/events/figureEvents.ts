@@ -7,6 +7,7 @@ import type { UIStateStore } from '../uiState.ts';
 import { batchedRefresh, DEBOUNCE_TYPING_MS, setupCardDragReorder } from './shared.ts';
 import { showToast } from '../uiRenderer.ts';
 import { workspaceStorage, activeObjectURLs } from '../db.ts';
+import { openImageLightbox } from '../ui/imageLightbox.ts';
 
 // Figure-reference insertion (key editor alt1/alt2 text only).
 const FIG_REF_TOKEN = '[fig: ]';
@@ -119,6 +120,20 @@ export function setupFigurePanel(store: KeyStore, uiState: UIStateStore, refresh
 
             batchedRefresh(refreshAll);
             return;
+        }
+
+        // Click a loaded figure image (without a multi-select modifier) to open it
+        // full-screen with zoom/pan. Modifier-clicks still fall through to selection.
+        if (target.classList.contains('figure-preview-img') && !(e.ctrlKey || e.metaKey || e.shiftKey)) {
+            const img = target as HTMLImageElement;
+            const src = img.currentSrc || img.getAttribute('src') || '';
+            if (img.style.display !== 'none' && src) {
+                const card = img.closest('.figure-card') as HTMLElement | null;
+                const num = card?.querySelector('.figure-card-title')?.textContent?.trim() ?? '';
+                const caption = (card?.querySelector('.figure-input-caption') as HTMLTextAreaElement | null)?.value ?? '';
+                openImageLightbox(src, [num, caption].filter(Boolean).join('  '));
+                return;
+            }
         }
 
         // Clear selection if clicking the background layout area of the figure panel itself
