@@ -3,6 +3,7 @@ import { escapeHTML, buildIdToIndexMap, buildFigureIdToDisplayNumMap, triggerFil
 import type { DestinationResolution, LeadFormat, NameDisplayMode } from '../utils.ts';
 import { showToast } from '../uiRenderer.ts';
 import { workspaceStorage, blobToBase64 } from '../store';
+import { LIGHTBOX_CSS, LIGHTBOX_RUNTIME_JS } from './htmlLightboxAssets.ts';
 
 function destinationToHtml(dest: DestinationResolution): string {
     const escaped = escapeHTML(dest.printText);
@@ -44,7 +45,8 @@ export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, s
                     const blob = await workspaceStorage.getFigureBinary(projectUid, fig.id);
                     if (blob) {
                         const base64Data = await blobToBase64(blob);
-                        imgTag = `<img class="print-fig-img" src="${base64Data}" alt="Figure ${displayNum}" />`;
+                        const captionLabel = escapeHTML(`Fig. ${displayNum}${fig.caption ? `: ${fig.caption}` : ''}`);
+                        imgTag = `<img class="print-fig-img" src="${base64Data}" alt="Figure ${displayNum}" data-caption="${captionLabel}" />`;
                     }
                 } catch (blobError) {
                     console.warn(`Could not resolve binary payload stream for figure ID ${fig.id}:`, blobError);
@@ -65,6 +67,9 @@ export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, s
 
         // COMPILE DICHOTOMOUS KEY COUPLERS
         let keyColumnMarkup = '';
+        // Widest lead across every couplet, so the lead column is one fixed width
+        // and all rows align regardless of back-references / step-number length.
+        let maxLeadLen = 0;
         if (key.length === 0) {
             keyColumnMarkup = `<p class="print-empty-notice">[The identification key is currently empty. Add couplets in the editor to populate this document.]</p>`;
         }
@@ -82,6 +87,7 @@ export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, s
             const alt2 = store.resolveTextReferences(c.alt2, idToDisplayNum) || '___';
 
             const { lead1, lead2 } = buildCoupletLeads(leadFormat, currentDisplayNum, backRefMap?.get(c.id));
+            maxLeadLen = Math.max(maxLeadLen, lead1.length, lead2.length);
 
             keyColumnMarkup += `
             <div class="print-couplet" role="group" aria-label="Couplet ${currentDisplayNum}">
@@ -131,7 +137,10 @@ export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, s
 
         // GENERATE TARGET DOCUMENT STRUCTURE
         const hasFiguresClass = figures.length > 0 ? ' layout-has-figures' : '';
-        const htmlDocument = buildHTMLBoilerplate(title, keyColumnMarkup, taxaMarkup, figuresColumnMarkup, hasFiguresClass, leadFormat);
+        // `ch` slightly over-estimates for punctuation-heavy leads, which is fine — a
+        // touch of slack never clips. Floor keeps a sane column for short/empty keys.
+        const leadColWidth = `${Math.max(maxLeadLen, 3)}ch`;
+        const htmlDocument = buildHTMLBoilerplate(title, keyColumnMarkup, taxaMarkup, figuresColumnMarkup, hasFiguresClass, leadFormat, leadColWidth);
 
         triggerFileDownload(htmlDocument, sanitizeFilename(title, '.html'), 'text/html;charset=utf-8;');
 
@@ -144,12 +153,13 @@ export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, s
 /**
  * Isolated template wrapper providing core layout scaffolding styles.
  */
-function buildHTMLBoilerplate(title: string, keyContent: string, taxaContent: string, figuresContent: string, layoutClass: string, leadFormat: LeadFormat): string {
+function buildHTMLBoilerplate(title: string, keyContent: string, taxaContent: string, figuresContent: string, layoutClass: string, leadFormat: LeadFormat, leadColWidth: string): string {
     const safeTitle = escapeHTML(title);
     return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${safeTitle}</title>
   <style>
     :root {
@@ -242,11 +252,17 @@ function buildHTMLBoilerplate(title: string, keyContent: string, taxaContent: st
         min-height: 0;
       }
     }
-    
-    .print-couplet { 
-      display: grid; 
-      grid-template-columns: auto 1fr; 
-      gap: 6px 10px; 
+
+    /* Phones: reclaim the heavy padding so the single column fills the screen. */
+    @media (max-width: 767px) {
+      .print-page-layout { padding: 12px; gap: 12px; }
+      .print-key-container { padding: 16px; }
+    }
+
+    .print-couplet {
+      display: grid;
+      grid-template-columns: var(--lead-col, 2.5em) 1fr;
+      gap: 6px 10px;
       align-items: start; 
       break-inside: avoid; 
       page-break-inside: avoid; 
@@ -324,10 +340,11 @@ function buildHTMLBoilerplate(title: string, keyContent: string, taxaContent: st
       .print-key-container { border: none; padding: 0; box-shadow: none; height: auto; overflow: visible; }
       .print-fig-card { box-shadow: none; border-color: var(--color-border); }
     }
+${LIGHTBOX_CSS}
   </style>
 </head>
 <body>
-  <div class="print-page-layout${layoutClass}" data-lead-format="${leadFormat}">
+  <div class="print-page-layout${layoutClass}" data-lead-format="${leadFormat}" style="--lead-col: ${leadColWidth}">
     <div class="print-key-column">
       <div class="print-key-container">
         <h1 class="print-doc-title">${safeTitle}</h1>
@@ -339,6 +356,7 @@ function buildHTMLBoilerplate(title: string, keyContent: string, taxaContent: st
       ${figuresContent}
     </div>
   </div>
+  <script>${LIGHTBOX_RUNTIME_JS}</script>
 </body>
 </html>`;
 }
