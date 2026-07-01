@@ -947,8 +947,10 @@ export class KeyStore {
 
         // A renamed (or freshly named) taxon may now match an unlinked draft in a
         // lead — link those drafts to it so they don't stay amber.
-        const relinked = relinkDraftsToExisting(this.state.dichotomousKey, this.state.taxa);
-        if (relinked.changed) this.state.dichotomousKey = relinked.key;
+        if ('scientificName' in fields) {
+            const relinked = relinkDraftsToExisting(this.state.dichotomousKey, this.state.taxa);
+            if (relinked.changed) this.state.dichotomousKey = relinked.key;
+        }
 
         this.hasUncommittedChanges = true;
     }

@@ -48,7 +48,8 @@ export function exportKeyToLaTeX(store: KeyStore, leadFormat: LeadFormat, showBa
         const idToIndexMap = buildIdToIndexMap(key);
         const figureIdToDisplayNum = buildFigureIdToDisplayNumMap(figures);
         const backRefMap = showBackReference ? buildBackReferenceMap(key) : null;
-        const taxaCtx = buildTaxaContext(store.getTaxa(), nameMode);
+        const taxa = store.getTaxa();
+        const taxaCtx = buildTaxaContext(taxa, nameMode);
         // The back-reference widens the lead ("2 (1)"), so give the fixed box and
         // matching hang-indent extra room to avoid overprinting the diagnosis text.
         const leadWidth = showBackReference ? '4.5em' : '2.5em';
@@ -150,6 +151,47 @@ ${bodyContent}
             });
         }
 
+        // --- TAXA CHAPTERS ---
+        // One entry per taxon record, in panel order; empty fields are omitted.
+        // escapeLaTeX collapses newlines to spaces, so each value stays single-line.
+        let taxaSection = '';
+        if (taxa.length > 0) {
+            let taxaBody = '';
+            const field = (label: string, value: string): string =>
+                `\\noindent\\textbf{${label}:} ${escapeLaTeX(value)}\\par\n`;
+
+            taxa.forEach(taxon => {
+                const sci = escapeLaTeX(taxon.scientificName || 'Untitled taxon');
+                
+                // Change 1: Added {\\small ...} around the auctor to reduce its font size in LaTeX
+                const auctor = taxon.auctor ? ` {\\small ${escapeLaTeX(taxon.auctor)}}` : '';
+                taxaBody += `\\subsection*{\\textit{${sci}}${auctor}}\n`;
+
+                // Change 2: Handled vernacularName manually to prevent the empty label colon (": ")
+                if (taxon.vernacularName) {
+                    taxaBody += `\\noindent ${escapeLaTeX(taxon.vernacularName)}\\par\n`;
+                }
+                
+                if (taxon.synonyms.length > 0) taxaBody += field('Synonyms', taxon.synonyms.join('; '));
+                if (taxon.description) taxaBody += field('Description', taxon.description);
+                if (taxon.biology) taxaBody += field('Biology', taxon.biology);
+                if (taxon.distribution) taxaBody += field('Distribution', taxon.distribution);
+                if (taxon.confusables.length > 0) {
+                    taxaBody += `\\noindent\\textbf{Confusable species:}\\par\n`;
+                    taxaBody += `\\begin{itemize}\n`;
+                    taxon.confusables.forEach(c => {
+                        const dist = c.distinction ? ` --- ${escapeLaTeX(c.distinction)}` : '';
+                        taxaBody += `  \\item ${escapeLaTeX(c.name)}${dist}\n`;
+                    });
+                    taxaBody += `\\end{itemize}\n`;
+                }
+
+                taxaBody += `\\vspace{0.8em}\n\n`;
+            });
+
+            taxaSection = `\\newpage\n\\section*{Taxa}\n${taxaBody}`;
+        }
+
         // --- DOCUMENT LAYOUT BUILD ---
         const latexDocument = `% =========================================================================
 % LaTeX Dichotomous Key Export
@@ -176,6 +218,7 @@ ${bodyContent}
 \\section*{Identification Key}
 \\label{sec:key}
 ${mainContent}
+${taxaSection}
 ${figuresAppendix}
 \\end{document}`;
 

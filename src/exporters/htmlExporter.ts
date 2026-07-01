@@ -31,7 +31,8 @@ export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, s
         const idToIndexMap = buildIdToIndexMap(key);
         const idToDisplayNum = buildFigureIdToDisplayNumMap(figures);
         const backRefMap = showBackReference ? buildBackReferenceMap(key) : null;
-        const taxaCtx = buildTaxaContext(store.getTaxa(), nameMode);
+        const taxa = store.getTaxa();
+        const taxaCtx = buildTaxaContext(taxa, nameMode);
 
         // COMPILE GLOBAL FIGURES PANEL SIDEBAR (CONCURRENT PIPELINE)
         const figureCards = await Promise.all(
@@ -98,9 +99,39 @@ export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, s
             `;
         }
 
+        // COMPILE TAXA CHAPTERS — one block per taxon, in panel order; empty fields omitted.
+        let taxaMarkup = '';
+        if (taxa.length > 0) {
+            const nl2br = (s: string) => escapeHTML(s).replace(/\n/g, '<br>');
+            const field = (label: string, valueHtml: string) =>
+                `<p class="print-taxon-field"><strong>${label}:</strong> ${valueHtml}</p>`;
+
+            const entries = taxa.map(taxon => {
+                const sci = escapeHTML(taxon.scientificName || 'Untitled taxon');
+                const auctor = taxon.auctor ? ` <span class="print-taxon-auctor">${escapeHTML(taxon.auctor)}</span>` : '';
+                let block = `<div class="print-taxon"><h3 class="print-taxon-name"><em>${sci}</em>${auctor}</h3>`;
+
+                if (taxon.vernacularName) block += `<p class="print-taxon-field">${escapeHTML(taxon.vernacularName)}</p>`;
+                if (taxon.synonyms.length > 0) block += field('Synonyms', taxon.synonyms.map(s => `<em>${escapeHTML(s)}</em>`).join('; '));
+                if (taxon.description) block += field('Description', nl2br(taxon.description));
+                if (taxon.biology) block += field('Biology', nl2br(taxon.biology));
+                if (taxon.distribution) block += field('Distribution', nl2br(taxon.distribution));
+                if (taxon.confusables.length > 0) {
+                    const items = taxon.confusables
+                        .map(c => `<li><em>${escapeHTML(c.name)}</em>${c.distinction ? ` — ${escapeHTML(c.distinction)}` : ''}</li>`)
+                        .join('');
+                    block += `<div class="print-taxon-field"><strong>Confusable species:</strong><ul class="print-confusables">${items}</ul></div>`;
+                }
+
+                return block + `</div>`;
+            }).join('');
+
+            taxaMarkup = `<h2 class="print-taxa-heading">Taxa</h2>${entries}`;
+        }
+
         // GENERATE TARGET DOCUMENT STRUCTURE
         const hasFiguresClass = figures.length > 0 ? ' layout-has-figures' : '';
-        const htmlDocument = buildHTMLBoilerplate(title, keyColumnMarkup, figuresColumnMarkup, hasFiguresClass, leadFormat);
+        const htmlDocument = buildHTMLBoilerplate(title, keyColumnMarkup, taxaMarkup, figuresColumnMarkup, hasFiguresClass, leadFormat);
 
         triggerFileDownload(htmlDocument, sanitizeFilename(title, '.html'), 'text/html;charset=utf-8;');
 
@@ -113,7 +144,7 @@ export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, s
 /**
  * Isolated template wrapper providing core layout scaffolding styles.
  */
-function buildHTMLBoilerplate(title: string, keyContent: string, figuresContent: string, layoutClass: string, leadFormat: LeadFormat): string {
+function buildHTMLBoilerplate(title: string, keyContent: string, taxaContent: string, figuresContent: string, layoutClass: string, leadFormat: LeadFormat): string {
     const safeTitle = escapeHTML(title);
     return `<!DOCTYPE html>
 <html>
@@ -261,7 +292,15 @@ function buildHTMLBoilerplate(title: string, keyContent: string, figuresContent:
     .print-dest-strong { font-weight: bold; color: var(--color-text); }
     .print-dest-taxon { font-weight: bold; font-style: italic; color: var(--color-text); }
     .error-text { font-weight: bold; color: #ef4444; }
-    
+
+    /* TAXA CHAPTERS */
+    .print-taxa-heading { font-family: serif; font-size: 20px; font-weight: bold; margin: 24px 0 12px; padding-top: 16px; border-top: 1px solid var(--color-border); }
+    .print-taxon { margin-bottom: 16px; break-inside: avoid; page-break-inside: avoid; }
+    .print-taxon-name { font-family: serif; font-size: 20px; margin: 0 0 4px 0; }
+    .print-taxon-auctor { font-weight: normal; font-size: 0.6em; color: var(--color-text-muted); }
+    .print-taxon-field { margin: 2px 0; font-size: 14px; line-height: 1.5; }
+    .print-confusables { margin: 2px 0; padding-left: 20px; }
+
     /* FIGURES SUB-ELEMENT PANELS */
     .print-fig-card {
       border: 1px solid var(--color-border-light);
@@ -293,6 +332,7 @@ function buildHTMLBoilerplate(title: string, keyContent: string, figuresContent:
       <div class="print-key-container">
         <h1 class="print-doc-title">${safeTitle}</h1>
         ${keyContent}
+        ${taxaContent}
       </div>
     </div>
     <div class="print-figures-column">

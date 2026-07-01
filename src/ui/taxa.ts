@@ -33,7 +33,7 @@ function taxonCardMarkup(): string {
         </div>
         <div class="taxon-field-row">
             <label>Vernacular name:</label>
-            <input type="text" class="input-sync taxon-input" data-field="vernacularName" />
+            <input type="text" class="input-sync taxon-input" data-field="vernacularName" placeholder="Vernacular name" />
         </div>
         <div class="taxon-field-row">
             <label>Synonyms (one per line):</label>

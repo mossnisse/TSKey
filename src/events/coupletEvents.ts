@@ -5,7 +5,7 @@
 import type { KeyStore, Couplet } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { batchedRefresh, DEBOUNCE_TYPING_MS, setupCardDragReorder } from './shared.ts';
-import { resolveDestination, parseDestinationInput, buildIdToIndexMap } from '../utils.ts';
+import { resolveDestination, parseDestinationInput, buildIdToIndexMap, buildTaxaContext } from '../utils.ts';
 import { findTaxonByName } from '../store';
 import { scrollIntoViewAndFlash } from '../navigation.ts';
 import { showToast } from '../uiRenderer.ts';
@@ -145,9 +145,9 @@ export function setupCoupletInput(keyContainer: HTMLElement, store: KeyStore, ui
 
                 if (currentCouplet) {
                     const branch = field === 'dest1' ? currentCouplet.branch1 : currentCouplet.branch2;
-
                     const idToIndexMap = buildIdToIndexMap(updatedKey);
-                    const resolution = resolveDestination(branch, idToIndexMap);
+                    const taxaCtx = buildTaxaContext(store.getTaxa(), 'scientific');
+                    const resolution = resolveDestination(branch, idToIndexMap, taxaCtx);
 
                     target.classList.toggle('input-error', resolution.isUnresolved);
                 }

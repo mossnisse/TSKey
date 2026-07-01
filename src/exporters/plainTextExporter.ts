@@ -17,7 +17,8 @@ export function exportKeyToPlainText(store: KeyStore, leadFormat: LeadFormat, sh
         const idToIndexMap = buildIdToIndexMap(key);
         const idToDisplayNum = buildFigureIdToDisplayNumMap(figures);
         const backRefMap = showBackReference ? buildBackReferenceMap(key) : null;
-        const taxaCtx = buildTaxaContext(store.getTaxa(), nameMode);
+        const taxa = store.getTaxa();
+        const taxaCtx = buildTaxaContext(taxa, nameMode);
         
         let content = '';
 
@@ -45,6 +46,35 @@ export function exportKeyToPlainText(store: KeyStore, leadFormat: LeadFormat, sh
             content += `${lead1}\t${alt1Text}\t${dest1}\n`;
             content += `${lead2}\t${alt2Text}\t${dest2}\n\n`;
         });
+
+        // --- TAXA CHAPTERS ---
+        // One block per taxon record, in panel order. Empty fields are omitted so a
+        // sparsely-filled taxon stays compact.
+        if (taxa.length > 0) {
+            content += `========================================\n`;
+            content += `TAXA\n`;
+            content += `========================================\n\n`;
+
+            taxa.forEach((taxon, index) => {
+                const displayNum = index + 1;
+                const heading = taxon.scientificName || 'Untitled taxon';
+                content += `${displayNum}. ${heading}${taxon.auctor ? ' ' + taxon.auctor : ''}\n`;
+
+                if (taxon.vernacularName) content += `  Vernacular name: ${taxon.vernacularName}\n`;
+                if (taxon.synonyms.length > 0) content += `  Synonyms: ${taxon.synonyms.join('; ')}\n`;
+                if (taxon.description) content += `  Description: ${taxon.description}\n`;
+                if (taxon.biology) content += `  Biology: ${taxon.biology}\n`;
+                if (taxon.distribution) content += `  Distribution: ${taxon.distribution}\n`;
+                if (taxon.confusables.length > 0) {
+                    content += `  Confusable species:\n`;
+                    taxon.confusables.forEach(c => {
+                        content += `    - ${c.name}${c.distinction ? ` — ${c.distinction}` : ''}\n`;
+                    });
+                }
+
+                content += `\n`;
+            });
+        }
 
         // --- FIGURES DATA METADATA APPENDIX ---
         if (figures.length > 0) {
