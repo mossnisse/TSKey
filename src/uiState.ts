@@ -104,6 +104,13 @@ export class TypingSessionManager {
     public readonly couplets = new TypingSession();
     public readonly figures = new TypingSession();
     public readonly taxa = new TypingSession();
+
+    /** Purges every panel's pending debounce timer, e.g. before undo/redo. */
+    public clearAll(): void {
+        this.couplets.clearTimer();
+        this.figures.clearTimer();
+        this.taxa.clearTimer();
+    }
 }
 
 export class UIStateStore {

@@ -65,7 +65,7 @@ export function orderFiguresByReference(figures: readonly Figure[], key: readonl
         }
     }
 
-    // Cleanup Sweep: Append any figures that aren't referenced anywhere to the end
+    // Append any figures that aren't referenced anywhere to the end.
     for (const fig of figures) {
         if (!seenFigureIds.has(fig.id)) {
             orderedFigures.push(fig);

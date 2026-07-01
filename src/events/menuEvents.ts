@@ -255,14 +255,12 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
 export function setupEditMenu(store: KeyStore, uiState: UIStateStore, refreshAll: () => void, signal: AbortSignal) {
     // --- EDIT MENU ACTION BINDINGS ---
     document.querySelector('#cmd-undo')?.addEventListener('click', () => {
-        uiState.typing.couplets.clearTimer();
-        uiState.typing.figures.clearTimer();
+        uiState.typing.clearAll();
         if (store.undo()) batchedRefresh(refreshAll);
     }, { signal });
 
     document.querySelector('#cmd-redo')?.addEventListener('click', () => {
-        uiState.typing.couplets.clearTimer();
-        uiState.typing.figures.clearTimer();
+        uiState.typing.clearAll();
         if (store.redo()) batchedRefresh(refreshAll);
     }, { signal });
 

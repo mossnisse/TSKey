@@ -37,6 +37,26 @@ export function createTaxon(id: number, scientificName = ''): Taxon {
     };
 }
 
+/** Normalized scientific name -> taxon id, first match wins. */
+function buildNameToIdMap(taxa: readonly Taxon[]): Map<string, number> {
+    const nameToId = new Map<string, number>();
+    taxa.forEach(t => {
+        const norm = normalizeName(t.scientificName);
+        if (norm && !nameToId.has(norm)) nameToId.set(norm, t.id);
+    });
+    return nameToId;
+}
+
+/** Maps `transform` over every couplet's two branches; keeps the couplet reference when neither branch changes. */
+function mapBranches(key: readonly Couplet[], transform: (branch: Branch) => Branch): Couplet[] {
+    return key.map(c => {
+        const branch1 = transform(c.branch1);
+        const branch2 = transform(c.branch2);
+        if (branch1 === c.branch1 && branch2 === c.branch2) return c;
+        return { ...c, branch1, branch2 };
+    });
+}
+
 /**
  * Rewrites every branch for which `pendingNameOf` returns a name into a normalized
  * `{ kind:'taxon', taxonId }`, finding an existing taxon by scientific name or
@@ -48,11 +68,7 @@ function resolvePendingNames(
     taxa: readonly Taxon[],
     pendingNameOf: (branch: Branch) => string | null
 ): { key: Couplet[]; taxa: Taxon[]; changed: boolean } {
-    const nameToId = new Map<string, number>();
-    taxa.forEach(t => {
-        const norm = normalizeName(t.scientificName);
-        if (norm && !nameToId.has(norm)) nameToId.set(norm, t.id);
-    });
+    const nameToId = buildNameToIdMap(taxa);
 
     const nextTaxa = [...taxa];
     let nextId = nextEntityId(nextTaxa); // running counter; avoids O(n²) re-scans
@@ -78,12 +94,7 @@ function resolvePendingNames(
         return { kind: 'taxon', taxonId };
     };
 
-    const nextKey = key.map(c => {
-        const branch1 = resolveBranch(c.branch1);
-        const branch2 = resolveBranch(c.branch2);
-        if (branch1 === c.branch1 && branch2 === c.branch2) return c;
-        return { ...c, branch1, branch2 };
-    });
+    const nextKey = mapBranches(key, resolveBranch);
 
     return { key: nextKey, taxa: nextTaxa, changed };
 }
@@ -123,11 +134,7 @@ export function migrateLegacyTaxa(key: readonly Couplet[], taxa: readonly Taxon[
  * load) so a draft doesn't stay amber when a matching record appears.
  */
 export function relinkDraftsToExisting(key: readonly Couplet[], taxa: readonly Taxon[]): { key: Couplet[]; changed: boolean } {
-    const nameToId = new Map<string, number>();
-    taxa.forEach(t => {
-        const norm = normalizeName(t.scientificName);
-        if (norm && !nameToId.has(norm)) nameToId.set(norm, t.id);
-    });
+    const nameToId = buildNameToIdMap(taxa);
 
     let changed = false;
     const relink = (branch: Branch): Branch => {
@@ -138,13 +145,7 @@ export function relinkDraftsToExisting(key: readonly Couplet[], taxa: readonly T
         return { kind: 'taxon', taxonId };
     };
 
-    const nextKey = key.map(c => {
-        const branch1 = relink(c.branch1);
-        const branch2 = relink(c.branch2);
-        if (branch1 === c.branch1 && branch2 === c.branch2) return c;
-        return { ...c, branch1, branch2 };
-    });
-
+    const nextKey = mapBranches(key, relink);
     return { key: nextKey, changed };
 }
 
@@ -153,12 +154,5 @@ export function deleteTaxaAndSever(key: readonly Couplet[], removedIds: Readonly
     const severIfRemoved = (branch: Branch): Branch =>
         branch.kind === 'taxon' && removedIds.has(branch.taxonId) ? EMPTY_BRANCH : branch;
 
-    const nextKey = key.map(c => {
-        const branch1 = severIfRemoved(c.branch1);
-        const branch2 = severIfRemoved(c.branch2);
-        if (branch1 === c.branch1 && branch2 === c.branch2) return c;
-        return { ...c, branch1, branch2 };
-    });
-
-    return { key: nextKey };
+    return { key: mapBranches(key, severIfRemoved) };
 }

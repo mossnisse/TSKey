@@ -265,7 +265,6 @@ export function reorderCouplets(
  * reordered key.
  */
 export function autoOrderCouplets(key: readonly Couplet[]): Couplet[] {
-    // Build an efficient lookup map of the current state
     const idToCoupletMap = new Map<number, Couplet>(key.map(c => [c.id, c]));
 
     // A branch that continues into an existing couplet, or null otherwise.
@@ -274,7 +273,6 @@ export function autoOrderCouplets(key: readonly Couplet[]): Couplet[] {
         return t !== null && idToCoupletMap.has(t) ? t : null;
     };
 
-    // Declarative rank lookup keyed by the shared branch classifier.
     // Shorter/terminal branches rank lower so they sort into Alt1.
     const rankMap: Record<ReturnType<typeof classifyBranch>, number> = {
         taxon: 1,
@@ -284,11 +282,10 @@ export function autoOrderCouplets(key: readonly Couplet[]): Couplet[] {
         empty: 3       // Treated as a long/dangling branch
     };
 
-    // Compute branch depths recursively (Memoized to prevent infinite loops on cycles)
+    // Recursive depth per couplet, memoized; dynamicVisited guards against cycles.
     const depthCache = new Map<number, number>();
     const dynamicVisited = new Set<number>();
 
-    // infer depth natively from the branch state if unresolved
     const getEdgeDepth = (branch: Branch): number => {
         switch (classifyBranch(branch, idToCoupletMap)) {
             case 'taxon': return 0;
@@ -307,7 +304,6 @@ export function autoOrderCouplets(key: readonly Couplet[]): Couplet[] {
         dynamicVisited.add(id);
         const couplet = idToCoupletMap.get(id)!;
 
-        // Compute utilizing our new edge depth evaluator
         const d1 = getEdgeDepth(couplet.branch1);
         const d2 = getEdgeDepth(couplet.branch2);
 
@@ -321,7 +317,7 @@ export function autoOrderCouplets(key: readonly Couplet[]): Couplet[] {
     // Populate depth cache for all items so parents inherit the weight of unresolved numbers
     key.forEach(c => calculateBranchDepth(c.id));
 
-    // Mirror Pass: Re-map and swap alt1/alt2 fields using the Rank Engine
+    // Swap alt1/alt2 so the shorter/terminal alternative always ends up in alt1.
     const optimizedKey = key.map(c => {
         const type1 = classifyBranch(c.branch1, idToCoupletMap);
         const type2 = classifyBranch(c.branch2, idToCoupletMap);
@@ -336,7 +332,7 @@ export function autoOrderCouplets(key: readonly Couplet[]): Couplet[] {
         } else if (rank1 === rank2) {
             // Tie-breakers when both alternatives share the same structural rank
             if (rank1 === 2) {
-                // Both are continuing paths (Linked vs Unresolved vs Both)
+                // Both branches continue to another couplet.
                 const depth1 = getEdgeDepth(c.branch1);
                 const depth2 = getEdgeDepth(c.branch2);
 
@@ -364,10 +360,9 @@ export function autoOrderCouplets(key: readonly Couplet[]): Couplet[] {
         return { ...c };
     });
 
-    // Rebuild updated maps using optimized instances
     const optimizedIdMap = new Map<number, Couplet>(optimizedKey.map(c => [c.id, c]));
 
-    // Trace incoming references to identify top-level structural root items
+    // A couplet with no incoming links is a root.
     const incomingCounts = new Map<number, number>();
     optimizedKey.forEach(c => {
         const t1 = linkTarget(c.branch1);
@@ -384,7 +379,7 @@ export function autoOrderCouplets(key: readonly Couplet[]): Couplet[] {
     const visited = new Set<number>();
     const orderedCouplets: Couplet[] = [];
 
-    // Topology Flattening Pass: O(1) Stack Engine Traversal (Pre-order Depth First)
+    // Iterative pre-order depth-first traversal (avoids recursion stack limits).
     const traverseTreeBranch = (startId: number) => {
         const stack: number[] = [startId];
 
@@ -410,10 +405,9 @@ export function autoOrderCouplets(key: readonly Couplet[]): Couplet[] {
         }
     };
 
-    // Run traversal on main root nodes
     roots.forEach(root => traverseTreeBranch(root.id));
 
-    // Cleanup Sweep (Capture detached orphaned/cyclical sub-graphs)
+    // Anything not reached from a root is part of an orphaned/cyclic subgraph; append it too.
     optimizedKey.forEach(c => {
         if (!visited.has(c.id)) {
             traverseTreeBranch(c.id);

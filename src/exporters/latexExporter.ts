@@ -87,7 +87,7 @@ export function exportKeyToLaTeX(store: KeyStore, leadFormat: LeadFormat, showBa
                         return `\\mbox{\\textbf{\\textit{${escapeLaTeX(dest.printText)}}}}`;
                     }
                     if (dest.printClass === 'print-dest-strong') {
-                        return `\\mbox{\\textbf{${dest.printText}}}`;
+                        return `\\mbox{\\textbf{${escapeLaTeX(dest.printText)}}}`;
                     }
                     return `\\dots`;
                 };
@@ -163,11 +163,11 @@ ${bodyContent}
             taxa.forEach(taxon => {
                 const sci = escapeLaTeX(taxon.scientificName || 'Untitled taxon');
                 
-                // Change 1: Added {\\small ...} around the auctor to reduce its font size in LaTeX
+                // Auctor renders in a smaller size than the scientific name.
                 const auctor = taxon.auctor ? ` {\\small ${escapeLaTeX(taxon.auctor)}}` : '';
                 taxaBody += `\\subsection*{\\textit{${sci}}${auctor}}\n`;
 
-                // Change 2: Handled vernacularName manually to prevent the empty label colon (": ")
+                // Rendered without the `field()` helper to avoid an empty "Vernacular name:" label when absent.
                 if (taxon.vernacularName) {
                     taxaBody += `\\noindent ${escapeLaTeX(taxon.vernacularName)}\\par\n`;
                 }
