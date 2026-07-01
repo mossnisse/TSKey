@@ -7,7 +7,7 @@ import type { UIStateStore } from '../uiState.ts';
 import { batchedRefresh, DEBOUNCE_TYPING_MS, setupCardDragReorder } from './shared.ts';
 import { resolveDestination, parseDestinationInput, buildIdToIndexMap, buildTaxaContext } from '../utils.ts';
 import { findTaxonByName } from '../store';
-import { scrollIntoViewAndFlash } from '../navigation.ts';
+import { scrollIntoViewAndFlash } from './navigationEvents.ts';
 import { showToast } from '../uiRenderer.ts';
 
 // The key-card whose field last gained focus — so the link highlight only refreshes

@@ -6,4 +6,4 @@ export { renderEditorCards } from './ui/editorCards.ts';
 export { renderFigures } from './ui/figures.ts';
 export { renderTaxa } from './ui/taxa.ts';
 export { renderPrintView } from './ui/printView.ts';
-export { showToast } from './ui/toast.ts';
+export { showToast } from './ui/shared.ts';

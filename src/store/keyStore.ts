@@ -14,8 +14,7 @@ import {
     autoOrderCouplets as autoOrderCoupletsOp,
     type CutLink,
 } from './coupletOps.ts';
-import { orderFiguresByReference } from './figureOps.ts';
-import { resolveTextReferences, encodeFigureTokens, decodeTextReferencesForEditor } from './figureRefs.ts';
+import { orderFiguresByReference, resolveTextReferences, encodeFigureTokens, decodeTextReferencesForEditor } from './figureOps.ts';
 import { createTaxon, resolveDrafts, migrateLegacyTaxa, deleteTaxaAndSever, findTaxonByName, relinkDraftsToExisting } from './taxonOps.ts';
 
 export const APP_NAME = 'TSKey';
@@ -1257,7 +1256,7 @@ export class KeyStore {
         return diagnoseKey(this.state.dichotomousKey, this.state.figures);
     }
 
-    // Figure-token helpers — thin wrappers over the pure functions in figureRefs.ts,
+    // Figure-token helpers — thin wrappers over the pure functions in figureOps.ts,
     // bound to the live figure list. See that module for the token-form details.
 
     public resolveTextReferences(text: string, idToDisplayNum: Map<number, number>): string {

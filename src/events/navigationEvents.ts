@@ -1,15 +1,53 @@
 // events/navigationEvents.ts
-// Ctrl/Cmd+click jump-to-target navigation and the right-click path context menu.
+// Ctrl/Cmd+click jump-to-target navigation and the right-click path context menu,
+// plus the small DOM helpers (flash highlight, caret hit-test) that back them.
 import type { KeyStore, Couplet } from '../store';
 import { computePathFromRoot } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { batchedRefresh } from './shared.ts';
-import { scrollIntoViewAndFlash, figureTokenAtIndex } from '../navigation.ts';
 import { openPopover } from '../popover.ts';
 import type { PopoverItem } from '../popover.ts';
 import { branchTarget, buildIdToIndexMap, escapeHTML, buildFigureIdToDisplayNumMap } from '../utils.ts';
-import { buildFigureLookups } from '../figureTokens.ts';
+import { buildFigureLookups, figIdTokenRegex, figRawTokenRegex } from '../figureTokens.ts';
 import { workspaceStorage, activeObjectURLs } from '../store';
+
+/** Re-triggers the "flash" highlight animation on an element (used after a jump). */
+function flashHighlight(el: HTMLElement): void {
+    el.classList.remove('nav-flash');
+    void el.offsetWidth; // force reflow so the animation restarts
+    el.classList.add('nav-flash');
+
+    const cleanup = () => el.classList.remove('nav-flash');
+    el.addEventListener('animationend', cleanup, { once: true });
+    window.setTimeout(cleanup, 1200);
+}
+
+/** Scrolls the element matching `selector` into view and flashes it; false if not found. */
+export function scrollIntoViewAndFlash(selector: string): boolean {
+    const el = document.querySelector<HTMLElement>(selector);
+    if (!el) return false;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    flashHighlight(el);
+    return true;
+}
+
+/** Finds the figure-reference token (raw or stored) under a textarea caret position. */
+function figureTokenAtIndex(
+    text: string,
+    index: number
+): { start: number; end: number; value: string } | null {
+    for (const re of [figRawTokenRegex(), figIdTokenRegex()]) {
+        let match: RegExpExecArray | null;
+        while ((match = re.exec(text)) !== null) {
+            const start = match.index;
+            const end = match.index + match[0].length;
+            if (index >= start && index <= end) {
+                return { start, end, value: match[1].trim() };
+            }
+        }
+    }
+    return null;
+}
 
 /** Scrolls the editor card for a step into view and flashes it. */
 function jumpToStep(stepId: number): boolean {
