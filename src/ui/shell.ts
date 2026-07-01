@@ -1,7 +1,7 @@
 // ui/shell.ts
 // The one-time application shell HTML (menu bar, three-column layout, modals, and the
 // plain-text import view) plus the panel-visibility sync.
-import { APP_NAME, APP_VERSION } from '../store.ts';
+import { APP_NAME, APP_VERSION } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { IS_MAC } from '../utils.ts';
 

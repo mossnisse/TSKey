@@ -1,12 +1,12 @@
 // events/menuEvents.ts
 // Menu-bar command bindings: the File menu (new/save/import/export), the Edit/View/
 // Tools menu actions, and menu-bar mouse + keyboard navigation.
-import type { KeyStore } from '../store.ts';
+import type { KeyStore } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { batchedRefresh, refreshHubView } from './shared.ts';
 import { executePaste, createNewCoupletWithFocus } from './coupletEvents.ts';
 import { showToast } from '../uiRenderer.ts';
-import { workspaceStorage, activeObjectURLs } from '../db.ts';
+import { workspaceStorage, activeObjectURLs } from '../store';
 import { exportKeyToHTML } from '../exporters/htmlExporter.ts';
 import { exportKeyToLaTeX } from '../exporters/latexExporter.ts';
 import { exportKeyToPlainText } from '../exporters/plainTextExporter.ts';

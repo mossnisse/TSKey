@@ -1,5 +1,5 @@
 // latexExporter.ts
-import type { KeyStore } from '../store.ts';
+import type { KeyStore } from '../store';
 import { triggerFileDownload, resolveDestination, buildIdToIndexMap, buildFigureIdToDisplayNumMap, sanitizeFilename, buildCoupletLeads, buildBackReferenceMap, buildTaxaContext } from '../utils.ts';
 import type { LeadFormat, NameDisplayMode } from '../utils.ts';
 import { figIdTokenRegex } from '../figureTokens.ts';

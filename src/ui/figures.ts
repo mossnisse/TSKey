@@ -1,9 +1,9 @@
 // ui/figures.ts
 // Incremental reconciler for the figure-reference cards, including lazy thumbnail
 // loading from IndexedDB and object-URL lifecycle management.
-import type { KeyStore } from '../store.ts';
+import type { KeyStore } from '../store';
 import type { UIStateStore } from '../uiState.ts';
-import { workspaceStorage, activeObjectURLs } from '../db.ts';
+import { workspaceStorage, activeObjectURLs } from '../store';
 
 let pendingFigureRefresh: number | null = null;
 

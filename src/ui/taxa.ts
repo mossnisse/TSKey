@@ -2,7 +2,7 @@
 // Incremental reconciler for the Taxa panel — one editable "chapter" card per taxon
 // record, mirroring the figure-panel reconciler. Multi-line fields (synonyms,
 // confusables) are serialized to text here; events/taxaEvents.ts parses them back.
-import type { KeyStore, Taxon, ConfusableSpecies } from '../store.ts';
+import type { KeyStore, Taxon, ConfusableSpecies } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { syncField } from './shared.ts';
 

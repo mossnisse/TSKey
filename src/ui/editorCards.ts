@@ -2,7 +2,7 @@
 // Incremental reconciler for the key-editor cards: patches titles, badges (with
 // Ctrl-click parent links), field values, the link-highlight classes, and diagnostics
 // without tearing down focused fields.
-import type { KeyStore } from '../store.ts';
+import type { KeyStore } from '../store';
 import { escapeHTML, buildIdToIndexMap, resolveDestination, branchTarget, buildTaxaContext } from '../utils.ts';
 import { syncField } from './shared.ts';
 

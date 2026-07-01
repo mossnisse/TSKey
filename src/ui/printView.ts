@@ -1,7 +1,7 @@
 // ui/printView.ts
 // Incremental reconciler for the live publication view. Figure tokens become
 // clickable `(Fig. N)` citations carrying the figure id for Ctrl/Cmd+click navigation.
-import type { KeyStore, Figure } from '../store.ts';
+import type { KeyStore, Figure } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { escapeHTML, buildIdToIndexMap, resolveDestination, buildFigureIdToDisplayNumMap, buildCoupletLeads, buildBackReferenceMap, buildTaxaContext } from '../utils.ts';
 import { buildFigureLookups } from '../figureTokens.ts';

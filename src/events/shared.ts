@@ -1,7 +1,7 @@
 // events/shared.ts
 // Cross-cutting helpers shared by the event modules.
-import type { KeyStore } from '../store.ts';
-import { workspaceStorage } from '../db.ts';
+import type { KeyStore } from '../store';
+import { workspaceStorage } from '../store';
 import { renderProjectHubList } from '../uiRenderer.ts';
 
 export const DEBOUNCE_TYPING_MS = 800;

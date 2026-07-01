@@ -1,5 +1,5 @@
 // plainTextExporter.ts
-import type { KeyStore } from '../store.ts';
+import type { KeyStore } from '../store';
 import { showToast } from '../uiRenderer.ts';
 import { resolveDestination, triggerFileDownload, buildIdToIndexMap, buildFigureIdToDisplayNumMap, sanitizeFilename, buildCoupletLeads, buildBackReferenceMap, buildTaxaContext
 } from '../utils.ts';

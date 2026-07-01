@@ -3,7 +3,7 @@
 // AbortController so the whole app's listeners tear down together. Each module owns
 // one area (couplets, figures, dialogs, menus, navigation). The keyboard-shortcut
 // setup is re-exported so main.ts keeps importing both from here.
-import type { KeyStore } from './store.ts';
+import type { KeyStore } from './store';
 import type { UIStateStore } from './uiState.ts';
 import { setupPlainTextImporter } from './importers/plainTextImporter.ts';
 import {

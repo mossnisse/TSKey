@@ -13,12 +13,12 @@
 // A "Destination" is either a step number (→ link) or a taxon name (→ taxa).
 // "..." marks an empty destination and "___" marks an empty description.
 
-import type { Branch, Couplet, Figure, KeyStore } from '../store.ts';
+import type { Branch, Couplet, Figure, KeyStore } from '../store';
 import type { UIStateStore } from '../uiState.ts';
-import { APP_NAME, APP_VERSION, diagnoseKey } from '../store.ts';
+import { APP_NAME, APP_VERSION, diagnoseKey } from '../store';
 import { showToast } from '../uiRenderer.ts';
 import { escapeHTML } from '../utils.ts';
-import { workspaceStorage } from '../db.ts';
+import { workspaceStorage } from '../store';
 
 const EMPTY_ALT_TOKEN = '___';
 

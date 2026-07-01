@@ -1,12 +1,12 @@
 // events/dialogs.ts
 // Modal open/close triggers, the Options dialog controls, and the project workspace
 // hub row actions (load / delete).
-import type { KeyStore } from '../store.ts';
+import type { KeyStore } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { batchedRefresh, refreshHubView } from './shared.ts';
 import { showToast } from '../uiRenderer.ts';
 import { isLeadFormat, isNameDisplayMode } from '../utils.ts';
-import { workspaceStorage } from '../db.ts';
+import { workspaceStorage } from '../store';
 
 /** Modal open/close triggers and the project workspace hub row actions (load / delete). */
 export function setupDialogs(store: KeyStore, uiState: UIStateStore, refreshAll: () => void, signal: AbortSignal) {

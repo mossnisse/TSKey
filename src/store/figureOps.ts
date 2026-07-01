@@ -4,8 +4,8 @@
 // specific transform: ordering figures by the sequence they are first referenced
 // in the key. Pure — the store wrapper handles checkpointing and assignment.
 
-import type { Couplet, Figure } from './store.ts';
-import { figIdTokenRegex, figRawTokenRegex, buildFigureLookups } from './figureTokens.ts';
+import type { Couplet, Figure } from './keyStore.ts';
+import { figIdTokenRegex, figRawTokenRegex, buildFigureLookups } from '../figureTokens.ts';
 
 /**
  * Returns the figures reordered to match the order in which they are first

@@ -1,5 +1,5 @@
 // db.ts - Complete zero-dependency client-side storage engine
-import type { Couplet, Figure, Taxon } from './store.ts';
+import type { Couplet, Figure, Taxon } from './keyStore.ts';
 
 /**
  * Bumped whenever the persisted document gains a collection or changes shape.

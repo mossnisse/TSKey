@@ -1,7 +1,7 @@
 // events/navigationEvents.ts
 // Ctrl/Cmd+click jump-to-target navigation and the right-click path context menu.
-import type { KeyStore, Couplet } from '../store.ts';
-import { computePathFromRoot } from '../store.ts';
+import type { KeyStore, Couplet } from '../store';
+import { computePathFromRoot } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { batchedRefresh } from './shared.ts';
 import { scrollIntoViewAndFlash, figureTokenAtIndex } from '../navigation.ts';
@@ -9,7 +9,7 @@ import { openPopover } from '../popover.ts';
 import type { PopoverItem } from '../popover.ts';
 import { branchTarget, buildIdToIndexMap, escapeHTML, buildFigureIdToDisplayNumMap } from '../utils.ts';
 import { buildFigureLookups } from '../figureTokens.ts';
-import { workspaceStorage, activeObjectURLs } from '../db.ts';
+import { workspaceStorage, activeObjectURLs } from '../store';
 
 /** Scrolls the editor card for a step into view and flashes it. */
 function jumpToStep(stepId: number): boolean {

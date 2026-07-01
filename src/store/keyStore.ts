@@ -1,6 +1,6 @@
 // store.ts
-import { isValidCoupletArray, isValidFigureArray, isRecord, branchTarget } from './utils.ts';
-import { figIdTokenRegex, figRawTokenRegex, buildFigureLookups } from './figureTokens.ts';
+import { isValidCoupletArray, isValidFigureArray, isRecord, branchTarget } from '../utils.ts';
+import { figIdTokenRegex, figRawTokenRegex, buildFigureLookups } from '../figureTokens.ts';
 import { workspaceStorage } from './db.ts';
 import type { StagingSnapshot, ProjectData } from './db.ts';
 import { nextEntityId, updateEntity, deleteEntities, reorderEntity } from './collectionOps.ts';
@@ -16,7 +16,7 @@ import {
 } from './coupletOps.ts';
 import { orderFiguresByReference } from './figureOps.ts';
 import { resolveTextReferences, encodeFigureTokens, decodeTextReferencesForEditor } from './figureRefs.ts';
-import { createTaxon, resolveDrafts, migrateLegacyTaxa, deleteTaxaAndSever, findTaxonByName } from './taxonOps.ts';
+import { createTaxon, resolveDrafts, migrateLegacyTaxa, deleteTaxaAndSever, findTaxonByName, relinkDraftsToExisting } from './taxonOps.ts';
 
 export const APP_NAME = 'TSKey';
 export const APP_VERSION = '0.0.1';
@@ -945,6 +945,11 @@ export class KeyStore {
         if (!next) return;
         this.state.taxa = next;
 
+        // A renamed (or freshly named) taxon may now match an unlinked draft in a
+        // lead — link those drafts to it so they don't stay amber.
+        const relinked = relinkDraftsToExisting(this.state.dichotomousKey, this.state.taxa);
+        if (relinked.changed) this.state.dichotomousKey = relinked.key;
+
         this.hasUncommittedChanges = true;
     }
 
@@ -1115,9 +1120,11 @@ export class KeyStore {
             // Legacy records predate projectUid; mint one so figures re-key cleanly.
             this.activeProjectUid = data.projectUid || newProjectUid();
             this.commitPersistedTitle(data.title); // Sync the disk tracking name
-            // Normalize any legacy name-string taxon branches into records on load.
+            // Normalize any legacy name-string taxon branches into records, then link
+            // any persisted draft whose name matches an existing taxon (no creation).
             const migrated = migrateLegacyTaxa(data.dichotomousKey, data.taxa);
-            this.state.dichotomousKey = migrated.key;
+            const relinked = relinkDraftsToExisting(migrated.key, migrated.taxa);
+            this.state.dichotomousKey = relinked.key;
             this.state.taxa = migrated.taxa;
             this.state.figures = data.figures;
             this.resetTrackingContext();

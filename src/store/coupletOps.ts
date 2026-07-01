@@ -8,8 +8,8 @@
 // key, never mutating its input. The store wrappers handle checkpointing,
 // selection, and the hasUncommittedChanges flag.
 
-import type { Branch, Couplet } from './store.ts';
-import { branchTarget, classifyBranch, EMPTY_BRANCH } from './utils.ts';
+import type { Branch, Couplet } from './keyStore.ts';
+import { branchTarget, classifyBranch, EMPTY_BRANCH } from '../utils.ts';
 import { nextEntityId } from './collectionOps.ts';
 
 /** A link that was severed by a cut, buffered so paste can restore it. */

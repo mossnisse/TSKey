@@ -1,8 +1,8 @@
 // ui/menu.ts
 // Keeps the menu bar in sync with live state: enables/disables commands, updates
 // toggle labels and the unsaved indicator, and mirrors the document/title fields.
-import type { KeyStore } from '../store.ts';
-import { APP_NAME } from '../store.ts';
+import type { KeyStore } from '../store';
+import { APP_NAME } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { syncField } from './shared.ts';
 

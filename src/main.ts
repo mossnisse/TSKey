@@ -1,8 +1,8 @@
 // main.ts
 
 import './style.css';
-import { KeyStore } from './store.ts';
-import type { Couplet } from './store.ts';
+import { KeyStore } from './store';
+import type { Couplet } from './store';
 import { UIStateStore } from './uiState.ts';
 import { initializeShell, applyPanelVisibility, renderEditorCards, renderPrintView, renderMenu, renderFigures, renderTaxa } from './uiRenderer.ts';
 import { setupGlobalListeners, setupKeyboardShortcuts } from './eventController.ts';

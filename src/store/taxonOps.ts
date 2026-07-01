@@ -6,8 +6,8 @@
 // is deleted (deleteTaxaAndSever). Every function is pure — the store wrappers handle
 // checkpointing and the hasUncommittedChanges flag.
 
-import type { Branch, Couplet, Taxon } from './store.ts';
-import { EMPTY_BRANCH } from './utils.ts';
+import type { Branch, Couplet, Taxon } from './keyStore.ts';
+import { EMPTY_BRANCH } from '../utils.ts';
 import { nextEntityId } from './collectionOps.ts';
 
 /** The find-or-create dedupe key for a scientific name (trim + lowercase). */
@@ -114,6 +114,38 @@ export function migrateLegacyTaxa(key: readonly Couplet[], taxa: readonly Taxon[
         return null;
     });
     return { key: result.key, taxa: result.taxa };
+}
+
+/**
+ * Links any `taxonDraft` branch whose typed name now matches an existing taxon
+ * record (by scientific name) to that record. Never creates records — only links
+ * drafts to taxa that already exist. Run after a taxon is created/renamed (or on
+ * load) so a draft doesn't stay amber when a matching record appears.
+ */
+export function relinkDraftsToExisting(key: readonly Couplet[], taxa: readonly Taxon[]): { key: Couplet[]; changed: boolean } {
+    const nameToId = new Map<string, number>();
+    taxa.forEach(t => {
+        const norm = normalizeName(t.scientificName);
+        if (norm && !nameToId.has(norm)) nameToId.set(norm, t.id);
+    });
+
+    let changed = false;
+    const relink = (branch: Branch): Branch => {
+        if (branch.kind !== 'taxonDraft') return branch;
+        const taxonId = nameToId.get(normalizeName(branch.name));
+        if (taxonId === undefined) return branch;
+        changed = true;
+        return { kind: 'taxon', taxonId };
+    };
+
+    const nextKey = key.map(c => {
+        const branch1 = relink(c.branch1);
+        const branch2 = relink(c.branch2);
+        if (branch1 === c.branch1 && branch2 === c.branch2) return c;
+        return { ...c, branch1, branch2 };
+    });
+
+    return { key: nextKey, changed };
 }
 
 /** Resets any branch pointing at a deleted taxon back to empty (parallels deleteCouplets). */

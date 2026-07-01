@@ -1,5 +1,5 @@
 // utils.ts
-import type { Branch, Couplet, Figure, Taxon } from './store.ts';
+import type { Branch, Couplet, Figure, Taxon } from './store/keyStore.ts';
 
 /**
  * The shared empty destination. Branches are treated as immutable values

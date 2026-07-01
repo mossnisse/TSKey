@@ -1,8 +1,8 @@
-import type { KeyStore } from '../store.ts';
+import type { KeyStore } from '../store';
 import { escapeHTML, buildIdToIndexMap, buildFigureIdToDisplayNumMap, triggerFileDownload, resolveDestination, sanitizeFilename, buildCoupletLeads, buildBackReferenceMap, buildTaxaContext } from '../utils.ts';
 import type { DestinationResolution, LeadFormat, NameDisplayMode } from '../utils.ts';
 import { showToast } from '../uiRenderer.ts';
-import { workspaceStorage, blobToBase64 } from '../db.ts';
+import { workspaceStorage, blobToBase64 } from '../store';
 
 function destinationToHtml(dest: DestinationResolution): string {
     const escaped = escapeHTML(dest.printText);

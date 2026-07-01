@@ -2,11 +2,12 @@
 // Editor key-card events: title rename, selection, text input, focus, and
 // drag-and-drop reordering — plus the paste / append-step helpers shared with the
 // menu and keyboard handlers.
-import type { KeyStore, Couplet } from '../store.ts';
+import type { KeyStore, Couplet } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { batchedRefresh, DEBOUNCE_TYPING_MS, setupCardDragReorder } from './shared.ts';
 import { resolveDestination, parseDestinationInput, buildIdToIndexMap } from '../utils.ts';
-import { findTaxonByName } from '../taxonOps.ts';
+import { findTaxonByName } from '../store';
+import { scrollIntoViewAndFlash } from '../navigation.ts';
 import { showToast } from '../uiRenderer.ts';
 
 // The key-card whose field last gained focus — so the link highlight only refreshes
@@ -45,8 +46,14 @@ export function setupCoupletSelection(keyContainer: HTMLElement, store: KeyStore
             if (card && (forField === 'dest1' || forField === 'dest2')) {
                 const coupletId = Number(card.getAttribute('data-id'));
                 const branchField = forField === 'dest1' ? 'branch1' : 'branch2';
-                store.createTaxonForBranch(coupletId, branchField);
-                batchedRefresh(refreshAll);
+                const newTaxonId = store.createTaxonForBranch(coupletId, branchField);
+                refreshAll(); // sync so the new card exists before we scroll to it
+                if (newTaxonId !== null) {
+                    const cardSelector = `.taxon-card[data-id="${newTaxonId}"]`;
+                    scrollIntoViewAndFlash(cardSelector);
+                    // Drop the user straight into the new card's first field to fill it in.
+                    (document.querySelector(`${cardSelector} input[data-field="scientificName"]`) as HTMLInputElement | null)?.focus();
+                }
             }
             return;
         }

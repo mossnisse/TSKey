@@ -2,7 +2,7 @@
 // Global window-level keyboard shortcut interceptor. Most shortcuts delegate to the
 // corresponding menu command button; figure-reference insert and paste call shared
 // helpers directly.
-import type { KeyStore } from '../store.ts';
+import type { KeyStore } from '../store';
 import { IS_MAC } from '../utils.ts';
 import { isFigureTextarea, insertFigureReference } from './figureEvents.ts';
 import { executePaste } from './coupletEvents.ts';

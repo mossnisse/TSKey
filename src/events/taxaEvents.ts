@@ -2,7 +2,7 @@
 // Taxa panel events (add, edit, selection, drag-and-drop reordering), mirroring the
 // figure panel. Multi-line fields (synonyms, confusables) are parsed from text back
 // into their structured form here; ui/taxa.ts serializes them for display.
-import type { KeyStore, Taxon, ConfusableSpecies } from '../store.ts';
+import type { KeyStore, Taxon, ConfusableSpecies } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { batchedRefresh, DEBOUNCE_TYPING_MS, setupCardDragReorder } from './shared.ts';
 

@@ -7,8 +7,8 @@
 // See figureTokens.ts for the two token forms ([figID: N] stored, [fig: value]
 // raw/unresolved).
 
-import type { Figure } from './store.ts';
-import { figIdTokenRegex, figRawTokenRegex, buildFigureLookups } from './figureTokens.ts';
+import type { Figure } from './keyStore.ts';
+import { figIdTokenRegex, figRawTokenRegex, buildFigureLookups } from '../figureTokens.ts';
 
 /**
  * Resolves stored [figID: N] and raw [fig: value] tokens into "(Fig. n)"
