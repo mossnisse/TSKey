@@ -150,7 +150,7 @@ export interface KeyDocumentModel {
     title: string;
     isEmpty: boolean;                   // true when the key has no couplets
     couplets: RenderableCouplet[];
-    taxa: readonly Taxon[];             // pass-through (formatters lay out fields); see taxonHeading
+    taxa: readonly Taxon[];             // pass-through (formatters lay out fields); see buildTaxonExportNames
     figures: readonly Figure[];         // pass-through; display number is 1-based array position
 }
 
@@ -160,9 +160,55 @@ export interface DocumentModelOptions {
     nameMode: NameDisplayMode;
 }
 
-/** The heading a taxon shows in exports: its scientific name, or a placeholder if blank. */
-export function taxonHeading(taxon: Taxon): string {
-    return taxon.scientificName || 'Untitled taxon';
+/** One name line in a taxon's export block. */
+export interface TaxonNameLine {
+    name: string;
+    isScientific: boolean;  // scientific names are italicised in rich formats (HTML/LaTeX)
+    auctor: string;         // rendered after the name; only ever set on the scientific line
+}
+
+/**
+ * The ordered names for a taxon's export block: the heading (the primary name for
+ * the display mode) plus an optional labelled second row for the other name. The
+ * auctor always rides with the scientific name — never after the vernacular name —
+ * so vernacular mode leads with a bare vernacular heading and puts the scientific
+ * name + auctor on the second row.
+ */
+export interface TaxonExportNames {
+    heading: TaxonNameLine;
+    secondary: (TaxonNameLine & { label: string }) | null;
+}
+
+export function buildTaxonExportNames(taxon: Taxon, mode: NameDisplayMode): TaxonExportNames {
+    const sci = taxon.scientificName.trim();
+    const vern = taxon.vernacularName.trim();
+    const auctor = taxon.auctor.trim();
+
+    const scientificLine: TaxonNameLine = { name: sci, isScientific: true, auctor };
+    const vernacularLine: TaxonNameLine = { name: vern, isScientific: false, auctor: '' };
+
+    // Vernacular leads only when a vernacular name exists; the scientific name (with
+    // its auctor) then becomes the second row.
+    if (mode === 'vernacular' && vern) {
+        return {
+            heading: vernacularLine,
+            secondary: sci ? { ...scientificLine, label: 'Scientific name' } : null,
+        };
+    }
+
+    // Scientific leads (also the fallback when vernacular mode has no vernacular name).
+    if (sci) {
+        return {
+            heading: scientificLine,
+            secondary: vern ? { ...vernacularLine, label: 'Vernacular name' } : null,
+        };
+    }
+
+    // Only a vernacular name, or nothing at all.
+    return {
+        heading: vern ? vernacularLine : { name: 'Untitled taxon', isScientific: false, auctor: '' },
+        secondary: null,
+    };
 }
 
 /**

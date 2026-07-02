@@ -4,13 +4,23 @@
 // values, the link-highlight classes, and diagnostics — without tearing down focused
 // fields.
 import type { KeyStore, Couplet } from '../store';
+import type { UIStateStore } from '../uiState.ts';
 import { escapeHTML, buildIdToIndexMap, resolveDestination, branchTarget, buildTaxaContext } from '../utils.ts';
 import { syncField, reconcileCards } from './shared.ts';
 
-/** Shows the inline "＋ taxon" create button only when that lead is an unlinked draft. */
+/** Shows the inline create-taxon buttons only when that lead is an unlinked draft. */
 function syncCreateTaxonBtn(card: HTMLElement, field: 'dest1' | 'dest2', isUnlinkedTaxon?: boolean) {
-    const btn = card.querySelector(`.btn-create-taxon[data-for="${field}"]`) as HTMLElement | null;
-    if (btn) btn.hidden = !isUnlinkedTaxon;
+    const group = card.querySelector(`.create-taxon-group[data-for="${field}"]`) as HTMLElement | null;
+    if (group) group.hidden = !isUnlinkedTaxon;
+}
+
+/** The pair of "create taxon with this name" buttons shown under an unlinked lead. */
+function createTaxonButtons(field: 'dest1' | 'dest2'): string {
+    return `
+        <div class="create-taxon-group" data-for="${field}" hidden>
+          <button type="button" class="btn-create-taxon" data-for="${field}" data-name-field="scientific" title="Create a taxon card with this scientific name">＋ scientific name</button>
+          <button type="button" class="btn-create-taxon" data-for="${field}" data-name-field="vernacular" title="Create a taxon card with this vernacular name">＋ vernacular name</button>
+        </div>`;
 }
 
 /** Static card skeleton; all dynamic values are filled in by the update pass. */
@@ -33,7 +43,7 @@ function createCard(couplet: Couplet): HTMLElement {
             <label class="meta-label">→
               <input type="text" class="input-sync input-destination" data-field="dest1" placeholder="Taxon or Step #" />
             </label>
-            <button type="button" class="btn-create-taxon" data-for="dest1" title="Create a Taxa card for this name" hidden>＋ taxon</button>
+            ${createTaxonButtons('dest1')}
           </div>
         </div>
         <div class="card-row">
@@ -42,7 +52,7 @@ function createCard(couplet: Couplet): HTMLElement {
             <label class="meta-label">→
               <input type="text" class="input-sync input-destination" data-field="dest2" placeholder="Taxon or Step #" />
             </label>
-            <button type="button" class="btn-create-taxon" data-for="dest2" title="Create a Taxa card for this name" hidden>＋ taxon</button>
+            ${createTaxonButtons('dest2')}
           </div>
         </div>
     `;
@@ -53,7 +63,7 @@ function createCard(couplet: Couplet): HTMLElement {
  * High-Performance Incremental DOM Reconciliation.
  * Updates parameters, positions, and errors safely on existing elements without full teardown sweeps.
  */
-export function renderEditorCards(store: KeyStore) {
+export function renderEditorCards(store: KeyStore, uiState: UIStateStore) {
     const container = document.getElementById('editor-container');
     if (!container) return;
 
@@ -63,9 +73,9 @@ export function renderEditorCards(store: KeyStore) {
 
     const idToIndexMap = buildIdToIndexMap(key);
     const inboundLinksMap = store.generateInboundLinksMap();
-    // The editor box always shows the scientific name (inputValue), so the display
-    // mode here is irrelevant — 'scientific' keeps the round-trip canonical.
-    const taxaCtx = buildTaxaContext(store.getTaxa(), 'scientific');
+    // A linked lead shows the taxon name for the current display setting; typing
+    // either name re-links, so the editable round-trip still works.
+    const taxaCtx = buildTaxaContext(store.getTaxa(), uiState.nameDisplayMode);
 
     // Link highlighting: the "focus step" is the single selected card, or — when
     // nothing is selected — the step being edited. Multi-select is ambiguous → none.

@@ -15,7 +15,7 @@ import {
     type CutLink,
 } from './coupletOps.ts';
 import { orderFiguresByReference, resolveTextReferences, encodeFigureTokens, decodeTextReferencesForEditor } from './figureOps.ts';
-import { createTaxon, resolveDrafts, migrateLegacyTaxa, deleteTaxaAndSever, findTaxonByName, relinkDraftsToExisting } from './taxonOps.ts';
+import { createTaxon, resolveDrafts, migrateLegacyTaxa, deleteTaxaAndSever, findTaxonByAnyName, relinkDraftsToExisting } from './taxonOps.ts';
 
 export const APP_NAME = 'TSKey';
 export const APP_VERSION = '0.0.2';
@@ -945,8 +945,9 @@ export class KeyStore {
         this.state.taxa = next;
 
         // A renamed (or freshly named) taxon may now match an unlinked draft in a
-        // lead — link those drafts to it so they don't stay amber.
-        if ('scientificName' in fields) {
+        // lead — by either its scientific or vernacular name — so link those drafts
+        // to it so they don't stay amber.
+        if ('scientificName' in fields || 'vernacularName' in fields) {
             const relinked = relinkDraftsToExisting(this.state.dichotomousKey, this.state.taxa);
             if (relinked.changed) this.state.dichotomousKey = relinked.key;
         }
@@ -964,11 +965,13 @@ export class KeyStore {
 
     /**
      * Explicitly turns one lead's unlinked taxon draft into a real record and links
-     * the branch to it (find-or-create by scientific name, so it reuses a match made
-     * since the draft was typed). Returns the taxon id, or null when the branch isn't
-     * a draft. This is the deliberate "create taxon" action from the editor.
+     * the branch to it. `nameField` chooses whether the typed text becomes the new
+     * taxon's scientific name (default) or its vernacular name. It first reuses any
+     * existing taxon matching the typed text by either name (a match made since the
+     * draft was typed), otherwise creates a fresh record. Returns the taxon id, or
+     * null when the branch isn't a draft. The deliberate "create taxon" editor action.
      */
-    public createTaxonForBranch(coupletId: number, field: 'branch1' | 'branch2'): number | null {
+    public createTaxonForBranch(coupletId: number, field: 'branch1' | 'branch2', nameField: 'scientific' | 'vernacular' = 'scientific'): number | null {
         const couplet = this.state.dichotomousKey.find(c => c.id === coupletId);
         if (!couplet) return null;
 
@@ -977,13 +980,15 @@ export class KeyStore {
 
         this.saveCheckpoint();
 
-        const existing = findTaxonByName(this.state.taxa, branch.name);
+        const existing = findTaxonByAnyName(this.state.taxa, branch.name);
         let taxonId: number;
         if (existing) {
             taxonId = existing.id;
         } else {
             taxonId = nextEntityId(this.state.taxa);
-            this.state.taxa = [...this.state.taxa, createTaxon(taxonId, branch.name)];
+            const taxon = createTaxon(taxonId, nameField === 'scientific' ? branch.name : '');
+            if (nameField === 'vernacular') taxon.vernacularName = branch.name;
+            this.state.taxa = [...this.state.taxa, taxon];
         }
 
         this.state.dichotomousKey = updateEntity(this.state.dichotomousKey, coupletId, {

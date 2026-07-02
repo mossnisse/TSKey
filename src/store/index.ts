@@ -6,4 +6,4 @@
 // depends on, import the model types from './store/keyStore.ts' directly).
 export * from './keyStore.ts';
 export * from './db.ts';
-export { findTaxonByName } from './taxonOps.ts';
+export { findTaxonByName, findTaxonByAnyName } from './taxonOps.ts';

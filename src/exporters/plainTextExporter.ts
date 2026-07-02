@@ -3,8 +3,8 @@ import type { KeyStore } from '../store';
 import { showToast } from '../uiRenderer.ts';
 import { triggerFileDownload, sanitizeFilename } from '../utils.ts';
 import type { LeadFormat, NameDisplayMode } from '../utils.ts';
-import { buildKeyDocumentModel, renderAltSegments, taxonHeading } from '../keyDocumentModel.ts';
-import type { AltSegmentRenderer } from '../keyDocumentModel.ts';
+import { buildKeyDocumentModel, renderAltSegments, buildTaxonExportNames } from '../keyDocumentModel.ts';
+import type { AltSegmentRenderer, TaxonNameLine } from '../keyDocumentModel.ts';
 
 // Figure tokens resolve to plain "(Fig. N)"; unresolvable ones stay visible as
 // "[Broken Fig: …]" so the omission is obvious in the exported text.
@@ -49,11 +49,15 @@ export function exportKeyToPlainText(store: KeyStore, leadFormat: LeadFormat, sh
             content += `TAXA\n`;
             content += `========================================\n\n`;
 
+            const withAuctor = (line: TaxonNameLine) => line.auctor ? `${line.name} ${line.auctor}` : line.name;
+
             taxa.forEach((taxon, index) => {
                 const displayNum = index + 1;
-                content += `${displayNum}. ${taxonHeading(taxon)}${taxon.auctor ? ' ' + taxon.auctor : ''}\n`;
+                const names = buildTaxonExportNames(taxon, nameMode);
 
-                if (taxon.vernacularName) content += `  Vernacular name: ${taxon.vernacularName}\n`;
+                content += `${displayNum}. ${withAuctor(names.heading)}\n`;
+                if (names.secondary) content += `  ${names.secondary.label}: ${withAuctor(names.secondary)}\n`;
+
                 if (taxon.synonyms.length > 0) content += `  Synonyms: ${taxon.synonyms.join('; ')}\n`;
                 if (taxon.description) content += `  Description: ${taxon.description}\n`;
                 if (taxon.biology) content += `  Biology: ${taxon.biology}\n`;

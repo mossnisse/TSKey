@@ -22,6 +22,18 @@ export function findTaxonByName(taxa: readonly Taxon[], name: string): Taxon | u
     return taxa.find(t => normalizeName(t.scientificName) === norm);
 }
 
+/**
+ * The taxon whose scientific OR vernacular name matches `name` (case-insensitive),
+ * or undefined. A scientific-name match wins over a vernacular one. Used to link a
+ * lead's typed destination to an existing taxon by either of its names.
+ */
+export function findTaxonByAnyName(taxa: readonly Taxon[], name: string): Taxon | undefined {
+    const norm = normalizeName(name);
+    if (norm === '') return undefined;
+    return taxa.find(t => normalizeName(t.scientificName) === norm)
+        ?? taxa.find(t => normalizeName(t.vernacularName) === norm);
+}
+
 /** A blank taxon with the given id and (trimmed) scientific name; all text empty. */
 export function createTaxon(id: number, scientificName = ''): Taxon {
     return {
@@ -37,13 +49,23 @@ export function createTaxon(id: number, scientificName = ''): Taxon {
     };
 }
 
-/** Normalized scientific name -> taxon id, first match wins. */
-function buildNameToIdMap(taxa: readonly Taxon[]): Map<string, number> {
+/**
+ * Normalized name -> taxon id, first match wins. Scientific names are mapped first
+ * so they win over any vernacular collision; vernacular names are added only when
+ * `includeVernacular` is set (used for linking, not for find-or-create dedupe).
+ */
+function buildNameToIdMap(taxa: readonly Taxon[], includeVernacular = false): Map<string, number> {
     const nameToId = new Map<string, number>();
     taxa.forEach(t => {
         const norm = normalizeName(t.scientificName);
         if (norm && !nameToId.has(norm)) nameToId.set(norm, t.id);
     });
+    if (includeVernacular) {
+        taxa.forEach(t => {
+            const norm = normalizeName(t.vernacularName);
+            if (norm && !nameToId.has(norm)) nameToId.set(norm, t.id);
+        });
+    }
     return nameToId;
 }
 
@@ -129,12 +151,12 @@ export function migrateLegacyTaxa(key: readonly Couplet[], taxa: readonly Taxon[
 
 /**
  * Links any `taxonDraft` branch whose typed name now matches an existing taxon
- * record (by scientific name) to that record. Never creates records — only links
- * drafts to taxa that already exist. Run after a taxon is created/renamed (or on
- * load) so a draft doesn't stay amber when a matching record appears.
+ * record (by scientific OR vernacular name) to that record. Never creates records —
+ * only links drafts to taxa that already exist. Run after a taxon is created/renamed
+ * (or on load) so a draft doesn't stay amber when a matching record appears.
  */
 export function relinkDraftsToExisting(key: readonly Couplet[], taxa: readonly Taxon[]): { key: Couplet[]; changed: boolean } {
-    const nameToId = buildNameToIdMap(taxa);
+    const nameToId = buildNameToIdMap(taxa, true);
 
     let changed = false;
     const relink = (branch: Branch): Branch => {

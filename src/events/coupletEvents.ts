@@ -6,7 +6,7 @@ import type { KeyStore, Couplet } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { batchedRefresh, DEBOUNCE_TYPING_MS, setupCardDragReorder } from './shared.ts';
 import { resolveDestination, parseDestinationInput, buildIdToIndexMap, buildTaxaContext } from '../utils.ts';
-import { findTaxonByName } from '../store';
+import { findTaxonByAnyName } from '../store';
 import { scrollIntoViewAndFlash } from './navigationEvents.ts';
 import { showToast } from '../uiRenderer.ts';
 
@@ -38,7 +38,9 @@ export function setupCoupletSelection(keyContainer: HTMLElement, store: KeyStore
     keyContainer.addEventListener('click', (e: MouseEvent) => {
         const target = e.target as HTMLElement;
 
-        // Inline "＋ taxon": create the Taxa card for this lead's typed name and link it.
+        // Inline create buttons: turn this lead's typed name into a Taxa card and link
+        // it, putting the text in the taxon's scientific or vernacular name field per
+        // the button clicked.
         const createBtn = target.closest('.btn-create-taxon') as HTMLElement | null;
         if (createBtn) {
             const card = createBtn.closest('.key-card') as HTMLElement | null;
@@ -46,13 +48,15 @@ export function setupCoupletSelection(keyContainer: HTMLElement, store: KeyStore
             if (card && (forField === 'dest1' || forField === 'dest2')) {
                 const coupletId = Number(card.getAttribute('data-id'));
                 const branchField = forField === 'dest1' ? 'branch1' : 'branch2';
-                const newTaxonId = store.createTaxonForBranch(coupletId, branchField);
+                const nameField = createBtn.getAttribute('data-name-field') === 'vernacular' ? 'vernacular' : 'scientific';
+                const newTaxonId = store.createTaxonForBranch(coupletId, branchField, nameField);
                 refreshAll(); // sync so the new card exists before we scroll to it
                 if (newTaxonId !== null) {
                     const cardSelector = `.taxon-card[data-id="${newTaxonId}"]`;
                     scrollIntoViewAndFlash(cardSelector);
-                    // Drop the user straight into the new card's first field to fill it in.
-                    (document.querySelector(`${cardSelector} input[data-field="scientificName"]`) as HTMLInputElement | null)?.focus();
+                    // Drop the user straight into the field they chose to fill it in.
+                    const focusField = nameField === 'vernacular' ? 'vernacularName' : 'scientificName';
+                    (document.querySelector(`${cardSelector} input[data-field="${focusField}"]`) as HTMLInputElement | null)?.focus();
                 }
             }
             return;
@@ -111,10 +115,11 @@ export function setupCoupletInput(keyContainer: HTMLElement, store: KeyStore, ui
 
             // We parse using the current snapshot of the key array
             let branch = parseDestinationInput(currentValue, store.getKey());
-            // Link to an existing taxon live as the typed name matches one (reliable,
-            // no timer); a non-matching name stays a draft until the user clicks create.
+            // Link to an existing taxon live as the typed name matches one — by its
+            // scientific OR vernacular name (reliable, no timer). A non-matching name
+            // stays a draft until the user clicks one of the create buttons.
             if (branch.kind === 'taxonDraft') {
-                const match = findTaxonByName(store.getTaxa(), branch.name);
+                const match = findTaxonByAnyName(store.getTaxa(), branch.name);
                 if (match) branch = { kind: 'taxon', taxonId: match.id };
             }
             updatePayload[branchField] = branch;

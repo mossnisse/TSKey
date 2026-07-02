@@ -101,7 +101,7 @@ async function bootstrapApp() {
     const refreshAll = () => {
         applyPanelVisibility(uiState);
         renderMenu(store, uiState);
-        renderEditorCards(store);
+        renderEditorCards(store, uiState);
         renderPrintView(store, uiState);
         renderFigures(store, uiState, refreshAll);
         renderTaxa(store, uiState);

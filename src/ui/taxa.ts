@@ -4,6 +4,7 @@
 // confusables) are serialized to text here; events/taxaEvents.ts parses them back.
 import type { KeyStore, Taxon, ConfusableSpecies } from '../store';
 import type { UIStateStore } from '../uiState.ts';
+import type { NameDisplayMode } from '../utils.ts';
 import { syncField, reconcileCards } from './shared.ts';
 
 /** One synonym per line. */
@@ -18,23 +19,38 @@ export function confusablesToText(confusables: readonly ConfusableSpecies[]): st
         .join('\n');
 }
 
-function taxonCardMarkup(): string {
+const SCIENTIFIC_NAME_ROW = `
+        <div class="taxon-field-row">
+            <label>Scientific name:</label>
+            <input type="text" class="input-sync taxon-input" data-field="scientificName" />
+        </div>`;
+const AUCTOR_ROW = `
+        <div class="taxon-field-row">
+            <label>Auctor:</label>
+            <input type="text" class="input-sync taxon-input" data-field="auctor" />
+        </div>`;
+const VERNACULAR_NAME_ROW = `
+        <div class="taxon-field-row">
+            <label>Vernacular name:</label>
+            <input type="text" class="input-sync taxon-input" data-field="vernacularName" placeholder="Vernacular name" />
+        </div>`;
+
+/**
+ * The card markup, with the name field for the current display mode first. The
+ * scientific name keeps its auctor immediately after it (the authority cites the
+ * scientific name), so vernacular mode leads with the vernacular row, then the
+ * scientific + auctor pair.
+ */
+function taxonCardMarkup(mode: NameDisplayMode): string {
+    const nameRows = mode === 'vernacular'
+        ? VERNACULAR_NAME_ROW + SCIENTIFIC_NAME_ROW + AUCTOR_ROW
+        : SCIENTIFIC_NAME_ROW + AUCTOR_ROW + VERNACULAR_NAME_ROW;
+
     return `
         <div class="taxon-card-header">
             <span class="taxon-card-title"></span>
         </div>
-        <div class="taxon-field-row">
-            <label>Scientific name:</label>
-            <input type="text" class="input-sync taxon-input" data-field="scientificName" />
-        </div>
-        <div class="taxon-field-row">
-            <label>Auctor:</label>
-            <input type="text" class="input-sync taxon-input" data-field="auctor" />
-        </div>
-        <div class="taxon-field-row">
-            <label>Vernacular name:</label>
-            <input type="text" class="input-sync taxon-input" data-field="vernacularName" placeholder="Vernacular name" />
-        </div>
+        ${nameRows}
         <div class="taxon-field-row">
             <label>Synonyms (one per line):</label>
             <textarea class="input-sync taxon-textarea" data-field="synonyms" rows="2"></textarea>
@@ -74,12 +90,12 @@ function syncTaxonCard(card: HTMLElement, taxon: Taxon, displayNum: number) {
     syncField(card, 'textarea[data-field="confusables"]', confusablesToText(taxon.confusables));
 }
 
-function createTaxonCard(taxon: Taxon): HTMLElement {
+function createTaxonCard(taxon: Taxon, mode: NameDisplayMode): HTMLElement {
     const block = document.createElement('div');
     block.className = 'taxon-card';
     block.setAttribute('data-id', taxon.id.toString());
     block.draggable = true;
-    block.innerHTML = taxonCardMarkup();
+    block.innerHTML = taxonCardMarkup(mode);
     return block;
 }
 
@@ -89,13 +105,21 @@ export function renderTaxa(store: KeyStore, uiState: UIStateStore) {
     const container = document.getElementById('taxa-container');
     if (!container) return;
 
+    const mode = uiState.nameDisplayMode;
+    // The leading name field depends on the display setting; when it changes, drop
+    // the existing cards so the reconciler rebuilds them with the new field order.
+    if (container.dataset.nameMode !== mode) {
+        container.replaceChildren();
+        container.dataset.nameMode = mode;
+    }
+
     const selectedIds = store.getSelectedTaxonIds();
 
     reconcileCards<Taxon>({
         container,
         items: store.getTaxa(),
         getId: t => t.id,
-        create: createTaxonCard,
+        create: taxon => createTaxonCard(taxon, mode),
         update: (block, taxon, index) => {
             block.classList.toggle('is-selected', selectedIds.has(taxon.id));
             syncTaxonCard(block, taxon, index + 1);

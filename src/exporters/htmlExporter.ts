@@ -1,8 +1,8 @@
 import type { KeyStore } from '../store';
 import { escapeHTML, triggerFileDownload, sanitizeFilename } from '../utils.ts';
 import type { DestinationResolution, LeadFormat, NameDisplayMode } from '../utils.ts';
-import { buildKeyDocumentModel, renderAltSegments, taxonHeading } from '../keyDocumentModel.ts';
-import type { AltSegmentRenderer } from '../keyDocumentModel.ts';
+import { buildKeyDocumentModel, renderAltSegments, buildTaxonExportNames } from '../keyDocumentModel.ts';
+import type { AltSegmentRenderer, TaxonNameLine } from '../keyDocumentModel.ts';
 import { showToast } from '../uiRenderer.ts';
 import { workspaceStorage, blobToBase64 } from '../store';
 import { LIGHTBOX_CSS, LIGHTBOX_RUNTIME_JS } from './htmlLightboxAssets.ts';
@@ -108,12 +108,19 @@ export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, s
             const field = (label: string, valueHtml: string) =>
                 `<p class="print-taxon-field"><strong>${label}:</strong> ${valueHtml}</p>`;
 
-            const entries = taxa.map(taxon => {
-                const sci = escapeHTML(taxonHeading(taxon));
-                const auctor = taxon.auctor ? ` <span class="print-taxon-auctor">${escapeHTML(taxon.auctor)}</span>` : '';
-                let block = `<div class="print-taxon"><h3 class="print-taxon-name"><em>${sci}</em>${auctor}</h3>`;
+            // A name line: the scientific name is italicised, and its auctor (if any)
+            // follows in the small auctor style; the vernacular name renders plain.
+            const renderName = (line: TaxonNameLine) => {
+                const name = line.isScientific ? `<em>${escapeHTML(line.name)}</em>` : escapeHTML(line.name);
+                const auctor = line.auctor ? ` <span class="print-taxon-auctor">${escapeHTML(line.auctor)}</span>` : '';
+                return name + auctor;
+            };
 
-                if (taxon.vernacularName) block += `<p class="print-taxon-field">${escapeHTML(taxon.vernacularName)}</p>`;
+            const entries = taxa.map(taxon => {
+                const names = buildTaxonExportNames(taxon, nameMode);
+                let block = `<div class="print-taxon"><h3 class="print-taxon-name">${renderName(names.heading)}</h3>`;
+
+                if (names.secondary) block += `<p class="print-taxon-field">${renderName(names.secondary)}</p>`;
                 if (taxon.synonyms.length > 0) block += field('Synonyms', taxon.synonyms.map(s => `<em>${escapeHTML(s)}</em>`).join('; '));
                 if (taxon.description) block += field('Description', nl2br(taxon.description));
                 if (taxon.biology) block += field('Biology', nl2br(taxon.biology));

@@ -2,8 +2,8 @@
 import type { KeyStore } from '../store';
 import { triggerFileDownload, sanitizeFilename } from '../utils.ts';
 import type { DestinationResolution, LeadFormat, NameDisplayMode } from '../utils.ts';
-import { buildKeyDocumentModel, renderAltSegments, taxonHeading } from '../keyDocumentModel.ts';
-import type { AltSegmentRenderer } from '../keyDocumentModel.ts';
+import { buildKeyDocumentModel, renderAltSegments, buildTaxonExportNames } from '../keyDocumentModel.ts';
+import type { AltSegmentRenderer, TaxonNameLine } from '../keyDocumentModel.ts';
 import { showToast } from '../uiRenderer.ts';
 
 /**
@@ -148,18 +148,24 @@ ${bodyContent}
             const field = (label: string, value: string): string =>
                 `\\noindent\\textbf{${label}:} ${escapeLaTeX(value)}\\par\n`;
 
-            taxa.forEach(taxon => {
-                const sci = escapeLaTeX(taxonHeading(taxon));
-                
-                // Auctor renders in a smaller size than the scientific name.
-                const auctor = taxon.auctor ? ` {\\small ${escapeLaTeX(taxon.auctor)}}` : '';
-                taxaBody += `\\subsection*{\\textit{${sci}}${auctor}}\n`;
+            // A name line: the scientific name is italicised with its auctor in a
+            // smaller size after it; the vernacular name renders upright.
+            const renderName = (line: TaxonNameLine): string => {
+                const name = line.isScientific ? `\\textit{${escapeLaTeX(line.name)}}` : escapeLaTeX(line.name);
+                const auctor = line.auctor ? ` {\\small ${escapeLaTeX(line.auctor)}}` : '';
+                return name + auctor;
+            };
 
-                // Rendered without the `field()` helper to avoid an empty "Vernacular name:" label when absent.
-                if (taxon.vernacularName) {
-                    taxaBody += `\\noindent ${escapeLaTeX(taxon.vernacularName)}\\par\n`;
+            taxa.forEach(taxon => {
+                const names = buildTaxonExportNames(taxon, nameMode);
+                taxaBody += `\\subsection*{${renderName(names.heading)}}\n`;
+
+                // The other name (scientific + auctor in vernacular mode, else the
+                // vernacular name) on its own line; omitted when absent.
+                if (names.secondary) {
+                    taxaBody += `\\noindent ${renderName(names.secondary)}\\par\n`;
                 }
-                
+
                 if (taxon.synonyms.length > 0) taxaBody += field('Synonyms', taxon.synonyms.join('; '));
                 if (taxon.description) taxaBody += field('Description', taxon.description);
                 if (taxon.biology) taxaBody += field('Biology', taxon.biology);

@@ -264,10 +264,15 @@ export function buildTaxaContext(taxa: readonly Taxon[], nameMode: NameDisplayMo
     return { byId, nameMode };
 }
 
-/** The name to display for a taxon: vernacular when chosen and present, else scientific. */
+/**
+ * The name to display for a taxon: the one for the chosen mode, falling back to the
+ * other when the preferred one is blank (so a taxon created with only a vernacular
+ * name still shows a name in scientific mode, and vice versa).
+ */
 export function displayTaxonName(taxon: Taxon, mode: NameDisplayMode): string {
-    if (mode === 'vernacular' && taxon.vernacularName.trim() !== '') return taxon.vernacularName;
-    return taxon.scientificName;
+    const scientific = taxon.scientificName.trim();
+    const vernacular = taxon.vernacularName.trim();
+    return mode === 'vernacular' ? (vernacular || scientific) : (scientific || vernacular);
 }
 
 /**
@@ -303,7 +308,9 @@ export function resolveDestination(branch: Branch, idToIndexMap: Map<number, num
             }
             return {
                 kind: 'taxon',
-                inputValue: taxon.scientificName,
+                // Show the name for the current display mode; linking round-trips via
+                // either name, and displayTaxonName falls back when one is blank.
+                inputValue: displayTaxonName(taxon, taxaCtx!.nameMode),
                 printText: displayTaxonName(taxon, taxaCtx!.nameMode),
                 printClass: 'print-dest-taxon',
                 isUnresolved: false,
