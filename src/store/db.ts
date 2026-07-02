@@ -243,6 +243,27 @@ class IndexedDBEngine {
         return txDone(tx, `Cloning figures transaction aborted from "${oldUid}" to "${newUid}"`);
     }
 
+    /**
+     * Deletes every figure blob belonging to a project uid, without touching the
+     * projects store. Used to reclaim the blobs of a project whose title record was
+     * overwritten by a different project (its record is replaced, not deleted).
+     */
+    public async deleteProjectFigures(projectUid: string): Promise<void> {
+        const db = await this.getDB();
+        const tx = db.transaction(this.figuresStoreName, 'readwrite');
+        const cursorReq = tx.objectStore(this.figuresStoreName).openCursor(this.getProjectKeyRange(projectUid));
+
+        cursorReq.onsuccess = (e) => {
+            const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
+            if (cursor) {
+                cursor.delete();
+                cursor.continue();
+            }
+        };
+
+        return txDone(tx, `Figure cleanup aborted for displaced project: ${projectUid}`);
+    }
+
 }
 
 /**
@@ -259,8 +280,27 @@ export class WorkspaceManager {
     }
 
     public async saveProject(title: string, projectUid: string, data: ProjectData): Promise<void> {
+        // Records are keyed by title, figure blobs by projectUid. If a DIFFERENT project
+        // currently occupies this title (Save As / rename / New / import onto an existing
+        // name), the put below replaces its record and orphans its blobs. Note the
+        // displaced uid now, and reclaim its blobs after the save succeeds.
+        const existing = await this.storage.loadProject(title);
+        const displacedUid = existing?.projectUid && existing.projectUid !== projectUid
+            ? existing.projectUid
+            : null;
+
         await this.storage.saveProject(title, projectUid, data);
         await this.commitStagedChanges(projectUid, data.figures);
+
+        if (displacedUid) {
+            // Best-effort: the user's project is already saved, so a cleanup hiccup
+            // must not surface as a save failure — at worst those blobs leak (as before).
+            try {
+                await this.storage.deleteProjectFigures(displacedUid);
+            } catch (error) {
+                console.warn(`Could not reclaim figure blobs for displaced project "${displacedUid}":`, error);
+            }
+        }
     }
 
     public async loadProject(title: string): Promise<ProjectRecord | null> {

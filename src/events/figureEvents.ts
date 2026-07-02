@@ -1,10 +1,12 @@
 // events/figureEvents.ts
 // Figure panel events (add, edit, image upload/removal, drag-and-drop) and the
-// figure-reference insertion tool. `isFigureTextarea` and `insertFigureReference`
-// are also used by the keyboard shortcut (Alt+F).
-import type { KeyStore } from '../store';
+// figure-reference insertion tool. The generic panel wiring lives in entityPanel.ts;
+// this module adds the figure-specific image handling on top. `isFigureTextarea` and
+// `insertFigureReference` are also used by the keyboard shortcut (Alt+F).
+import type { KeyStore, Figure } from '../store';
 import type { UIStateStore } from '../uiState.ts';
-import { batchedRefresh, DEBOUNCE_TYPING_MS, setupCardDragReorder } from './shared.ts';
+import { batchedRefresh } from './shared.ts';
+import { setupEntityPanel } from './entityPanel.ts';
 import { showToast } from '../uiRenderer.ts';
 import { workspaceStorage, activeObjectURLs } from '../store';
 import { openImageLightbox } from '../ui/imageLightbox.ts';
@@ -56,60 +58,22 @@ export function insertFigureReference(el: HTMLTextAreaElement, start: number, en
 
 /** Figure panel: add button, text fields, image upload/removal, and figure drag-and-drop. */
 export function setupFigurePanel(store: KeyStore, uiState: UIStateStore, refreshAll: () => void, signal: AbortSignal) {
-    const addFigureBtn = document.getElementById('add-figure-btn');
-    if (addFigureBtn) {
-        addFigureBtn.addEventListener('click', () => {
-            store.addFigure("", "");
-            batchedRefresh(refreshAll);
-        }, { signal });
-    }
-
     const figureContainer = document.getElementById('figure-container');
     if (!figureContainer) return;
 
-    figureContainer.addEventListener('input', (e) => {
-        const target = e.target as HTMLInputElement | HTMLTextAreaElement;
-
-        // Ensure we are interacting with a bound sync field
-        if (!target.classList.contains('input-sync')) return;
-
-        const figureCard = target.closest('.figure-card') as HTMLElement;
-        if (!figureCard) return;
-
-        const figId = Number(figureCard.getAttribute('data-id'));
-        const field = target.getAttribute('data-field') as 'filename' | 'caption';
-        const fieldKey = `fig-${figId}-${field}`;
-
-        // Manage debounce typing timelines (Figures Context)
-        uiState.typing.figures.start(fieldKey, () => {
-            store.endTypingSession(); // commit any lingering state frame
-        });
-
-        // Construct the partial Figure update object dynamically
-        const fields = { [field]: target.value };
-
-        // Dispatch the update to your KeyStore instance
-        store.updateFigure(figId, fields);
-
-        // Debounce structural refreshes to avoid dropping the typing caret position
-        uiState.typing.figures.extendTimeout(DEBOUNCE_TYPING_MS, () => {
-            batchedRefresh(refreshAll); // Batch updates safely via requestAnimationFrame
-        });
-    }, { signal });
-
-    figureContainer.addEventListener('click', (e: MouseEvent) => {
-        const target = e.target as HTMLElement;
-
+    // Figure-specific clicks handled before selection: image upload trigger, image
+    // removal, and opening a loaded image in the lightbox. A modifier-click on the
+    // image falls through to selection. Returns true when the click was consumed.
+    const handleFigureClick = (target: HTMLElement, e: MouseEvent): boolean => {
         if (target.classList.contains('btn-trigger-upload')) {
-            const card = target.closest('.figure-card') as HTMLElement;
-            const truePicker = card?.querySelector('.hidden-file-picker') as HTMLInputElement;
-            truePicker?.click();
-            return;
+            const card = target.closest('.figure-card') as HTMLElement | null;
+            (card?.querySelector('.hidden-file-picker') as HTMLInputElement | null)?.click();
+            return true;
         }
 
         if (target.classList.contains('btn-remove-image')) {
-            const card = target.closest('.figure-card') as HTMLElement;
-            if (!card) return;
+            const card = target.closest('.figure-card') as HTMLElement | null;
+            if (!card) return true;
             const figId = Number(card.getAttribute('data-id'));
             store.updateFigure(figId, { filename: '' });
             workspaceStorage.deleteFigureBinary(figId);
@@ -119,11 +83,9 @@ export function setupFigurePanel(store: KeyStore, uiState: UIStateStore, refresh
             activeObjectURLs.delete(figId);
 
             batchedRefresh(refreshAll);
-            return;
+            return true;
         }
 
-        // Click a loaded figure image (without a multi-select modifier) to open it
-        // full-screen with zoom/pan. Modifier-clicks still fall through to selection.
         if (target.classList.contains('figure-preview-img') && !(e.ctrlKey || e.metaKey || e.shiftKey)) {
             const img = target as HTMLImageElement;
             const src = img.currentSrc || img.getAttribute('src') || '';
@@ -132,130 +94,65 @@ export function setupFigurePanel(store: KeyStore, uiState: UIStateStore, refresh
                 const num = card?.querySelector('.figure-card-title')?.textContent?.trim() ?? '';
                 const caption = (card?.querySelector('.figure-input-caption') as HTMLTextAreaElement | null)?.value ?? '';
                 openImageLightbox(src, [num, caption].filter(Boolean).join('  '));
-                return;
+                return true;
             }
         }
 
-        // Clear selection if clicking the background layout area of the figure panel itself
-        if (target === figureContainer) {
-            store.clearFigureSelection();
-            batchedRefresh(refreshAll);
-            return;
-        }
+        return false;
+    };
 
-        const figureCard = target.closest('.figure-card') as HTMLElement;
-        if (!figureCard) return;
-
-        const id = Number(figureCard.getAttribute('data-id'));
-        const multiSelect = e.ctrlKey || e.metaKey || e.shiftKey;
-
-        // Check if the user clicked directly inside a form control
-        const isTextInput = target.closest('input, textarea');
-
-        if (isTextInput) {
-            const isAlreadySelected = figureCard.classList.contains('is-selected');
-            if (!isAlreadySelected) {
-                store.toggleFigureSelection(id, multiSelect);
-                batchedRefresh(refreshAll);
-            }
-            return;
-        }
-
-        store.toggleFigureSelection(id, multiSelect);
-        batchedRefresh(refreshAll);
-    }, { signal });
-
-    figureContainer.addEventListener('focusout', (e: FocusEvent) => {
-        const target = e.target as HTMLElement;
-
-        if (target.matches('input, textarea')) {
-            const figureCard = target.closest('.figure-card') as HTMLElement;
-            if (!figureCard) return;
-
-            const figId = Number(figureCard.getAttribute('data-id'));
-            const field = target.getAttribute('data-field');
-            const fieldKey = figId && field ? `fig-${figId}-${field}` : null;
-
-            // Verify if focus is genuinely leaving this active figure field session
-            uiState.typing.figures.end(fieldKey, () => {
-                // Evaluate next focus target context defensively
-                const destination = e.relatedTarget as HTMLElement | null;
-                const isClickingControl = destination instanceof Element && (
-                    destination.closest('.figure-card') ||
-                    destination.closest('.key-card') ||
-                    destination.closest('.app-menu-bar') ||
-                    destination.closest('#add-figure-btn')
-                );
-
-                // Force an immediate structural refresh unless clicking an active app controller
-                if (!isClickingControl) {
-                    batchedRefresh(refreshAll);
-                }
-            });
-        }
-    }, { signal });
-
-    // Intercept binary mutations when the operating system file picker dismisses
-    figureContainer.addEventListener('change', async (e) => {
-        const target = e.target as HTMLInputElement;
-        if (target.classList.contains('hidden-file-picker')) {
-            const file = target.files?.[0];
-            if (!file) return;
-
-            if (!file.type.startsWith('image/')) {
-                showToast('⚠️ Only image files are supported.', 'error');
-                target.value = '';
-                return;
-            }
-
-            const card = target.closest('.figure-card') as HTMLElement;
-            const figId = Number(card?.getAttribute('data-id'));
-            if (isNaN(figId)) return;
-
-            store.updateFigure(figId, { filename: file.name });
-            workspaceStorage.uploadFigureBinary(figId, file);
-
-            // Evict and clean stale historical URL footprints from browser system memory
-            const oldUrl = activeObjectURLs.get(figId);
-            if (oldUrl) URL.revokeObjectURL(oldUrl);
-
-            // Populate the sync cache directory immediately using raw object bindings
-            const freshUrl = URL.createObjectURL(file);
-            activeObjectURLs.set(figId, freshUrl);
-            target.value = '';
-
-            batchedRefresh(refreshAll);
-        }
-    }, { signal });
-
-    // Figures track their own drag id locally (unlike couplets, the store doesn't
-    // need it for rendering). reorderFigures takes raw array indices, so the drop
-    // handler converts the above/below position into a target index.
-    let draggedFigId: number | null = null;
-    setupCardDragReorder({
+    setupEntityPanel({
         container: figureContainer,
         cardSelector: '.figure-card',
-        getDraggedId: () => draggedFigId,
-        setDraggedId: (id) => { draggedFigId = id; },
+        addButton: document.getElementById('add-figure-btn'),
+        fieldKeyPrefix: 'fig',
+        typing: uiState.typing.figures,
         signal,
-        onDrop: (draggedId, targetId, position) => {
-            const figures = store.getFigures();
-            const srcIdx = figures.findIndex(f => f.id === draggedId);
-            let targetIdx = figures.findIndex(f => f.id === targetId);
-            if (srcIdx === -1 || targetIdx === -1) return;
-
-            if (position === 'below') {
-                targetIdx = srcIdx < targetIdx ? targetIdx : targetIdx + 1;
-            } else {
-                targetIdx = srcIdx < targetIdx ? targetIdx - 1 : targetIdx;
-            }
-
-            if (srcIdx !== targetIdx) {
-                store.reorderFigures(srcIdx, targetIdx);
-                batchedRefresh(refreshAll);
-            }
-        },
+        refreshAll,
+        onAdd: () => store.addFigure('', ''),
+        endTypingSession: () => store.endTypingSession(),
+        buildUpdate: (field, value) => ({ [field]: value }),
+        applyUpdate: (id, update) => store.updateFigure(id, update as Partial<Omit<Figure, 'id'>>),
+        toggleSelection: (id, multi) => store.toggleFigureSelection(id, multi),
+        clearSelection: () => store.clearFigureSelection(),
+        getItems: () => store.getFigures(),
+        reorder: (src, tgt) => store.reorderFigures(src, tgt),
+        extraClick: handleFigureClick,
+        // A figure field can also lose focus to a key-card figure reference.
+        keepFocusWithin: ['.key-card', '#add-figure-btn'],
     });
+
+    // Image upload: when the OS file picker resolves, stage the binary + thumbnail.
+    figureContainer.addEventListener('change', async (e) => {
+        const target = e.target as HTMLInputElement;
+        if (!target.classList.contains('hidden-file-picker')) return;
+
+        const file = target.files?.[0];
+        if (!file) return;
+
+        if (!file.type.startsWith('image/')) {
+            showToast('⚠️ Only image files are supported.', 'error');
+            target.value = '';
+            return;
+        }
+
+        const card = target.closest('.figure-card') as HTMLElement;
+        const figId = Number(card?.getAttribute('data-id'));
+        if (isNaN(figId)) return;
+
+        store.updateFigure(figId, { filename: file.name });
+        workspaceStorage.uploadFigureBinary(figId, file);
+
+        // Evict any stale object URL, then cache a fresh one for the immediate preview.
+        const oldUrl = activeObjectURLs.get(figId);
+        if (oldUrl) URL.revokeObjectURL(oldUrl);
+
+        const freshUrl = URL.createObjectURL(file);
+        activeObjectURLs.set(figId, freshUrl);
+        target.value = '';
+
+        batchedRefresh(refreshAll);
+    }, { signal });
 }
 
 /**

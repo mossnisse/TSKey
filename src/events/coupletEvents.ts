@@ -151,7 +151,7 @@ export function setupCoupletInput(keyContainer: HTMLElement, store: KeyStore, ui
                 if (currentCouplet) {
                     const branch = field === 'dest1' ? currentCouplet.branch1 : currentCouplet.branch2;
                     const idToIndexMap = buildIdToIndexMap(updatedKey);
-                    const taxaCtx = buildTaxaContext(store.getTaxa(), 'scientific');
+                    const taxaCtx = buildTaxaContext(store.getTaxa(), uiState.nameDisplayMode);
                     const resolution = resolveDestination(branch, idToIndexMap, taxaCtx);
 
                     target.classList.toggle('input-error', resolution.isUnresolved);

@@ -39,7 +39,9 @@ export function reconcileCards<T>(opts: ReconcileOptions<T>): void {
 
     const existing = new Map<number, HTMLElement>();
     for (const child of Array.from(container.children) as HTMLElement[]) {
-        const id = Number(child.getAttribute('data-id'));
+        const idAttr = child.getAttribute('data-id');
+        if (idAttr === null) continue;            // no data-id → not a reconciled card
+        const id = Number(idAttr);
         if (!Number.isNaN(id)) existing.set(id, child);
     }
 

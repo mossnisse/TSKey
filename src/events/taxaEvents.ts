@@ -4,7 +4,7 @@
 // into their structured form here; ui/taxa.ts serializes them for display.
 import type { KeyStore, Taxon, ConfusableSpecies } from '../store';
 import type { UIStateStore } from '../uiState.ts';
-import { batchedRefresh, DEBOUNCE_TYPING_MS, setupCardDragReorder } from './shared.ts';
+import { setupEntityPanel } from './entityPanel.ts';
 
 /** Plain string fields editable directly as input/textarea values. */
 const SIMPLE_FIELDS = new Set<keyof Taxon>(['scientificName', 'auctor', 'vernacularName', 'description', 'biology', 'distribution']);
@@ -38,111 +38,27 @@ function buildFieldUpdate(field: string, value: string): Partial<Omit<Taxon, 'id
 
 /** Taxa panel: add button, field editing, selection, and drag-and-drop reordering. */
 export function setupTaxaPanel(store: KeyStore, uiState: UIStateStore, refreshAll: () => void, signal: AbortSignal) {
-    document.getElementById('add-taxon-btn')?.addEventListener('click', () => {
-        store.addTaxon('');
-        batchedRefresh(refreshAll);
-    }, { signal });
-
     const container = document.getElementById('taxa-container');
     if (!container) return;
 
-    container.addEventListener('input', (e) => {
-        const target = e.target as HTMLInputElement | HTMLTextAreaElement;
-        if (!target.classList.contains('input-sync')) return;
-        const card = target.closest('.taxon-card') as HTMLElement;
-        if (!card) return;
-
-        const taxonId = Number(card.getAttribute('data-id'));
-        const field = target.getAttribute('data-field')!;
-        const fieldKey = `taxon-${taxonId}-${field}`;
-
-        uiState.typing.taxa.start(fieldKey, () => store.endTypingSession());
-
-        const update = buildFieldUpdate(field, target.value);
-        if (update) store.updateTaxon(taxonId, update);
-
-        uiState.typing.taxa.extendTimeout(DEBOUNCE_TYPING_MS, () => {
-            batchedRefresh(refreshAll);
-        });
-    }, { signal });
-
-    container.addEventListener('click', (e: MouseEvent) => {
-        const target = e.target as HTMLElement;
-
-        // Clicking the panel background clears the taxon selection.
-        if (target === container) {
-            store.clearTaxonSelection();
-            batchedRefresh(refreshAll);
-            return;
-        }
-
-        const card = target.closest('.taxon-card') as HTMLElement;
-        if (!card) return;
-
-        const id = Number(card.getAttribute('data-id'));
-        const multiSelect = e.ctrlKey || e.metaKey || e.shiftKey;
-
-        // Clicking into a field selects the card (without stealing the click) only
-        // when it isn't already selected, mirroring the figure panel.
-        if (target.closest('input, textarea')) {
-            if (!card.classList.contains('is-selected')) {
-                store.toggleTaxonSelection(id, multiSelect);
-                batchedRefresh(refreshAll);
-            }
-            return;
-        }
-
-        store.toggleTaxonSelection(id, multiSelect);
-        batchedRefresh(refreshAll);
-    }, { signal });
-
-    container.addEventListener('focusout', (e: FocusEvent) => {
-        const target = e.target as HTMLElement;
-        if (!target.matches('input, textarea')) return;
-
-        const card = target.closest('.taxon-card') as HTMLElement;
-        if (!card) return;
-
-        const taxonId = Number(card.getAttribute('data-id'));
-        const field = target.getAttribute('data-field');
-        const fieldKey = taxonId && field ? `taxon-${taxonId}-${field}` : null;
-
-        uiState.typing.taxa.end(fieldKey, () => {
-            const destination = e.relatedTarget as HTMLElement | null;
-            const isClickingControl = destination instanceof Element && (
-                destination.closest('.taxon-card') ||
-                destination.closest('.app-menu-bar') ||
-                destination.closest('#add-taxon-btn')
-            );
-            if (!isClickingControl) batchedRefresh(refreshAll);
-        });
-    }, { signal });
-
-    // Taxa track their own drag id locally; reorderTaxa takes array indices, so the
-    // drop handler converts the above/below position into a target index.
-    let draggedTaxonId: number | null = null;
-    setupCardDragReorder({
+    setupEntityPanel({
         container,
         cardSelector: '.taxon-card',
-        getDraggedId: () => draggedTaxonId,
-        setDraggedId: (id) => { draggedTaxonId = id; },
+        addButton: document.getElementById('add-taxon-btn'),
+        fieldKeyPrefix: 'taxon',
+        typing: uiState.typing.taxa,
         signal,
-        onDrop: (draggedId, targetId, position) => {
-            const taxa = store.getTaxa();
-            const srcIdx = taxa.findIndex(t => t.id === draggedId);
-            let targetIdx = taxa.findIndex(t => t.id === targetId);
-            if (srcIdx === -1 || targetIdx === -1) return;
-
-            if (position === 'below') {
-                targetIdx = srcIdx < targetIdx ? targetIdx : targetIdx + 1;
-            } else {
-                targetIdx = srcIdx < targetIdx ? targetIdx - 1 : targetIdx;
-            }
-
-            if (srcIdx !== targetIdx) {
-                store.reorderTaxa(srcIdx, targetIdx);
-                batchedRefresh(refreshAll);
-            }
-        },
+        refreshAll,
+        onAdd: () => store.addTaxon(''),
+        endTypingSession: () => store.endTypingSession(),
+        buildUpdate: buildFieldUpdate,
+        applyUpdate: (id, update) => store.updateTaxon(id, update as Partial<Omit<Taxon, 'id'>>),
+        toggleSelection: (id, multi) => store.toggleTaxonSelection(id, multi),
+        clearSelection: () => store.clearTaxonSelection(),
+        getItems: () => store.getTaxa(),
+        reorder: (src, tgt) => store.reorderTaxa(src, tgt),
+        // A settled name edit may make a lead's draft match this taxon — link it.
+        onSettle: () => store.relinkTaxonDrafts(),
+        keepFocusWithin: ['#add-taxon-btn'],
     });
 }

@@ -16,6 +16,7 @@ import {
 } from './coupletOps.ts';
 import { orderFiguresByReference, resolveTextReferences, encodeFigureTokens, decodeTextReferencesForEditor } from './figureOps.ts';
 import { createTaxon, resolveDrafts, migrateLegacyTaxa, deleteTaxaAndSever, findTaxonByAnyName, relinkDraftsToExisting } from './taxonOps.ts';
+import { Selection } from './selection.ts';
 
 export const APP_NAME = 'TSKey';
 export const APP_VERSION = '0.0.2';
@@ -364,10 +365,14 @@ export function diagnoseKey(key: Couplet[], figures: Figure[]): Map<number, KeyV
     return diagnostics;
 }
 
+/** Which collection an in-progress edit is batching into (so consecutive edits of the
+ *  same kind share a history frame, but a couplet edit never merges with a figure one). */
+type EditScope = 'key' | 'figures' | 'taxa';
+
 export class KeyStore {
     private state: KeyDocument;
     private hasUncommittedChanges: boolean = false;
-    private editScope: string | null = null;
+    private editScope: EditScope | null = null;
     private persistedTitle: string = '';
     private activeProjectUid: string = newProjectUid();
     private onProjectPersisted?: (title: string) => void;
@@ -377,7 +382,11 @@ export class KeyStore {
     private readonly maxHistoryLimit: number;
     private savedDepth: number | null = 0;
 
-    private selectedCoupletIds: Set<number> = new Set();
+    // One selection per id-keyed collection (see Selection for the shared behaviour).
+    private readonly coupletSelection = new Selection();
+    private readonly figureSelection = new Selection();
+    private readonly taxonSelection = new Selection();
+
     private _draggedId: number | null = null;
     private activeCoupletId: number | null = null;
 
@@ -385,12 +394,6 @@ export class KeyStore {
     private clipboardBuffer: Couplet[] = [];
     private clipboardMode: 'copy' | 'cut' = 'copy';
     private cutIncomingLinksBuffer: CutLink[] = [];
-
-    // Figures
-    private selectedFigureIds: Set<number> = new Set();
-
-    // Taxa
-    private selectedTaxonIds: Set<number> = new Set();
 
     constructor(initialKey: Couplet[], initialFigures: Figure[] = [], initialTitle = 'Untitled Key', maxHistoryLimit = 100, initialTaxa: Taxon[] = []) {
         this.state = {
@@ -442,7 +445,7 @@ export class KeyStore {
     }
 
     public getSelectedCoupletIds(): ReadonlySet<number> {
-        return this.selectedCoupletIds;
+        return this.coupletSelection.get();
     }
 
     public setActiveCouplet(id: number | null) {
@@ -489,9 +492,9 @@ export class KeyStore {
         this.savedDepth = 0;
         this.hasUncommittedChanges = false;
         this.editScope = null;
-        this.selectedCoupletIds.clear();
-        this.selectedFigureIds.clear();
-        this.selectedTaxonIds.clear();
+        this.coupletSelection.clear();
+        this.figureSelection.clear();
+        this.taxonSelection.clear();
         this.activeCoupletId = null;
         this._draggedId = null;
     }
@@ -544,6 +547,18 @@ export class KeyStore {
 
         this.hasUncommittedChanges = false;
         this.editScope = null;
+    }
+
+    /**
+     * Opens a fresh history checkpoint for an edit in `scope`, unless we're already
+     * mid-edit on that same collection — so consecutive edits of one kind batch into
+     * a single undo frame, but a couplet edit never merges with a figure/taxon one.
+     */
+    private beginScopedEdit(scope: EditScope): void {
+        if (this.editScope !== scope) {
+            this.saveCheckpoint();
+        }
+        this.editScope = scope;
     }
 
     /** Reverts a pending cut back to a plain copy, dropping the severed-link buffer. */
@@ -648,12 +663,7 @@ export class KeyStore {
     }
 
     public updateCouplet(id: number, fields: Partial<Omit<Couplet, 'id'>>) {
-        // Open a fresh checkpoint unless we're already mid-edit on the key, so
-        // couplet edits batch together but never merge with a figure edit.
-        if (this.editScope !== 'key') {
-            this.saveCheckpoint();
-        }
-        this.editScope = 'key';
+        this.beginScopedEdit('key');
 
         const newKey = updateEntity(this.state.dichotomousKey, id, fields);
         if (!newKey) return;
@@ -726,15 +736,15 @@ export class KeyStore {
         this.state.dichotomousKey = key;
         this.cutIncomingLinksBuffer = severedLinks;
 
-        this.selectedCoupletIds = new Set();
+        this.coupletSelection.clear();
         this.hasUncommittedChanges = true;
     }
 
     public deleteSelectedCouplets() {
-        if (this.selectedCoupletIds.size === 0) return;
+        if (this.coupletSelection.size === 0) return;
         this.saveCheckpoint();
 
-        const removedIds = this.selectedCoupletIds;
+        const removedIds = new Set(this.coupletSelection.get());
 
         if (this.activeCoupletId !== null && removedIds.has(this.activeCoupletId)) {
             this.activeCoupletId = null;
@@ -742,7 +752,7 @@ export class KeyStore {
 
         this.state.dichotomousKey = deleteCoupletsOp(this.state.dichotomousKey, removedIds);
 
-        this.selectedCoupletIds = new Set();
+        this.coupletSelection.clear();
         this.hasUncommittedChanges = true;
     }
 
@@ -750,10 +760,10 @@ export class KeyStore {
     * Swaps alternative choices, target links, and taxa fields for all selected couplets.
     */
     public swapSelectedCouplets(): boolean {
-        if (this.selectedCoupletIds.size === 0) return false;
+        if (this.coupletSelection.size === 0) return false;
 
         this.saveCheckpoint();
-        const { key, modified } = swapCoupletsOp(this.state.dichotomousKey, this.selectedCoupletIds);
+        const { key, modified } = swapCoupletsOp(this.state.dichotomousKey, this.coupletSelection.get());
         this.state.dichotomousKey = key;
 
         if (modified) {
@@ -793,40 +803,32 @@ export class KeyStore {
     // ==========================================
 
     public getSelectedFigureIds(): ReadonlySet<number> {
-        return this.selectedFigureIds;
+        return this.figureSelection.get();
     }
 
     /**
      * Toggles a figure's selection state. Supports multi-select via Ctrl/Cmd/Shift modifiers.
      */
     public toggleFigureSelection(id: number, multiSelect: boolean) {
-        if (multiSelect) {
-            if (this.selectedFigureIds.has(id)) {
-                this.selectedFigureIds.delete(id);
-            } else {
-                this.selectedFigureIds.add(id);
-            }
-        } else {
-            this.selectedFigureIds = new Set([id]);
-        }
+        this.figureSelection.toggle(id, multiSelect);
     }
 
     public clearFigureSelection() {
-        this.selectedFigureIds.clear();
+        this.figureSelection.clear();
     }
 
     /**
      * Deletes all currently selected figures and saves an undo history checkpoint.
      */
     public deleteSelectedFigures() {
-        if (this.selectedFigureIds.size === 0) return;
+        if (this.figureSelection.size === 0) return;
 
         this.saveCheckpoint(); // Integrates directly with your Undo/Redo engine
 
-        this.state.figures = deleteEntities(this.state.figures, this.selectedFigureIds);
+        this.state.figures = deleteEntities(this.state.figures, this.figureSelection.get());
 
         // Clear the selection set
-        this.selectedFigureIds = new Set();
+        this.figureSelection.clear();
         this.hasUncommittedChanges = true;
     }
 
@@ -849,12 +851,7 @@ export class KeyStore {
     * Patches mutating attributes inside a targeting unique figure structure.
     */
     public updateFigure(id: number, fields: Partial<Omit<Figure, 'id'>>) {
-        // Open a fresh checkpoint unless we're already mid-edit on figures, so
-        // figure edits batch together but never merge with a couplet edit.
-        if (this.editScope !== 'figures') {
-            this.saveCheckpoint();
-        }
-        this.editScope = 'figures';
+        this.beginScopedEdit('figures');
 
         const newFigures = updateEntity(this.state.figures, id, fields);
         if (!newFigures) return;
@@ -889,36 +886,28 @@ export class KeyStore {
     // ==========================================
 
     public getSelectedTaxonIds(): ReadonlySet<number> {
-        return this.selectedTaxonIds;
+        return this.taxonSelection.get();
     }
 
     /** Toggles a taxon's selection; multiSelect adds/removes, otherwise selects only it. */
     public toggleTaxonSelection(id: number, multiSelect: boolean) {
-        if (multiSelect) {
-            if (this.selectedTaxonIds.has(id)) {
-                this.selectedTaxonIds.delete(id);
-            } else {
-                this.selectedTaxonIds.add(id);
-            }
-        } else {
-            this.selectedTaxonIds = new Set([id]);
-        }
+        this.taxonSelection.toggle(id, multiSelect);
     }
 
     public clearTaxonSelection() {
-        this.selectedTaxonIds.clear();
+        this.taxonSelection.clear();
     }
 
     /** Deletes selected taxa and severs any branch that pointed at one of them. */
     public deleteSelectedTaxa() {
-        if (this.selectedTaxonIds.size === 0) return;
+        if (this.taxonSelection.size === 0) return;
         this.saveCheckpoint();
 
-        const removedIds = this.selectedTaxonIds;
+        const removedIds = new Set(this.taxonSelection.get());
         this.state.taxa = deleteEntities(this.state.taxa, removedIds);
         this.state.dichotomousKey = deleteTaxaAndSever(this.state.dichotomousKey, removedIds).key;
 
-        this.selectedTaxonIds = new Set();
+        this.taxonSelection.clear();
         this.hasUncommittedChanges = true;
     }
 
@@ -934,25 +923,29 @@ export class KeyStore {
     }
 
     public updateTaxon(id: number, fields: Partial<Omit<Taxon, 'id'>>) {
-        // Batch consecutive taxon edits, but never merge with a couplet/figure edit.
-        if (this.editScope !== 'taxa') {
-            this.saveCheckpoint();
-        }
-        this.editScope = 'taxa';
+        this.beginScopedEdit('taxa');
 
         const next = updateEntity(this.state.taxa, id, fields);
         if (!next) return;
         this.state.taxa = next;
 
-        // A renamed (or freshly named) taxon may now match an unlinked draft in a
-        // lead — by either its scientific or vernacular name — so link those drafts
-        // to it so they don't stay amber.
-        if ('scientificName' in fields || 'vernacularName' in fields) {
-            const relinked = relinkDraftsToExisting(this.state.dichotomousKey, this.state.taxa);
-            if (relinked.changed) this.state.dichotomousKey = relinked.key;
-        }
-
         this.hasUncommittedChanges = true;
+    }
+
+    /**
+     * Links any lead's unlinked taxon draft to a taxon record whose scientific or
+     * vernacular name now matches (find, never create), so a renamed/freshly-named
+     * taxon adopts its waiting drafts. No checkpoint of its own — it folds into the
+     * current edit's history frame, so call it when a taxon-name edit settles (a
+     * typing pause or blur) rather than on every keystroke. Returns whether anything
+     * was relinked.
+     */
+    public relinkTaxonDrafts(): boolean {
+        const relinked = relinkDraftsToExisting(this.state.dichotomousKey, this.state.taxa);
+        if (!relinked.changed) return false;
+        this.state.dichotomousKey = relinked.key;
+        this.hasUncommittedChanges = true;
+        return true;
     }
 
     public reorderTaxa(srcIdx: number, targetIdx: number) {
@@ -1228,29 +1221,20 @@ export class KeyStore {
     // ==========================================
 
     public toggleSelection(id: number, multiSelect: boolean) {
-        if (multiSelect) {
-            if (this.selectedCoupletIds.has(id)) {
-                this.selectedCoupletIds.delete(id);
-            } else {
-                this.selectedCoupletIds.add(id);
-            }
-        } else {
-            this.selectedCoupletIds = new Set([id]);
-        }
+        this.coupletSelection.toggle(id, multiSelect);
     }
 
     public clearSelection(): void {
-        if (this.selectedCoupletIds.size === 0) return; // Optimize: don't trigger updates if already empty
-        this.selectedCoupletIds.clear();
+        if (this.coupletSelection.size === 0) return; // Optimize: don't trigger updates if already empty
+        this.coupletSelection.clear();
     }
 
-
     public setSelectionBatch(coupletIds: number[] | Set<number>): void {
-        this.selectedCoupletIds = new Set(coupletIds);
+        this.coupletSelection.replace(coupletIds);
     }
 
     public selectAll() {
-        this.selectedCoupletIds = new Set(this.state.dichotomousKey.map(c => c.id));
+        this.coupletSelection.replace(this.state.dichotomousKey.map(c => c.id));
     }
 
     // ==========================================
