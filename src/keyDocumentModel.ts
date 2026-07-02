@@ -66,8 +66,9 @@ export function renderAltSegments(segments: readonly AltSegment[], r: AltSegment
 // Matches both token forms in one pass: group 1 = stored id, group 2 = raw value.
 const FIG_TOKEN_REGEX = /\[figID:\s*(\d+)\s*\]|\[fig:\s*([^\]]+?)\s*\]/gi;
 
-/** Resolves a raw [fig: value] token: a 1-based display number or a filename → figure. */
-function resolveRawFigValue(
+/** Resolves a raw [fig: value] token: a 1-based display number or a filename → figure.
+ *  Exported so the rich-text editor's figure chips resolve identically to exports. */
+export function resolveRawFigValue(
     value: string,
     lookups: FigureLookups,
     figureCount: number

@@ -1,0 +1,57 @@
+/* editor/richText/richText.css
+   Styling for the hybrid rich-text editor. Uses the app's existing design tokens
+   (defined in src/style.css) so a mounted editor matches the surrounding UI. */
+
+.tsk-rte {
+    white-space: pre-wrap;        /* preserve spaces/newlines the source string carries */
+    word-break: break-word;
+    min-height: 2.4em;
+    padding: var(--space-sm, 8px) var(--space-md, 12px);
+    border: 1px solid var(--color-border, #cbd5e1);
+    border-radius: var(--radius-md, 6px);
+    background: var(--color-bg, #fff);
+    color: var(--color-text, #0f172a);
+    font-size: var(--text-base, 14px);
+    line-height: 1.5;
+    outline: none;
+    transition: var(--transition-base);
+}
+
+.tsk-rte:focus {
+    border-color: var(--color-primary, #4f46e5);
+    box-shadow: 0 0 0 3px var(--color-primary-light, #eef2ff);
+}
+
+/* Placeholder shown only while empty (the class is toggled by the editor). */
+.tsk-rte-empty::before {
+    content: attr(data-placeholder);
+    color: var(--color-text-muted, #475569);
+    pointer-events: none;
+}
+
+/* Figure-reference (and future token) chips: atomic, non-editable inline units. */
+.tsk-rte .tsk-chip {
+    display: inline-block;
+    padding: 0 6px;
+    margin: 0 1px;
+    border-radius: var(--radius-sm, 4px);
+    background: var(--color-primary-light, #eef2ff);
+    color: var(--color-primary-hover, #4338ca);
+    font-size: 0.9em;
+    font-weight: 600;
+    white-space: nowrap;
+    user-select: none;
+    cursor: default;
+}
+
+/* Unresolved / still-being-typed reference. */
+.tsk-rte .tsk-chip-broken {
+    background: var(--color-danger-light, #fee2e2);
+    color: var(--color-danger-hover, #dc2626);
+}
+
+.tsk-rte sub,
+.tsk-rte sup {
+    font-size: 0.75em;
+    line-height: 0;
+}
