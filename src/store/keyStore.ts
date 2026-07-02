@@ -807,9 +807,21 @@ export class KeyStore {
     }
 
     /**
+     * Clears every panel's selection except `keep`. Used so a plain (non-multi) click
+     * in one panel deselects cards in the others, leaving a single active selection
+     * across the whole app; a modifier click leaves the other panels untouched.
+     */
+    private clearSelectionsExcept(keep: Selection): void {
+        for (const selection of [this.coupletSelection, this.figureSelection, this.taxonSelection]) {
+            if (selection !== keep) selection.clear();
+        }
+    }
+
+    /**
      * Toggles a figure's selection state. Supports multi-select via Ctrl/Cmd/Shift modifiers.
      */
     public toggleFigureSelection(id: number, multiSelect: boolean) {
+        if (!multiSelect) this.clearSelectionsExcept(this.figureSelection);
         this.figureSelection.toggle(id, multiSelect);
     }
 
@@ -891,6 +903,7 @@ export class KeyStore {
 
     /** Toggles a taxon's selection; multiSelect adds/removes, otherwise selects only it. */
     public toggleTaxonSelection(id: number, multiSelect: boolean) {
+        if (!multiSelect) this.clearSelectionsExcept(this.taxonSelection);
         this.taxonSelection.toggle(id, multiSelect);
     }
 
@@ -1221,6 +1234,7 @@ export class KeyStore {
     // ==========================================
 
     public toggleSelection(id: number, multiSelect: boolean) {
+        if (!multiSelect) this.clearSelectionsExcept(this.coupletSelection);
         this.coupletSelection.toggle(id, multiSelect);
     }
 
