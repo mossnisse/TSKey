@@ -1,12 +1,12 @@
 // events/menuEvents.ts
 // Menu-bar command bindings: the File menu (new/save/import/export), the Edit/View/
 // Tools menu actions, and menu-bar mouse + keyboard navigation.
-import type { KeyStore } from '../store.ts';
+import type { KeyStore } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { batchedRefresh, refreshHubView } from './shared.ts';
 import { executePaste, createNewCoupletWithFocus } from './coupletEvents.ts';
 import { showToast } from '../uiRenderer.ts';
-import { workspaceStorage, activeObjectURLs } from '../db.ts';
+import { workspaceStorage, activeObjectURLs } from '../store';
 import { exportKeyToHTML } from '../exporters/htmlExporter.ts';
 import { exportKeyToLaTeX } from '../exporters/latexExporter.ts';
 import { exportKeyToPlainText } from '../exporters/plainTextExporter.ts';
@@ -246,23 +246,21 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
         openPlainTextImportDialog();
     }, { signal });
 
-    document.querySelector('#cmd-export-text')?.addEventListener('click', () => exportKeyToPlainText(store, uiState.leadFormat, uiState.showBackReference), { signal });
-    document.querySelector('#cmd-export-html')?.addEventListener('click', () => exportKeyToHTML(store, uiState.leadFormat, uiState.showBackReference), { signal });
-    document.querySelector('#cmd-export-latex')?.addEventListener('click', () => exportKeyToLaTeX(store, uiState.leadFormat, uiState.showBackReference), { signal });
+    document.querySelector('#cmd-export-text')?.addEventListener('click', () => exportKeyToPlainText(store, uiState.leadFormat, uiState.showBackReference, uiState.nameDisplayMode), { signal });
+    document.querySelector('#cmd-export-html')?.addEventListener('click', () => exportKeyToHTML(store, uiState.leadFormat, uiState.showBackReference, uiState.nameDisplayMode), { signal });
+    document.querySelector('#cmd-export-latex')?.addEventListener('click', () => exportKeyToLaTeX(store, uiState.leadFormat, uiState.showBackReference, uiState.nameDisplayMode), { signal });
 }
 
 /** Edit, View, and Tools menu command bindings (undo/redo, clipboard, toggles, auto-order). */
 export function setupEditMenu(store: KeyStore, uiState: UIStateStore, refreshAll: () => void, signal: AbortSignal) {
     // --- EDIT MENU ACTION BINDINGS ---
     document.querySelector('#cmd-undo')?.addEventListener('click', () => {
-        uiState.typing.couplets.clearTimer();
-        uiState.typing.figures.clearTimer();
+        uiState.typing.clearAll();
         if (store.undo()) batchedRefresh(refreshAll);
     }, { signal });
 
     document.querySelector('#cmd-redo')?.addEventListener('click', () => {
-        uiState.typing.couplets.clearTimer();
-        uiState.typing.figures.clearTimer();
+        uiState.typing.clearAll();
         if (store.redo()) batchedRefresh(refreshAll);
     }, { signal });
 
@@ -297,6 +295,14 @@ export function setupEditMenu(store: KeyStore, uiState: UIStateStore, refreshAll
     document.querySelector('#cmd-delete')?.addEventListener('click', () => {
         const selectedKeyCount = store.getSelectedCoupletIds().size;
         const selectedFigCount = store.getSelectedFigureIds().size;
+        const selectedTaxonCount = store.getSelectedTaxonIds().size;
+        if (selectedTaxonCount > 0) {
+            if (confirm("Confirm removing highlighted taxa? Any key leads pointing at them will be cleared.")) {
+                store.deleteSelectedTaxa();
+                showToast(`Deleted ${selectedTaxonCount} taxon(a).`, 'success');
+                batchedRefresh(refreshAll);
+            }
+        }
         if (selectedKeyCount > 0) {
             if (confirm("Confirm removing highlighted key steps?")) {
                 store.deleteSelectedCouplets();
@@ -338,6 +344,7 @@ export function setupEditMenu(store: KeyStore, uiState: UIStateStore, refreshAll
     document.querySelector('#cmd-clear')?.addEventListener('click', () => {
         store.clearSelection();
         store.clearFigureSelection();
+        store.clearTaxonSelection();
         batchedRefresh(refreshAll);
     }, { signal });
 
@@ -354,6 +361,11 @@ export function setupEditMenu(store: KeyStore, uiState: UIStateStore, refreshAll
 
     document.querySelector('#cmd-toggle-images')?.addEventListener('click', () => {
         uiState.toggleImages();
+        batchedRefresh(refreshAll);
+    }, { signal });
+
+    document.querySelector('#cmd-toggle-taxa')?.addEventListener('click', () => {
+        uiState.toggleTaxa();
         batchedRefresh(refreshAll);
     }, { signal });
 

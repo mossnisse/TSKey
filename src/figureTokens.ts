@@ -7,7 +7,7 @@
 //   [fig: value]  — an UNRESOLVED / user-typed reference that hasn't been encoded
 //                   yet. `value` is either a 1-based display number or a filename.
 
-import type { Figure } from './store.ts';
+import type { Figure } from './store/keyStore.ts';
 
 export const figIdTokenRegex = (): RegExp => /\[figID:\s*(\d+)\s*\]/gi;
 export const figRawTokenRegex = (): RegExp => /\[fig:\s*([^\]]+?)\s*\]/gi;

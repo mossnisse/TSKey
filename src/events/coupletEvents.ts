@@ -2,10 +2,12 @@
 // Editor key-card events: title rename, selection, text input, focus, and
 // drag-and-drop reordering — plus the paste / append-step helpers shared with the
 // menu and keyboard handlers.
-import type { KeyStore, Couplet } from '../store.ts';
+import type { KeyStore, Couplet } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { batchedRefresh, DEBOUNCE_TYPING_MS, setupCardDragReorder } from './shared.ts';
-import { resolveDestination, parseDestinationInput, buildIdToIndexMap } from '../utils.ts';
+import { resolveDestination, parseDestinationInput, buildIdToIndexMap, buildTaxaContext } from '../utils.ts';
+import { findTaxonByName } from '../store';
+import { scrollIntoViewAndFlash } from './navigationEvents.ts';
 import { showToast } from '../uiRenderer.ts';
 
 // The key-card whose field last gained focus — so the link highlight only refreshes
@@ -35,6 +37,26 @@ export function setupTitleEditing(store: KeyStore, refreshAll: () => void, signa
 export function setupCoupletSelection(keyContainer: HTMLElement, store: KeyStore, refreshAll: () => void, signal: AbortSignal) {
     keyContainer.addEventListener('click', (e: MouseEvent) => {
         const target = e.target as HTMLElement;
+
+        // Inline "＋ taxon": create the Taxa card for this lead's typed name and link it.
+        const createBtn = target.closest('.btn-create-taxon') as HTMLElement | null;
+        if (createBtn) {
+            const card = createBtn.closest('.key-card') as HTMLElement | null;
+            const forField = createBtn.getAttribute('data-for');
+            if (card && (forField === 'dest1' || forField === 'dest2')) {
+                const coupletId = Number(card.getAttribute('data-id'));
+                const branchField = forField === 'dest1' ? 'branch1' : 'branch2';
+                const newTaxonId = store.createTaxonForBranch(coupletId, branchField);
+                refreshAll(); // sync so the new card exists before we scroll to it
+                if (newTaxonId !== null) {
+                    const cardSelector = `.taxon-card[data-id="${newTaxonId}"]`;
+                    scrollIntoViewAndFlash(cardSelector);
+                    // Drop the user straight into the new card's first field to fill it in.
+                    (document.querySelector(`${cardSelector} input[data-field="scientificName"]`) as HTMLInputElement | null)?.focus();
+                }
+            }
+            return;
+        }
 
         // If the user clicked the editor background layout area itself, drop focus
         if (target.id === 'editor-container') {
@@ -88,7 +110,14 @@ export function setupCoupletInput(keyContainer: HTMLElement, store: KeyStore, ui
             const branchField = field === 'dest1' ? 'branch1' : 'branch2';
 
             // We parse using the current snapshot of the key array
-            updatePayload[branchField] = parseDestinationInput(currentValue, store.getKey());
+            let branch = parseDestinationInput(currentValue, store.getKey());
+            // Link to an existing taxon live as the typed name matches one (reliable,
+            // no timer); a non-matching name stays a draft until the user clicks create.
+            if (branch.kind === 'taxonDraft') {
+                const match = findTaxonByName(store.getTaxa(), branch.name);
+                if (match) branch = { kind: 'taxon', taxonId: match.id };
+            }
+            updatePayload[branchField] = branch;
         } else {
             updatePayload[field as CoupletStringField] = currentValue;
         }
@@ -116,9 +145,9 @@ export function setupCoupletInput(keyContainer: HTMLElement, store: KeyStore, ui
 
                 if (currentCouplet) {
                     const branch = field === 'dest1' ? currentCouplet.branch1 : currentCouplet.branch2;
-
                     const idToIndexMap = buildIdToIndexMap(updatedKey);
-                    const resolution = resolveDestination(branch, idToIndexMap);
+                    const taxaCtx = buildTaxaContext(store.getTaxa(), 'scientific');
+                    const resolution = resolveDestination(branch, idToIndexMap, taxaCtx);
 
                     target.classList.toggle('input-error', resolution.isUnresolved);
                 }

@@ -1,12 +1,14 @@
-import type { KeyStore } from '../store.ts';
-import { escapeHTML, buildIdToIndexMap, buildFigureIdToDisplayNumMap, triggerFileDownload, resolveDestination, sanitizeFilename, buildCoupletLeads, buildBackReferenceMap } from '../utils.ts';
-import type { DestinationResolution, LeadFormat } from '../utils.ts';
+import type { KeyStore } from '../store';
+import { escapeHTML, buildIdToIndexMap, buildFigureIdToDisplayNumMap, triggerFileDownload, resolveDestination, sanitizeFilename, buildCoupletLeads, buildBackReferenceMap, buildTaxaContext } from '../utils.ts';
+import type { DestinationResolution, LeadFormat, NameDisplayMode } from '../utils.ts';
 import { showToast } from '../uiRenderer.ts';
-import { workspaceStorage, blobToBase64 } from '../db.ts';
+import { workspaceStorage, blobToBase64 } from '../store';
+import { LIGHTBOX_CSS, LIGHTBOX_RUNTIME_JS } from './htmlLightboxAssets.ts';
 
 function destinationToHtml(dest: DestinationResolution): string {
     const escaped = escapeHTML(dest.printText);
-    if (dest.printClass === 'print-dest-taxon') {
+    // A linked taxon and a not-yet-created draft both export as the taxon name.
+    if (dest.printClass === 'print-dest-taxon' || dest.printClass === 'print-dest-taxon-unlinked') {
         return `<strong class="print-dest-taxon">${escaped}</strong>`;
     }
     if (dest.printClass === 'print-dest-strong') {
@@ -21,7 +23,7 @@ function destinationToHtml(dest: DestinationResolution): string {
 /**
  * Compiles the current KeyStore state into a single standalone static HTML document.
  */
-export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, showBackReference: boolean): Promise<void> {
+export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, showBackReference: boolean, nameMode: NameDisplayMode): Promise<void> {
     try {
         const projectUid = store.getActiveProjectUid();
         const key = store.getKey();
@@ -30,6 +32,8 @@ export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, s
         const idToIndexMap = buildIdToIndexMap(key);
         const idToDisplayNum = buildFigureIdToDisplayNumMap(figures);
         const backRefMap = showBackReference ? buildBackReferenceMap(key) : null;
+        const taxa = store.getTaxa();
+        const taxaCtx = buildTaxaContext(taxa, nameMode);
 
         // COMPILE GLOBAL FIGURES PANEL SIDEBAR (CONCURRENT PIPELINE)
         const figureCards = await Promise.all(
@@ -41,7 +45,8 @@ export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, s
                     const blob = await workspaceStorage.getFigureBinary(projectUid, fig.id);
                     if (blob) {
                         const base64Data = await blobToBase64(blob);
-                        imgTag = `<img class="print-fig-img" src="${base64Data}" alt="Figure ${displayNum}" />`;
+                        const captionLabel = escapeHTML(`Fig. ${displayNum}${fig.caption ? `: ${fig.caption}` : ''}`);
+                        imgTag = `<img class="print-fig-img" src="${base64Data}" alt="Figure ${displayNum}" data-caption="${captionLabel}" />`;
                     }
                 } catch (blobError) {
                     console.warn(`Could not resolve binary payload stream for figure ID ${fig.id}:`, blobError);
@@ -62,6 +67,9 @@ export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, s
 
         // COMPILE DICHOTOMOUS KEY COUPLERS
         let keyColumnMarkup = '';
+        // Widest lead across every couplet, so the lead column is one fixed width
+        // and all rows align regardless of back-references / step-number length.
+        let maxLeadLen = 0;
         if (key.length === 0) {
             keyColumnMarkup = `<p class="print-empty-notice">[The identification key is currently empty. Add couplets in the editor to populate this document.]</p>`;
         }
@@ -69,8 +77,8 @@ export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, s
             const c = key[index];
             const currentDisplayNum = index + 1;
 
-            const dest1 = resolveDestination(c.branch1, idToIndexMap);
-            const dest2 = resolveDestination(c.branch2, idToIndexMap);
+            const dest1 = resolveDestination(c.branch1, idToIndexMap, taxaCtx);
+            const dest2 = resolveDestination(c.branch2, idToIndexMap, taxaCtx);
 
             const end1 = destinationToHtml(dest1);
             const end2 = destinationToHtml(dest2);
@@ -79,6 +87,7 @@ export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, s
             const alt2 = store.resolveTextReferences(c.alt2, idToDisplayNum) || '___';
 
             const { lead1, lead2 } = buildCoupletLeads(leadFormat, currentDisplayNum, backRefMap?.get(c.id));
+            maxLeadLen = Math.max(maxLeadLen, lead1.length, lead2.length);
 
             keyColumnMarkup += `
             <div class="print-couplet" role="group" aria-label="Couplet ${currentDisplayNum}">
@@ -96,9 +105,42 @@ export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, s
             `;
         }
 
+        // COMPILE TAXA CHAPTERS — one block per taxon, in panel order; empty fields omitted.
+        let taxaMarkup = '';
+        if (taxa.length > 0) {
+            const nl2br = (s: string) => escapeHTML(s).replace(/\n/g, '<br>');
+            const field = (label: string, valueHtml: string) =>
+                `<p class="print-taxon-field"><strong>${label}:</strong> ${valueHtml}</p>`;
+
+            const entries = taxa.map(taxon => {
+                const sci = escapeHTML(taxon.scientificName || 'Untitled taxon');
+                const auctor = taxon.auctor ? ` <span class="print-taxon-auctor">${escapeHTML(taxon.auctor)}</span>` : '';
+                let block = `<div class="print-taxon"><h3 class="print-taxon-name"><em>${sci}</em>${auctor}</h3>`;
+
+                if (taxon.vernacularName) block += `<p class="print-taxon-field">${escapeHTML(taxon.vernacularName)}</p>`;
+                if (taxon.synonyms.length > 0) block += field('Synonyms', taxon.synonyms.map(s => `<em>${escapeHTML(s)}</em>`).join('; '));
+                if (taxon.description) block += field('Description', nl2br(taxon.description));
+                if (taxon.biology) block += field('Biology', nl2br(taxon.biology));
+                if (taxon.distribution) block += field('Distribution', nl2br(taxon.distribution));
+                if (taxon.confusables.length > 0) {
+                    const items = taxon.confusables
+                        .map(c => `<li><em>${escapeHTML(c.name)}</em>${c.distinction ? ` — ${escapeHTML(c.distinction)}` : ''}</li>`)
+                        .join('');
+                    block += `<div class="print-taxon-field"><strong>Confusable species:</strong><ul class="print-confusables">${items}</ul></div>`;
+                }
+
+                return block + `</div>`;
+            }).join('');
+
+            taxaMarkup = `<h2 class="print-taxa-heading">Taxa</h2>${entries}`;
+        }
+
         // GENERATE TARGET DOCUMENT STRUCTURE
         const hasFiguresClass = figures.length > 0 ? ' layout-has-figures' : '';
-        const htmlDocument = buildHTMLBoilerplate(title, keyColumnMarkup, figuresColumnMarkup, hasFiguresClass, leadFormat);
+        // `ch` slightly over-estimates for punctuation-heavy leads, which is fine — a
+        // touch of slack never clips. Floor keeps a sane column for short/empty keys.
+        const leadColWidth = `${Math.max(maxLeadLen, 3)}ch`;
+        const htmlDocument = buildHTMLBoilerplate(title, keyColumnMarkup, taxaMarkup, figuresColumnMarkup, hasFiguresClass, leadFormat, leadColWidth);
 
         triggerFileDownload(htmlDocument, sanitizeFilename(title, '.html'), 'text/html;charset=utf-8;');
 
@@ -111,12 +153,13 @@ export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, s
 /**
  * Isolated template wrapper providing core layout scaffolding styles.
  */
-function buildHTMLBoilerplate(title: string, keyContent: string, figuresContent: string, layoutClass: string, leadFormat: LeadFormat): string {
+function buildHTMLBoilerplate(title: string, keyContent: string, taxaContent: string, figuresContent: string, layoutClass: string, leadFormat: LeadFormat, leadColWidth: string): string {
     const safeTitle = escapeHTML(title);
     return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${safeTitle}</title>
   <style>
     :root {
@@ -209,11 +252,17 @@ function buildHTMLBoilerplate(title: string, keyContent: string, figuresContent:
         min-height: 0;
       }
     }
-    
-    .print-couplet { 
-      display: grid; 
-      grid-template-columns: auto 1fr; 
-      gap: 6px 10px; 
+
+    /* Phones: reclaim the heavy padding so the single column fills the screen. */
+    @media (max-width: 767px) {
+      .print-page-layout { padding: 12px; gap: 12px; }
+      .print-key-container { padding: 16px; }
+    }
+
+    .print-couplet {
+      display: grid;
+      grid-template-columns: var(--lead-col, 2.5em) 1fr;
+      gap: 6px 10px;
       align-items: start; 
       break-inside: avoid; 
       page-break-inside: avoid; 
@@ -259,7 +308,15 @@ function buildHTMLBoilerplate(title: string, keyContent: string, figuresContent:
     .print-dest-strong { font-weight: bold; color: var(--color-text); }
     .print-dest-taxon { font-weight: bold; font-style: italic; color: var(--color-text); }
     .error-text { font-weight: bold; color: #ef4444; }
-    
+
+    /* TAXA CHAPTERS */
+    .print-taxa-heading { font-family: serif; font-size: 20px; font-weight: bold; margin: 24px 0 12px; padding-top: 16px; border-top: 1px solid var(--color-border); }
+    .print-taxon { margin-bottom: 16px; break-inside: avoid; page-break-inside: avoid; }
+    .print-taxon-name { font-family: serif; font-size: 20px; margin: 0 0 4px 0; }
+    .print-taxon-auctor { font-weight: normal; font-size: 0.6em; color: var(--color-text-muted); }
+    .print-taxon-field { margin: 2px 0; font-size: 14px; line-height: 1.5; }
+    .print-confusables { margin: 2px 0; padding-left: 20px; }
+
     /* FIGURES SUB-ELEMENT PANELS */
     .print-fig-card {
       border: 1px solid var(--color-border-light);
@@ -283,20 +340,23 @@ function buildHTMLBoilerplate(title: string, keyContent: string, figuresContent:
       .print-key-container { border: none; padding: 0; box-shadow: none; height: auto; overflow: visible; }
       .print-fig-card { box-shadow: none; border-color: var(--color-border); }
     }
+${LIGHTBOX_CSS}
   </style>
 </head>
 <body>
-  <div class="print-page-layout${layoutClass}" data-lead-format="${leadFormat}">
+  <div class="print-page-layout${layoutClass}" data-lead-format="${leadFormat}" style="--lead-col: ${leadColWidth}">
     <div class="print-key-column">
       <div class="print-key-container">
         <h1 class="print-doc-title">${safeTitle}</h1>
         ${keyContent}
+        ${taxaContent}
       </div>
     </div>
     <div class="print-figures-column">
       ${figuresContent}
     </div>
   </div>
+  <script>${LIGHTBOX_RUNTIME_JS}</script>
 </body>
 </html>`;
 }

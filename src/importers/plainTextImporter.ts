@@ -13,12 +13,12 @@
 // A "Destination" is either a step number (→ link) or a taxon name (→ taxa).
 // "..." marks an empty destination and "___" marks an empty description.
 
-import type { Branch, Couplet, Figure, KeyStore } from '../store.ts';
+import type { Branch, Couplet, Figure, KeyStore } from '../store';
 import type { UIStateStore } from '../uiState.ts';
-import { APP_NAME, APP_VERSION, diagnoseKey } from '../store.ts';
+import { APP_NAME, APP_VERSION, diagnoseKey } from '../store';
 import { showToast } from '../uiRenderer.ts';
 import { escapeHTML } from '../utils.ts';
-import { workspaceStorage } from '../db.ts';
+import { workspaceStorage } from '../store';
 
 const EMPTY_ALT_TOKEN = '___';
 
@@ -309,7 +309,8 @@ function accToBranch(link: number, taxa: string, present: Set<number>): Branch {
     }
     const trimmed = taxa.trim();
     if (trimmed === '') return { kind: 'empty' };
-    return { kind: 'taxon', name: trimmed };
+    // Emit a draft; importJsonData's migration find-or-creates the taxon record.
+    return { kind: 'taxonDraft', name: trimmed };
 }
 
 /**
@@ -614,8 +615,12 @@ function renderPreviewHtml(result: PlainTextParseResult): string {
             }
             case 'unresolved':
                 return `→ ${branch.couplet}`;
-            case 'taxon':
+            // The parser only produces draft taxon branches; `taxon` (by id) can't
+            // appear here, but the switch stays exhaustive over the Branch union.
+            case 'taxonDraft':
                 return escapeHTML(branch.name);
+            case 'taxon':
+                return '→ taxon';
             case 'empty':
                 return '<span class="import-preview-muted">(empty)</span>';
         }

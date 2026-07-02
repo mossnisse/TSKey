@@ -1,15 +1,15 @@
 // plainTextExporter.ts
-import type { KeyStore } from '../store.ts';
+import type { KeyStore } from '../store';
 import { showToast } from '../uiRenderer.ts';
-import { resolveDestination, triggerFileDownload, buildIdToIndexMap, buildFigureIdToDisplayNumMap, sanitizeFilename, buildCoupletLeads, buildBackReferenceMap
+import { resolveDestination, triggerFileDownload, buildIdToIndexMap, buildFigureIdToDisplayNumMap, sanitizeFilename, buildCoupletLeads, buildBackReferenceMap, buildTaxaContext
 } from '../utils.ts';
-import type { LeadFormat } from '../utils.ts';
+import type { LeadFormat, NameDisplayMode } from '../utils.ts';
 
 /**
  * Compiles the dichotomous key into a tab-separated plain-text document,
  * fully resolving embedded figure references and appending a metadata block.
  */
-export function exportKeyToPlainText(store: KeyStore, leadFormat: LeadFormat, showBackReference: boolean): void {
+export function exportKeyToPlainText(store: KeyStore, leadFormat: LeadFormat, showBackReference: boolean, nameMode: NameDisplayMode): void {
     try {
         const key = store.getKey();
         const figures = store.getFigures();
@@ -17,6 +17,8 @@ export function exportKeyToPlainText(store: KeyStore, leadFormat: LeadFormat, sh
         const idToIndexMap = buildIdToIndexMap(key);
         const idToDisplayNum = buildFigureIdToDisplayNumMap(figures);
         const backRefMap = showBackReference ? buildBackReferenceMap(key) : null;
+        const taxa = store.getTaxa();
+        const taxaCtx = buildTaxaContext(taxa, nameMode);
         
         let content = '';
 
@@ -32,8 +34,8 @@ export function exportKeyToPlainText(store: KeyStore, leadFormat: LeadFormat, sh
             const currentDisplayNum = index + 1;
 
             // Resolve destinations (taxon name, step number, or '...' when empty)
-            const dest1 = resolveDestination(c.branch1, idToIndexMap).printText;
-            const dest2 = resolveDestination(c.branch2, idToIndexMap).printText;
+            const dest1 = resolveDestination(c.branch1, idToIndexMap, taxaCtx).printText;
+            const dest2 = resolveDestination(c.branch2, idToIndexMap, taxaCtx).printText;
 
             // Resolve figure shorthand macros (e.g. converting [figID: 101] to [fig: 1])
             const alt1Text = store.resolveTextReferences(c.alt1, idToDisplayNum) || '___';
@@ -44,6 +46,35 @@ export function exportKeyToPlainText(store: KeyStore, leadFormat: LeadFormat, sh
             content += `${lead1}\t${alt1Text}\t${dest1}\n`;
             content += `${lead2}\t${alt2Text}\t${dest2}\n\n`;
         });
+
+        // --- TAXA CHAPTERS ---
+        // One block per taxon record, in panel order. Empty fields are omitted so a
+        // sparsely-filled taxon stays compact.
+        if (taxa.length > 0) {
+            content += `========================================\n`;
+            content += `TAXA\n`;
+            content += `========================================\n\n`;
+
+            taxa.forEach((taxon, index) => {
+                const displayNum = index + 1;
+                const heading = taxon.scientificName || 'Untitled taxon';
+                content += `${displayNum}. ${heading}${taxon.auctor ? ' ' + taxon.auctor : ''}\n`;
+
+                if (taxon.vernacularName) content += `  Vernacular name: ${taxon.vernacularName}\n`;
+                if (taxon.synonyms.length > 0) content += `  Synonyms: ${taxon.synonyms.join('; ')}\n`;
+                if (taxon.description) content += `  Description: ${taxon.description}\n`;
+                if (taxon.biology) content += `  Biology: ${taxon.biology}\n`;
+                if (taxon.distribution) content += `  Distribution: ${taxon.distribution}\n`;
+                if (taxon.confusables.length > 0) {
+                    content += `  Confusable species:\n`;
+                    taxon.confusables.forEach(c => {
+                        content += `    - ${c.name}${c.distinction ? ` — ${c.distinction}` : ''}\n`;
+                    });
+                }
+
+                content += `\n`;
+            });
+        }
 
         // --- FIGURES DATA METADATA APPENDIX ---
         if (figures.length > 0) {

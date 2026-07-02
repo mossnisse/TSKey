@@ -2,11 +2,11 @@
 // Figure panel events (add, edit, image upload/removal, drag-and-drop) and the
 // figure-reference insertion tool. `isFigureTextarea` and `insertFigureReference`
 // are also used by the keyboard shortcut (Alt+F).
-import type { KeyStore } from '../store.ts';
+import type { KeyStore } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { batchedRefresh, DEBOUNCE_TYPING_MS, setupCardDragReorder } from './shared.ts';
 import { showToast } from '../uiRenderer.ts';
-import { workspaceStorage, activeObjectURLs } from '../db.ts';
+import { workspaceStorage, activeObjectURLs } from '../store';
 import { openImageLightbox } from '../ui/imageLightbox.ts';
 
 // Figure-reference insertion (key editor alt1/alt2 text only).

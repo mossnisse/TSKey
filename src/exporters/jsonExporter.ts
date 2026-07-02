@@ -1,7 +1,7 @@
 // exporters/jsonExporter.ts
-import { KeyStore, APP_NAME, APP_VERSION } from '../store.ts';
+import { KeyStore, APP_NAME, APP_VERSION } from '../store';
 import { triggerFileDownload, sanitizeFilename } from '../utils.ts';
-import { blobToBase64, workspaceStorage } from '../db.ts';
+import { blobToBase64, workspaceStorage } from '../store';
 import { showToast } from '../uiRenderer.ts';
 
 export async function exportKeyToJSON(store: KeyStore): Promise<void> {
@@ -34,7 +34,8 @@ export async function exportKeyToJSON(store: KeyStore): Promise<void> {
             data: {
                 title: store.getTitle(), // Embed title into the payload
                 key: store.getKey(),
-                figures: exportedFigures
+                figures: exportedFigures,
+                taxa: store.getTaxa()
             }
         };
 
