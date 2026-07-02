@@ -4,7 +4,7 @@
 // confusables) are serialized to text here; events/taxaEvents.ts parses them back.
 import type { KeyStore, Taxon, ConfusableSpecies } from '../store';
 import type { UIStateStore } from '../uiState.ts';
-import { syncField } from './shared.ts';
+import { syncField, reconcileCards } from './shared.ts';
 
 /** One synonym per line. */
 export function synonymsToText(synonyms: readonly string[]): string {
@@ -74,43 +74,31 @@ function syncTaxonCard(card: HTMLElement, taxon: Taxon, displayNum: number) {
     syncField(card, 'textarea[data-field="confusables"]', confusablesToText(taxon.confusables));
 }
 
+function createTaxonCard(taxon: Taxon): HTMLElement {
+    const block = document.createElement('div');
+    block.className = 'taxon-card';
+    block.setAttribute('data-id', taxon.id.toString());
+    block.draggable = true;
+    block.innerHTML = taxonCardMarkup();
+    return block;
+}
+
 export function renderTaxa(store: KeyStore, uiState: UIStateStore) {
     if (uiState.isTaxaHidden) return;
 
     const container = document.getElementById('taxa-container');
     if (!container) return;
 
-    const taxa = store.getTaxa();
     const selectedIds = store.getSelectedTaxonIds();
 
-    const existingBlocks = Array.from(container.children) as HTMLElement[];
-    const existingMap = new Map<number, HTMLElement>();
-    existingBlocks.forEach(block => {
-        const id = Number(block.getAttribute('data-id'));
-        if (!isNaN(id)) existingMap.set(id, block);
+    reconcileCards<Taxon>({
+        container,
+        items: store.getTaxa(),
+        getId: t => t.id,
+        create: createTaxonCard,
+        update: (block, taxon, index) => {
+            block.classList.toggle('is-selected', selectedIds.has(taxon.id));
+            syncTaxonCard(block, taxon, index + 1);
+        },
     });
-
-    taxa.forEach((taxon, index) => {
-        const displayNum = index + 1;
-        let block = existingMap.get(taxon.id);
-
-        if (!block) {
-            block = document.createElement('div');
-            block.className = 'taxon-card';
-            block.setAttribute('data-id', taxon.id.toString());
-            block.draggable = true;
-            block.innerHTML = taxonCardMarkup();
-        } else {
-            existingMap.delete(taxon.id);
-        }
-
-        if (container.children[index] !== block) {
-            container.insertBefore(block, container.children[index] || null);
-        }
-
-        block.classList.toggle('is-selected', selectedIds.has(taxon.id));
-        syncTaxonCard(block, taxon, displayNum);
-    });
-
-    existingMap.forEach(block => block.remove());
 }

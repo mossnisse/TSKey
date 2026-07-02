@@ -1,8 +1,9 @@
 // latexExporter.ts
 import type { KeyStore } from '../store';
-import { triggerFileDownload, resolveDestination, buildIdToIndexMap, buildFigureIdToDisplayNumMap, sanitizeFilename, buildCoupletLeads, buildBackReferenceMap, buildTaxaContext } from '../utils.ts';
-import type { LeadFormat, NameDisplayMode } from '../utils.ts';
-import { figIdTokenRegex } from '../figureTokens.ts';
+import { triggerFileDownload, sanitizeFilename } from '../utils.ts';
+import type { DestinationResolution, LeadFormat, NameDisplayMode } from '../utils.ts';
+import { buildKeyDocumentModel, renderAltSegments, taxonHeading } from '../keyDocumentModel.ts';
+import type { AltSegmentRenderer } from '../keyDocumentModel.ts';
 import { showToast } from '../uiRenderer.ts';
 
 /**
@@ -35,6 +36,15 @@ function latexLeadBox(lead: string, width: string): string {
     return `\\makebox[${width}][l]{\\textbf{${body}}}`;
 }
 
+// Resolves figure tokens the same way as the plain-text and HTML exporters: every
+// resolvable token (stored [figID: N] or raw [fig: value]) becomes an inline
+// (Fig.~N) citation, and an unresolvable one stays visible as [Broken Fig: …].
+const LATEX_ALT: AltSegmentRenderer = {
+    text: escapeLaTeX,
+    fig: seg => ` (Fig.~${seg.displayNum})`,
+    brokenFig: seg => `[Broken Fig: ${escapeLaTeX(seg.label)}]`,
+};
+
 /**
  * Compiles the current KeyStore state into a valid standalone LaTeX structure
  * using classic inline notation and dot leaders to prevent layout overlap.
@@ -42,31 +52,15 @@ function latexLeadBox(lead: string, width: string): string {
 export function exportKeyToLaTeX(store: KeyStore, leadFormat: LeadFormat, showBackReference: boolean, nameMode: NameDisplayMode): void {
 
     try {
-        const key = store.getKey();
-        const figures = store.getFigures();
-        const title = store.getTitle();
-        const idToIndexMap = buildIdToIndexMap(key);
-        const figureIdToDisplayNum = buildFigureIdToDisplayNumMap(figures);
-        const backRefMap = showBackReference ? buildBackReferenceMap(key) : null;
-        const taxa = store.getTaxa();
-        const taxaCtx = buildTaxaContext(taxa, nameMode);
+        const model = buildKeyDocumentModel(store, { leadFormat, showBackReference, nameMode });
+        const { title, taxa, figures } = model;
         // The back-reference widens the lead ("2 (1)"), so give the fixed box and
         // matching hang-indent extra room to avoid overprinting the diagnosis text.
         const leadWidth = showBackReference ? '4.5em' : '2.5em';
 
-        // Converts stored [figID: N] tokens in already-escaped text into inline (Fig.~N)
-        // citations. Escaping leaves the digit-only tokens intact for this pass.
-        const figIdRegex = figIdTokenRegex();
-        const resolveFigCitations = (escapedText: string): string =>
-            escapedText.replace(figIdRegex, (match, idStr) => {
-                const id = parseInt(idStr, 10);
-                const displayNum = figureIdToDisplayNum.get(id);
-                return displayNum !== undefined ? ` (Fig.~${displayNum})` : match;
-            });
-
         let mainContent = '';
 
-        if (key.length === 0) {
+        if (model.isEmpty) {
             mainContent = `
 \\begin{center}
   \\vspace*{2cm}
@@ -75,31 +69,25 @@ export function exportKeyToLaTeX(store: KeyStore, leadFormat: LeadFormat, showBa
         } else {
             let bodyContent = '';
 
+            // Render a destination: italic-bold taxon name (linked record or draft
+            // alike), bold step number, or \dots when the branch is empty/broken.
+            const renderEnd = (dest: DestinationResolution): string => {
+                switch (dest.kind) {
+                    case 'taxon': return `\\mbox{\\textbf{\\textit{${escapeLaTeX(dest.printText)}}}}`;
+                    case 'step': return `\\mbox{\\textbf{${escapeLaTeX(dest.printText)}}}`;
+                    default: return `\\dots`;
+                }
+            };
+
             // --- KEY COUPLETS LOOP ---
-            key.forEach((c, index) => {
-                const currentDisplayNum = index + 1;
+            model.couplets.forEach(c => {
+                const end1 = renderEnd(c.dest1);
+                const end2 = renderEnd(c.dest2);
 
-                // Render a destination: italic-bold taxon name, bold step number,
-                // or \dots when the branch is empty/broken.
-                const renderEnd = (dest: ReturnType<typeof resolveDestination>): string => {
-                    // A linked taxon and a not-yet-created draft both render as the name.
-                    if (dest.printClass === 'print-dest-taxon' || dest.printClass === 'print-dest-taxon-unlinked') {
-                        return `\\mbox{\\textbf{\\textit{${escapeLaTeX(dest.printText)}}}}`;
-                    }
-                    if (dest.printClass === 'print-dest-strong') {
-                        return `\\mbox{\\textbf{${escapeLaTeX(dest.printText)}}}`;
-                    }
-                    return `\\dots`;
-                };
+                const alt1Text = renderAltSegments(c.alt1, LATEX_ALT);
+                const alt2Text = renderAltSegments(c.alt2, LATEX_ALT);
 
-                const end1 = renderEnd(resolveDestination(c.branch1, idToIndexMap, taxaCtx));
-                const end2 = renderEnd(resolveDestination(c.branch2, idToIndexMap, taxaCtx));
-
-                // Escape text first, then convert [figID: N] tokens into inline (Fig.~N) citations.
-                const alt1Text = resolveFigCitations(escapeLaTeX(c.alt1));
-                const alt2Text = resolveFigCitations(escapeLaTeX(c.alt2));
-
-                const { lead1, lead2 } = buildCoupletLeads(leadFormat, currentDisplayNum, backRefMap?.get(c.id));
+                const { lead1, lead2 } = c;
 
                 // Structural formatting utilizing flexible dot-fill constraints to auto-align right boundaries
                 bodyContent += `{\\interlinepenalty=10000\n`;
@@ -161,7 +149,7 @@ ${bodyContent}
                 `\\noindent\\textbf{${label}:} ${escapeLaTeX(value)}\\par\n`;
 
             taxa.forEach(taxon => {
-                const sci = escapeLaTeX(taxon.scientificName || 'Untitled taxon');
+                const sci = escapeLaTeX(taxonHeading(taxon));
                 
                 // Auctor renders in a smaller size than the scientific name.
                 const auctor = taxon.auctor ? ` {\\small ${escapeLaTeX(taxon.auctor)}}` : '';

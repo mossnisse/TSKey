@@ -1,23 +1,29 @@
 import type { KeyStore } from '../store';
-import { escapeHTML, buildIdToIndexMap, buildFigureIdToDisplayNumMap, triggerFileDownload, resolveDestination, sanitizeFilename, buildCoupletLeads, buildBackReferenceMap, buildTaxaContext } from '../utils.ts';
+import { escapeHTML, triggerFileDownload, sanitizeFilename } from '../utils.ts';
 import type { DestinationResolution, LeadFormat, NameDisplayMode } from '../utils.ts';
+import { buildKeyDocumentModel, renderAltSegments, taxonHeading } from '../keyDocumentModel.ts';
+import type { AltSegmentRenderer } from '../keyDocumentModel.ts';
 import { showToast } from '../uiRenderer.ts';
 import { workspaceStorage, blobToBase64 } from '../store';
 import { LIGHTBOX_CSS, LIGHTBOX_RUNTIME_JS } from './htmlLightboxAssets.ts';
 
+// Figure tokens resolve to plain "(Fig. N)" text (the static export doesn't link
+// them); literal text and any broken-token label are HTML-escaped.
+const HTML_ALT: AltSegmentRenderer = {
+    text: escapeHTML,
+    fig: seg => `(Fig. ${seg.displayNum})`,
+    brokenFig: seg => `[Broken Fig: ${escapeHTML(seg.label)}]`,
+};
+
 function destinationToHtml(dest: DestinationResolution): string {
     const escaped = escapeHTML(dest.printText);
-    // A linked taxon and a not-yet-created draft both export as the taxon name.
-    if (dest.printClass === 'print-dest-taxon' || dest.printClass === 'print-dest-taxon-unlinked') {
-        return `<strong class="print-dest-taxon">${escaped}</strong>`;
+    switch (dest.kind) {
+        // A linked taxon and a not-yet-created draft both export as the taxon name.
+        case 'taxon': return `<strong class="print-dest-taxon">${escaped}</strong>`;
+        case 'step': return `<strong class="print-dest-strong">${escaped}</strong>`;
+        case 'broken': return `<span class="error-text">${escaped}</span>`;
+        case 'empty': return `<span>${escaped}</span>`;
     }
-    if (dest.printClass === 'print-dest-strong') {
-        return `<strong class="print-dest-strong">${escaped}</strong>`;
-    }
-    if (dest.printClass === 'error-text') {
-        return `<span class="error-text">${escaped}</span>`;
-    }
-    return `<span>${escaped}</span>`;
 }
 
 /**
@@ -26,14 +32,8 @@ function destinationToHtml(dest: DestinationResolution): string {
 export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, showBackReference: boolean, nameMode: NameDisplayMode): Promise<void> {
     try {
         const projectUid = store.getActiveProjectUid();
-        const key = store.getKey();
-        const figures = store.getFigures();
-        const title = store.getTitle();
-        const idToIndexMap = buildIdToIndexMap(key);
-        const idToDisplayNum = buildFigureIdToDisplayNumMap(figures);
-        const backRefMap = showBackReference ? buildBackReferenceMap(key) : null;
-        const taxa = store.getTaxa();
-        const taxaCtx = buildTaxaContext(taxa, nameMode);
+        const model = buildKeyDocumentModel(store, { leadFormat, showBackReference, nameMode });
+        const { title, taxa, figures } = model;
 
         // COMPILE GLOBAL FIGURES PANEL SIDEBAR (CONCURRENT PIPELINE)
         const figureCards = await Promise.all(
@@ -70,35 +70,31 @@ export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, s
         // Widest lead across every couplet, so the lead column is one fixed width
         // and all rows align regardless of back-references / step-number length.
         let maxLeadLen = 0;
-        if (key.length === 0) {
+        if (model.isEmpty) {
             keyColumnMarkup = `<p class="print-empty-notice">[The identification key is currently empty. Add couplets in the editor to populate this document.]</p>`;
         }
-        for (let index = 0; index < key.length; index++) {
-            const c = key[index];
-            const currentDisplayNum = index + 1;
+        for (const c of model.couplets) {
+            const end1 = destinationToHtml(c.dest1);
+            const end2 = destinationToHtml(c.dest2);
 
-            const dest1 = resolveDestination(c.branch1, idToIndexMap, taxaCtx);
-            const dest2 = resolveDestination(c.branch2, idToIndexMap, taxaCtx);
+            // Figure tokens are already resolved to escaped "(Fig. N)" text by the
+            // renderer, so the alt strings must NOT be escaped again here.
+            const alt1 = renderAltSegments(c.alt1, HTML_ALT) || '___';
+            const alt2 = renderAltSegments(c.alt2, HTML_ALT) || '___';
 
-            const end1 = destinationToHtml(dest1);
-            const end2 = destinationToHtml(dest2);
-
-            const alt1 = store.resolveTextReferences(c.alt1, idToDisplayNum) || '___';
-            const alt2 = store.resolveTextReferences(c.alt2, idToDisplayNum) || '___';
-
-            const { lead1, lead2 } = buildCoupletLeads(leadFormat, currentDisplayNum, backRefMap?.get(c.id));
+            const { lead1, lead2 } = c;
             maxLeadLen = Math.max(maxLeadLen, lead1.length, lead2.length);
 
             keyColumnMarkup += `
-            <div class="print-couplet" role="group" aria-label="Couplet ${currentDisplayNum}">
+            <div class="print-couplet" role="group" aria-label="Couplet ${c.displayNum}">
                 <div class="print-step-num">${escapeHTML(lead1)}</div>
                 <div class="print-row">
-                  <span class="print-text">${escapeHTML(alt1)}</span>
+                  <span class="print-text">${alt1}</span>
                   <span class="print-dest">${end1}</span>
                 </div>
                 <div class="print-dash">${escapeHTML(lead2)}</div>
                 <div class="print-row">
-                  <span class="print-text">${escapeHTML(alt2)}</span>
+                  <span class="print-text">${alt2}</span>
                   <span class="print-dest">${end2}</span>
                 </div>
             </div>
@@ -113,7 +109,7 @@ export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, s
                 `<p class="print-taxon-field"><strong>${label}:</strong> ${valueHtml}</p>`;
 
             const entries = taxa.map(taxon => {
-                const sci = escapeHTML(taxon.scientificName || 'Untitled taxon');
+                const sci = escapeHTML(taxonHeading(taxon));
                 const auctor = taxon.auctor ? ` <span class="print-taxon-auctor">${escapeHTML(taxon.auctor)}</span>` : '';
                 let block = `<div class="print-taxon"><h3 class="print-taxon-name"><em>${sci}</em>${auctor}</h3>`;
 

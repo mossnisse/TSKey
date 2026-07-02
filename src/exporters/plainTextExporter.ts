@@ -1,9 +1,18 @@
 // plainTextExporter.ts
 import type { KeyStore } from '../store';
 import { showToast } from '../uiRenderer.ts';
-import { resolveDestination, triggerFileDownload, buildIdToIndexMap, buildFigureIdToDisplayNumMap, sanitizeFilename, buildCoupletLeads, buildBackReferenceMap, buildTaxaContext
-} from '../utils.ts';
+import { triggerFileDownload, sanitizeFilename } from '../utils.ts';
 import type { LeadFormat, NameDisplayMode } from '../utils.ts';
+import { buildKeyDocumentModel, renderAltSegments, taxonHeading } from '../keyDocumentModel.ts';
+import type { AltSegmentRenderer } from '../keyDocumentModel.ts';
+
+// Figure tokens resolve to plain "(Fig. N)"; unresolvable ones stay visible as
+// "[Broken Fig: …]" so the omission is obvious in the exported text.
+const PLAIN_ALT: AltSegmentRenderer = {
+    text: value => value,
+    fig: seg => `(Fig. ${seg.displayNum})`,
+    brokenFig: seg => `[Broken Fig: ${seg.label}]`,
+};
 
 /**
  * Compiles the dichotomous key into a tab-separated plain-text document,
@@ -11,40 +20,25 @@ import type { LeadFormat, NameDisplayMode } from '../utils.ts';
  */
 export function exportKeyToPlainText(store: KeyStore, leadFormat: LeadFormat, showBackReference: boolean, nameMode: NameDisplayMode): void {
     try {
-        const key = store.getKey();
-        const figures = store.getFigures();
+        const model = buildKeyDocumentModel(store, { leadFormat, showBackReference, nameMode });
+        const { taxa, figures } = model;
 
-        const idToIndexMap = buildIdToIndexMap(key);
-        const idToDisplayNum = buildFigureIdToDisplayNumMap(figures);
-        const backRefMap = showBackReference ? buildBackReferenceMap(key) : null;
-        const taxa = store.getTaxa();
-        const taxaCtx = buildTaxaContext(taxa, nameMode);
-        
         let content = '';
 
         // --- KEY TITLE ---
-        content += `${store.getTitle()}\n\n`;
+        content += `${model.title}\n\n`;
 
         // --- DICHOTOMOUS KEY COUPLETS ---
-        if (key.length === 0) {
+        if (model.isEmpty) {
             content += `[The identification key is currently empty. Add key steps in the editor to populate this document.]\n\n`;
         }
 
-        key.forEach((c, index) => {
-            const currentDisplayNum = index + 1;
+        model.couplets.forEach(c => {
+            const alt1Text = renderAltSegments(c.alt1, PLAIN_ALT) || '___';
+            const alt2Text = renderAltSegments(c.alt2, PLAIN_ALT) || '___';
 
-            // Resolve destinations (taxon name, step number, or '...' when empty)
-            const dest1 = resolveDestination(c.branch1, idToIndexMap, taxaCtx).printText;
-            const dest2 = resolveDestination(c.branch2, idToIndexMap, taxaCtx).printText;
-
-            // Resolve figure shorthand macros (e.g. converting [figID: 101] to [fig: 1])
-            const alt1Text = store.resolveTextReferences(c.alt1, idToDisplayNum) || '___';
-            const alt2Text = store.resolveTextReferences(c.alt2, idToDisplayNum) || '___';
-
-            // Append lines to document
-            const { lead1, lead2 } = buildCoupletLeads(leadFormat, currentDisplayNum, backRefMap?.get(c.id));
-            content += `${lead1}\t${alt1Text}\t${dest1}\n`;
-            content += `${lead2}\t${alt2Text}\t${dest2}\n\n`;
+            content += `${c.lead1}\t${alt1Text}\t${c.dest1.printText}\n`;
+            content += `${c.lead2}\t${alt2Text}\t${c.dest2.printText}\n\n`;
         });
 
         // --- TAXA CHAPTERS ---
@@ -57,8 +51,7 @@ export function exportKeyToPlainText(store: KeyStore, leadFormat: LeadFormat, sh
 
             taxa.forEach((taxon, index) => {
                 const displayNum = index + 1;
-                const heading = taxon.scientificName || 'Untitled taxon';
-                content += `${displayNum}. ${heading}${taxon.auctor ? ' ' + taxon.auctor : ''}\n`;
+                content += `${displayNum}. ${taxonHeading(taxon)}${taxon.auctor ? ' ' + taxon.auctor : ''}\n`;
 
                 if (taxon.vernacularName) content += `  Vernacular name: ${taxon.vernacularName}\n`;
                 if (taxon.synonyms.length > 0) content += `  Synonyms: ${taxon.synonyms.join('; ')}\n`;
@@ -94,8 +87,8 @@ export function exportKeyToPlainText(store: KeyStore, leadFormat: LeadFormat, sh
         }
 
         // Forward to the unified browser file system download thread
-        triggerFileDownload(content, sanitizeFilename(store.getTitle(), '.txt'), 'text/plain;charset=utf-8;');
-        
+        triggerFileDownload(content, sanitizeFilename(model.title, '.txt'), 'text/plain;charset=utf-8;');
+
     } catch (error) {
         console.error('Plain Text Export system failure:', error);
         showToast('❌ An unexpected error disrupted the plain text document generation pipeline.', 'error');

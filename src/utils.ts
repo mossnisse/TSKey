@@ -225,7 +225,16 @@ export function buildFigureIdToDisplayNumMap(figures: readonly Figure[]): Map<nu
 /**
  * functions for handling Destination links
  */
+/**
+ * Semantic classification of a resolved destination, independent of presentation.
+ * Exporters switch on this rather than on `printClass` (a CSS detail): a `taxon`
+ * covers both a linked record and a not-yet-created draft; `broken` covers a dead
+ * link, an unresolved step number, and a missing taxon.
+ */
+export type DestinationKind = 'step' | 'taxon' | 'broken' | 'empty';
+
 export interface DestinationResolution {
+    kind: DestinationKind;     // Semantic classification for exporters (see above)
     inputValue: string;        // Raw text to bind inside edit input boxes
     printText: string;         // Formatted layout text for the publication panel
     printClass: string;        // Target CSS class mapping for styles/errors
@@ -273,16 +282,16 @@ export function resolveDestination(branch: Branch, idToIndexMap: Map<number, num
             const index = idToIndexMap.get(branch.targetId);
             if (index !== undefined) {
                 const stepNumStr = (index + 1).toString();
-                return { inputValue: stepNumStr, printText: stepNumStr, printClass: 'print-dest-strong', isUnresolved: false };
+                return { kind: 'step', inputValue: stepNumStr, printText: stepNumStr, printClass: 'print-dest-strong', isUnresolved: false };
             }
             // Broken: the pointer exists but the target card was deleted
-            return { inputValue: '?', printText: '?', printClass: 'error-text', isUnresolved: true };
+            return { kind: 'broken', inputValue: '?', printText: '?', printClass: 'error-text', isUnresolved: true };
         }
 
         // A step number was typed before that step exists
         case 'unresolved': {
             const stepStr = branch.couplet.toString();
-            return { inputValue: stepStr, printText: stepStr, printClass: 'error-text', isUnresolved: true };
+            return { kind: 'broken', inputValue: stepStr, printText: stepStr, printClass: 'error-text', isUnresolved: true };
         }
 
         // Normalized reference to a taxon record (by id).
@@ -290,9 +299,10 @@ export function resolveDestination(branch: Branch, idToIndexMap: Map<number, num
             const taxon = taxaCtx?.byId.get(branch.taxonId);
             if (!taxon) {
                 // Referenced record is gone (deleted) — flag it like a broken link.
-                return { inputValue: '', printText: '[missing taxon]', printClass: 'error-text', isUnresolved: true };
+                return { kind: 'broken', inputValue: '', printText: '[missing taxon]', printClass: 'error-text', isUnresolved: true };
             }
             return {
+                kind: 'taxon',
                 inputValue: taxon.scientificName,
                 printText: displayTaxonName(taxon, taxaCtx!.nameMode),
                 printClass: 'print-dest-taxon',
@@ -303,11 +313,11 @@ export function resolveDestination(branch: Branch, idToIndexMap: Map<number, num
         // A typed taxon name that doesn't (yet) match a taxon record. Shown amber
         // with a "create" affordance; not an error, just not linked yet.
         case 'taxonDraft':
-            return { inputValue: branch.name, printText: branch.name, printClass: 'print-dest-taxon-unlinked', isUnresolved: false, isUnlinkedTaxon: true };
+            return { kind: 'taxon', inputValue: branch.name, printText: branch.name, printClass: 'print-dest-taxon-unlinked', isUnresolved: false, isUnlinkedTaxon: true };
 
         // Nothing entered yet
         case 'empty':
-            return { inputValue: '', printText: '...', printClass: '', isUnresolved: false };
+            return { kind: 'empty', inputValue: '', printText: '...', printClass: '', isUnresolved: false };
     }
 }
 
