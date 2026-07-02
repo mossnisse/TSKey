@@ -18,7 +18,7 @@ import { orderFiguresByReference, resolveTextReferences, encodeFigureTokens, dec
 import { createTaxon, resolveDrafts, migrateLegacyTaxa, deleteTaxaAndSever, findTaxonByName, relinkDraftsToExisting } from './taxonOps.ts';
 
 export const APP_NAME = 'TSKey';
-export const APP_VERSION = '0.0.1';
+export const APP_VERSION = '0.0.2';
 
 /** Stable, rename-proof project identity used to key figure blobs in storage. */
 function newProjectUid(): string {
