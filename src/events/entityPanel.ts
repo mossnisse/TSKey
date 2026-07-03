@@ -42,6 +42,12 @@ export interface EntityPanelConfig {
      * moved to another panel control (e.g. taxa relinking a lead's draft).
      */
     onSettle?: () => boolean;
+    /**
+     * Optional: runs when a specific field's edit settles (typing pause / blur), for
+     * per-field commit work the delegated input path doesn't do — e.g. encoding figure
+     * tokens in a mounted rich-text field. `field` is the settling field's data-field.
+     */
+    settleField?: (id: number, field: string) => void;
     /** Optional: handle a click before selection logic; return true if it was handled. */
     extraClick?: (target: HTMLElement, e: MouseEvent) => boolean;
     /**
@@ -61,7 +67,7 @@ export function setupEntityPanel(config: EntityPanelConfig): void {
     const {
         container, cardSelector, addButton, fieldKeyPrefix, typing, signal, refreshAll,
         onAdd, endTypingSession, buildUpdate, applyUpdate, toggleSelection, clearSelection,
-        getItems, reorder, onSettle, extraClick, keepFocusWithin = [],
+        getItems, reorder, onSettle, settleField, extraClick, keepFocusWithin = [],
     } = config;
 
     addButton?.addEventListener('click', () => {
@@ -111,7 +117,7 @@ export function setupEntityPanel(config: EntityPanelConfig): void {
 
         // Clicking into a field selects the card (without stealing the click) only
         // when it isn't already selected.
-        if (target.closest('input, textarea')) {
+        if (target.closest('input, textarea, .rte-host')) {
             if (!card.classList.contains('is-selected')) {
                 toggleSelection(id, multiSelect);
                 batchedRefresh(refreshAll);
@@ -126,7 +132,7 @@ export function setupEntityPanel(config: EntityPanelConfig): void {
     // --- Focus-settle refresh ---
     container.addEventListener('focusout', (e: FocusEvent) => {
         const target = e.target as HTMLElement;
-        if (!target.matches('input, textarea')) return;
+        if (!target.matches('input, textarea, .rte-host')) return;
         const card = target.closest(cardSelector) as HTMLElement | null;
         if (!card) return;
 
@@ -135,6 +141,9 @@ export function setupEntityPanel(config: EntityPanelConfig): void {
         const fieldKey = id && field ? `${fieldKeyPrefix}-${id}-${field}` : null;
 
         typing.end(fieldKey, () => {
+            // Per-field settle work (e.g. encoding figure tokens) before the panel-wide
+            // settle, since blur cancels the debounced encode in the field's onChange.
+            if (field) settleField?.(id, field);
             const settled = onSettle?.() ?? false;
 
             const destination = e.relatedTarget as HTMLElement | null;

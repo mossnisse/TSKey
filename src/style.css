@@ -645,6 +645,89 @@ html, body {
     field-sizing: content;
 }
 
+/* ==========================================
+   RICH-TEXT FIELDS (mounted editors)
+   ==========================================
+   Mounted RichTextEditor hosts carry both `.rte-host` (app hook) and `.tsk-rte`
+   (editor's own class, from richText.css). The rules below override the editor's
+   default boxed look so each field blends with the plain fields around it. */
+
+/* Couplet alt1/alt2 and figure caption: the underline look shared by card fields. */
+.card-rte.tsk-rte,
+.figure-card .figure-input-caption.tsk-rte {
+    flex: 1;
+    min-height: 24px;
+    padding: 2px 0;
+    border: none;
+    border-bottom: 1px solid var(--color-border-light);
+    border-radius: 0;
+    background: transparent;
+    font-weight: 500;
+    transition: var(--transition-base);
+}
+.card-rte.tsk-rte:focus,
+.figure-card .figure-input-caption.tsk-rte:focus {
+    box-shadow: none;
+    border-bottom-color: var(--color-primary);
+}
+
+/* Taxa description: the boxed look its sibling taxa textareas use. */
+.taxon-rte.tsk-rte {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: calc(1.4em * 3 + var(--space-sm) * 2);
+    padding: var(--space-xs) var(--space-sm);
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    line-height: 1.4;
+}
+.taxon-rte.tsk-rte:focus {
+    box-shadow: none;
+    border-color: var(--color-primary);
+}
+
+/* Floating formatting toolbar (ui/formatToolbar.ts). */
+.format-toolbar {
+    position: fixed;
+    z-index: 1200;
+    display: flex;
+    gap: 2px;
+    padding: 3px;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+.format-toolbar button {
+    min-width: 28px;
+    height: 26px;
+    padding: 0 6px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--color-text);
+    font-size: var(--text-sm);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.format-toolbar button:hover {
+    background: var(--color-primary-light);
+    color: var(--color-primary-hover);
+}
+
+/* Header row for the figure-reference picker popover. */
+.popover-header {
+    padding: 4px 10px 6px;
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--color-text-muted);
+    border-bottom: 1px solid var(--color-border-light);
+    margin-bottom: 4px;
+}
+
 .figure-preview-wrapper {
     position: relative;
     width: 100%;

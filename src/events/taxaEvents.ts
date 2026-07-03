@@ -5,9 +5,44 @@
 import type { KeyStore, Taxon, ConfusableSpecies } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { setupEntityPanel } from './entityPanel.ts';
+import { batchedRefresh, DEBOUNCE_TYPING_MS } from './shared.ts';
 
-/** Plain string fields editable directly as input/textarea values. */
+/** Plain string fields editable directly as input/textarea values. The `description`
+ *  field is edited in a mounted rich-text editor (see ui/taxa.ts + commitTaxonRichField),
+ *  so it is committed there rather than through the delegated input path. */
 const SIMPLE_FIELDS = new Set<keyof Taxon>(['scientificName', 'auctor', 'vernacularName', 'description', 'biology', 'distribution']);
+
+/** Encodes any complete [fig: N] tokens in a taxon's description to stable [figID: N]. */
+export function encodeTaxonDescription(store: KeyStore, id: number): void {
+    const taxon = store.getTaxa().find(t => t.id === id);
+    if (!taxon) return;
+    const encoded = store.encodeFigureTokens(taxon.description);
+    if (encoded !== taxon.description) store.updateTaxon(id, { description: encoded });
+}
+
+/**
+ * Commits a rich-text description edit: immediate store sync + undo checkpoint, then a
+ * debounced figure-token encode, draft relink, and refresh. Wired to the mounted
+ * editor's onChange; blur-time encoding runs via the panel's settleField hook.
+ */
+export function commitTaxonRichField(
+    store: KeyStore,
+    uiState: UIStateStore,
+    refreshAll: () => void,
+    id: number,
+    field: 'description',
+    value: string,
+) {
+    const fieldKey = `taxon-${id}-${field}`;
+    uiState.typing.taxa.start(fieldKey, () => store.endTypingSession());
+    store.updateTaxon(id, { [field]: value } as Partial<Omit<Taxon, 'id'>>);
+
+    uiState.typing.taxa.extendTimeout(DEBOUNCE_TYPING_MS, () => {
+        encodeTaxonDescription(store, id);
+        store.relinkTaxonDrafts();
+        batchedRefresh(refreshAll);
+    });
+}
 
 /** One synonym per line; blank lines dropped. */
 function textToSynonyms(text: string): string[] {
@@ -59,6 +94,9 @@ export function setupTaxaPanel(store: KeyStore, uiState: UIStateStore, refreshAl
         reorder: (src, tgt) => store.reorderTaxa(src, tgt),
         // A settled name edit may make a lead's draft match this taxon — link it.
         onSettle: () => store.relinkTaxonDrafts(),
-        keepFocusWithin: ['#add-taxon-btn'],
+        // Encode the description's figure tokens on blur (the debounce is cancelled when
+        // focus leaves the field, so this guarantees a stable [figID: N] gets stored).
+        settleField: (id, field) => { if (field === 'description') encodeTaxonDescription(store, id); },
+        keepFocusWithin: ['#add-taxon-btn', '.format-toolbar'],
     });
 }

@@ -5,7 +5,7 @@ import type { KeyStore } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { escapeHTML } from '../utils.ts';
 import type { DestinationResolution } from '../utils.ts';
-import { buildKeyDocumentModel, renderAltSegments } from '../keyDocumentModel.ts';
+import { buildKeyDocumentModel, renderAltSegments, htmlMark } from '../keyDocumentModel.ts';
 import type { AltSegmentRenderer, RenderableCouplet } from '../keyDocumentModel.ts';
 import { reconcileCards } from './shared.ts';
 
@@ -23,6 +23,7 @@ const PRINT_ALT: AltSegmentRenderer = {
     text: escapeHTML,
     fig: seg => figRefSpan(seg.figId, seg.displayNum),
     brokenFig: seg => `<span class="error-text">[Fig: ${escapeHTML(seg.label)}]</span>`,
+    mark: htmlMark,
 };
 
 /** Empty step-block skeleton; the update pass fills in leads, text, and destinations. */

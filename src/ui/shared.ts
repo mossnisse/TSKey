@@ -25,6 +25,9 @@ export interface ReconcileOptions<T> {
     create: (item: T, index: number) => HTMLElement;
     /** Applies dynamic state; runs for both new and reused cards so the two paths never drift. */
     update?: (el: HTMLElement, item: T, index: number) => void;
+    /** Called with each card that is about to be removed (no longer in `items`), before
+     *  it leaves the DOM — used to tear down per-card resources (e.g. mounted editors). */
+    onRemove?: (el: HTMLElement) => void;
 }
 
 /**
@@ -35,7 +38,7 @@ export interface ReconcileOptions<T> {
  * runs on freshly created cards too, `create` only needs to build a static skeleton.
  */
 export function reconcileCards<T>(opts: ReconcileOptions<T>): void {
-    const { container, items, getId, create, update } = opts;
+    const { container, items, getId, create, update, onRemove } = opts;
 
     const existing = new Map<number, HTMLElement>();
     for (const child of Array.from(container.children) as HTMLElement[]) {
@@ -59,7 +62,10 @@ export function reconcileCards<T>(opts: ReconcileOptions<T>): void {
         update?.(el, item, index);
     });
 
-    existing.forEach(el => el.remove());
+    existing.forEach(el => {
+        onRemove?.(el);
+        el.remove();
+    });
 }
 
 /**

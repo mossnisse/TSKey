@@ -33,6 +33,38 @@ export function setupTitleEditing(store: KeyStore, refreshAll: () => void, signa
     }, { signal });
 }
 
+/**
+ * Commits a rich-text alt1/alt2 edit: immediate store sync + undo checkpoint, then a
+ * debounced figure-token encode + refresh. Wired to the mounted editor's onChange (the
+ * old delegated `input` path in setupCoupletInput still handles the dest text inputs).
+ * Blur-time encoding stays in setupCoupletFocus, matching the original textarea flow.
+ */
+export function commitCoupletField(
+    store: KeyStore,
+    uiState: UIStateStore,
+    refreshAll: () => void,
+    id: number,
+    field: 'alt1' | 'alt2',
+    value: string,
+) {
+    const fieldKey = `${id}-${field}`;
+    store.setActiveCouplet(id);
+    uiState.typing.couplets.start(fieldKey, () => store.endTypingSession());
+    store.updateCouplet(id, { [field]: value } as Partial<Omit<Couplet, 'id'>>);
+
+    uiState.typing.couplets.extendTimeout(DEBOUNCE_TYPING_MS, () => {
+        const currentCouplet = store.getKey().find(c => c.id === id);
+        if (currentCouplet) {
+            const rawValue = currentCouplet[field];
+            const encodedValue = store.encodeFigureTokens(rawValue);
+            if (encodedValue !== rawValue) {
+                store.updateCouplet(id, { [field]: encodedValue } as Partial<Omit<Couplet, 'id'>>);
+            }
+        }
+        batchedRefresh(refreshAll);
+    });
+}
+
 /** Card selection clicks (with Ctrl/Cmd/Shift multi-select) and background-click clearing. */
 export function setupCoupletSelection(keyContainer: HTMLElement, store: KeyStore, refreshAll: () => void, signal: AbortSignal) {
     keyContainer.addEventListener('click', (e: MouseEvent) => {
@@ -69,8 +101,9 @@ export function setupCoupletSelection(keyContainer: HTMLElement, store: KeyStore
             return;
         }
 
-        // Prevent card selection if the user is interacting with text inputs or textareas
-        if (target.closest('input, textarea')) return;
+        // Prevent card selection if the user is interacting with a field (input, textarea,
+        // or a mounted rich-text host).
+        if (target.closest('input, textarea, .rte-host')) return;
 
         const card = target.closest('.key-card') as HTMLElement;
         if (!card) return;
@@ -173,7 +206,7 @@ export function setupCoupletFocus(keyContainer: HTMLElement, store: KeyStore, ui
     keyContainer.addEventListener('focusin', (e) => {
         const target = e.target as HTMLElement;
 
-        if (target.matches('input, textarea')) {
+        if (target.matches('input, textarea, .rte-host')) {
             const card = target.closest('.key-card') as HTMLElement;
             if (!card) return;
             card.draggable = false;
@@ -201,7 +234,7 @@ export function setupCoupletFocus(keyContainer: HTMLElement, store: KeyStore, ui
     keyContainer.addEventListener('focusout', (e: FocusEvent) => {
         const target = e.target as HTMLElement;
 
-        if (target.matches('input, textarea')) {
+        if (target.matches('input, textarea, .rte-host')) {
             const card = target.closest('.key-card') as HTMLElement;
             if (card) card.draggable = true;
 

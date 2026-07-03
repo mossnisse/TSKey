@@ -5,11 +5,14 @@ import type { KeyStore, Figure } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { workspaceStorage, activeObjectURLs } from '../store';
 import { reconcileCards } from './shared.ts';
+import { mountRichTextField, syncRichTextField, destroyRichTextFieldsIn, markOnlyFieldSchema } from './richTextField.ts';
+import { commitFigureCaption } from '../events/figureEvents.ts';
 
 let pendingFigureRefresh: number | null = null;
 
-/** Static figure-card skeleton; thumbnail, title, and field values are filled in by update. */
-function createFigureCard(fig: Figure): HTMLElement {
+/** Figure-card skeleton + mounted caption editor; thumbnail, title, and field values
+ *  are filled in by update. The caption is mark-only (no figure references). */
+function createFigureCard(fig: Figure, store: KeyStore, uiState: UIStateStore, refreshAll: () => void): HTMLElement {
     const block = document.createElement('div');
     block.className = 'figure-card';
     block.setAttribute('data-id', fig.id.toString());
@@ -35,9 +38,19 @@ function createFigureCard(fig: Figure): HTMLElement {
 
         <div class="figure-field-row">
             <label>Caption:</label>
-            <textarea class="input-sync figure-input-caption" data-field="caption" rows="2"></textarea>
+            <div class="rte-host figure-input-caption" data-field="caption"></div>
         </div>
     `;
+
+    const captionHost = block.querySelector('.rte-host[data-field="caption"]') as HTMLElement | null;
+    if (captionHost) {
+        mountRichTextField(captionHost, {
+            schema: markOnlyFieldSchema(),
+            value: fig.caption,
+            placeholder: 'Caption — supports **bold**, *italic*…',
+            onChange: v => commitFigureCaption(store, uiState, refreshAll, fig.id, v),
+        });
+    }
     return block;
 }
 
@@ -53,7 +66,8 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
         container,
         items: figures,
         getId: f => f.id,
-        create: createFigureCard,
+        create: fig => createFigureCard(fig, store, uiState, refreshAll),
+        onRemove: destroyRichTextFieldsIn,
         update: (block, fig, index) => {
             const labelEl = block.querySelector('.figure-card-title');
             if (labelEl) labelEl.textContent = `${index + 1}.`;
@@ -113,10 +127,8 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
                 fileInput.value = fig.filename;
             }
 
-            const captionInput = block.querySelector('.figure-input-caption') as HTMLTextAreaElement;
-            if (captionInput && document.activeElement !== captionInput && captionInput.value !== fig.caption) {
-                captionInput.value = fig.caption;
-            }
+            const captionHost = block.querySelector('.rte-host[data-field="caption"]') as HTMLElement | null;
+            if (captionHost) syncRichTextField(captionHost, fig.caption);
         },
     });
 

@@ -1,6 +1,7 @@
 // main.ts
 
 import './style.css';
+import './editor/richText/richText.css';
 import { KeyStore } from './store';
 import type { Couplet } from './store';
 import { UIStateStore } from './uiState.ts';
@@ -19,6 +20,7 @@ import { setupDialogs } from './events/dialogs.ts';
 import { setupFileMenu, setupEditMenu, setupMenuBarNavigation } from './events/menuEvents.ts';
 import { setupNavigationClicks, setupContextMenu } from './events/navigationEvents.ts';
 import { setupKeyboardShortcuts } from './events/keyboardShortcuts.ts';
+import { setupFormatToolbar } from './ui/formatToolbar.ts';
 
 // Baseline fallback blueprint structure. Taxon ends are seeded as drafts; the
 // store migrates them into real taxon records on load (loadFromStorage).
@@ -57,7 +59,8 @@ function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, refreshAll
     setupDialogs(store, uiState, refreshAll, signal);
     setupFileMenu(store, uiState, refreshAll, signal);
     setupEditMenu(store, uiState, refreshAll, signal);
-    setupFigureReference(keyContainer, signal);
+    setupFigureReference(store, signal);
+    setupFormatToolbar(store, signal);
     setupNavigationClicks(store, uiState, signal);
     setupContextMenu(store, refreshAll, signal);
     setupMenuBarNavigation(signal);
@@ -101,10 +104,10 @@ async function bootstrapApp() {
     const refreshAll = () => {
         applyPanelVisibility(uiState);
         renderMenu(store, uiState);
-        renderEditorCards(store, uiState);
+        renderEditorCards(store, uiState, refreshAll);
         renderPrintView(store, uiState);
         renderFigures(store, uiState, refreshAll);
-        renderTaxa(store, uiState);
+        renderTaxa(store, uiState, refreshAll);
     };
 
     const cleanups: Array<() => void> = [];

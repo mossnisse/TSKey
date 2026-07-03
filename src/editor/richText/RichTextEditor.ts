@@ -116,9 +116,18 @@ export class RichTextEditor {
         if (mark) this.applyCommand(sel => toggleMark(this.value, sel, mark, maskTokens(this.value, this.schema)));
     }
 
-    /** Inserts a raw token source (e.g. `[fig: 1]`) at the current selection. */
-    insertToken(src: string): void {
-        this.applyCommand(sel => insertToken(this.value, sel, src));
+    /** Inserts a raw token source (e.g. `[fig: 1]`) at the current selection, or at the
+     *  provided source-offset selection when `at` is given (used when a picker/menu stole
+     *  focus and we want the token to land where the caret was, not at the end). */
+    insertToken(src: string, at?: Selection): void {
+        this.applyCommand(sel => insertToken(this.value, at ?? sel, src));
+    }
+
+    /** The current selection as source offsets, or null when the editor isn't focused /
+     *  has no selection in it. Capture this before a focus-stealing UI (a picker popover)
+     *  opens, then pass it back to insertToken so the insertion lands at the caret. */
+    getSelection(): Selection | null {
+        return captureRange(this.host);
     }
 
     focus(): void {

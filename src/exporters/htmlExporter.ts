@@ -1,18 +1,36 @@
 import type { KeyStore } from '../store';
 import { escapeHTML, triggerFileDownload, sanitizeFilename } from '../utils.ts';
 import type { DestinationResolution, LeadFormat, NameDisplayMode } from '../utils.ts';
-import { buildKeyDocumentModel, renderAltSegments, buildTaxonExportNames } from '../keyDocumentModel.ts';
+import { buildKeyDocumentModel, renderAltSegments, renderRichText, htmlMark, buildTaxonExportNames } from '../keyDocumentModel.ts';
 import type { AltSegmentRenderer, TaxonNameLine } from '../keyDocumentModel.ts';
 import { showToast } from '../uiRenderer.ts';
 import { workspaceStorage, blobToBase64 } from '../store';
 import { LIGHTBOX_CSS, LIGHTBOX_RUNTIME_JS } from './htmlLightboxAssets.ts';
 
 // Figure tokens resolve to plain "(Fig. N)" text (the static export doesn't link
-// them); literal text and any broken-token label are HTML-escaped.
+// them); literal text and any broken-token label are HTML-escaped; marks render as
+// their HTML element.
 const HTML_ALT: AltSegmentRenderer = {
     text: escapeHTML,
     fig: seg => `(Fig. ${seg.displayNum})`,
     brokenFig: seg => `[Broken Fig: ${escapeHTML(seg.label)}]`,
+    mark: htmlMark,
+};
+
+// Taxa fields (description) preserve authored newlines as <br>, matching the prior
+// nl2br rendering, and support figure citations + marks.
+const HTML_FIELD: AltSegmentRenderer = {
+    ...HTML_ALT,
+    text: v => escapeHTML(v).replace(/\n/g, '<br>'),
+};
+
+// Plain-text rendering of a caption (marks stripped) for the lightbox data-caption
+// attribute, where HTML tags would be shown literally.
+const CAPTION_PLAIN: AltSegmentRenderer = {
+    text: v => v,
+    fig: seg => `(Fig. ${seg.displayNum})`,
+    brokenFig: seg => `[Broken Fig: ${seg.label}]`,
+    mark: (_n, inner) => inner,
 };
 
 function destinationToHtml(dest: DestinationResolution): string {
@@ -45,14 +63,19 @@ export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, s
                     const blob = await workspaceStorage.getFigureBinary(projectUid, fig.id);
                     if (blob) {
                         const base64Data = await blobToBase64(blob);
-                        const captionLabel = escapeHTML(`Fig. ${displayNum}${fig.caption ? `: ${fig.caption}` : ''}`);
+                        // The lightbox shows data-caption as plain text, so strip mark
+                        // markers here rather than emitting HTML tags into an attribute.
+                        const captionPlain = renderRichText(fig.caption, CAPTION_PLAIN);
+                        const captionLabel = escapeHTML(`Fig. ${displayNum}${captionPlain ? `: ${captionPlain}` : ''}`);
                         imgTag = `<img class="print-fig-img" src="${base64Data}" alt="Figure ${displayNum}" data-caption="${captionLabel}" />`;
                     }
                 } catch (blobError) {
                     console.warn(`Could not resolve binary payload stream for figure ID ${fig.id}:`, blobError);
                 }
 
-                const captionText = escapeHTML(fig.caption || fig.filename || 'Untitled Asset');
+                const captionText = fig.caption
+                    ? renderRichText(fig.caption, HTML_FIELD)
+                    : escapeHTML(fig.filename || 'Untitled Asset');
                 return `
                     <div class="print-fig-card">
                         ${imgTag}
@@ -122,7 +145,7 @@ export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, s
 
                 if (names.secondary) block += `<p class="print-taxon-field">${renderName(names.secondary)}</p>`;
                 if (taxon.synonyms.length > 0) block += field('Synonyms', taxon.synonyms.map(s => `<em>${escapeHTML(s)}</em>`).join('; '));
-                if (taxon.description) block += field('Description', nl2br(taxon.description));
+                if (taxon.description) block += field('Description', renderRichText(taxon.description, HTML_FIELD, figures));
                 if (taxon.biology) block += field('Biology', nl2br(taxon.biology));
                 if (taxon.distribution) block += field('Distribution', nl2br(taxon.distribution));
                 if (taxon.confusables.length > 0) {

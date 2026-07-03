@@ -56,16 +56,22 @@ export const defaultMarks: InlineMark[] = [
  * figureTokens.ts, combined into one alternation (group 1 = stored `[figID: N]` id,
  * group 2 = raw `[fig: value]`), and resolves raw values through the same
  * `resolveRawFigValue` the document model / exporters use — so the editor's chips can
- * never drift from what the published output shows. Pass the project's lookups (from
- * `buildFigureLookups`); when omitted, every token renders as unresolved.
+ * never drift from what the published output shows.
+ *
+ * Pass the project's lookups (from `buildFigureLookups`) either as a fixed value or as
+ * a getter. A getter is re-read on every render, so a live editor's chips reflect the
+ * current figure order (renumber on reorder) without re-mounting. When omitted, every
+ * token renders as unresolved.
  */
-export function figureTokenRule(lookups?: FigureLookups): InlineToken {
+export function figureTokenRule(lookups?: FigureLookups | (() => FigureLookups)): InlineToken {
     const pattern = new RegExp(`${figIdTokenRegex().source}|${figRawTokenRegex().source}`, 'gi');
+    const getLookups = typeof lookups === 'function' ? lookups : () => lookups;
     return {
         name: 'figure',
         pattern,
         render: (m) => {
             let displayNum: number | undefined;
+            const lookups = getLookups();
             if (lookups) {
                 if (m[1] !== undefined) {
                     displayNum = lookups.idToDisplayNum.get(parseInt(m[1], 10));

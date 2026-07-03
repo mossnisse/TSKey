@@ -7,6 +7,27 @@ import type { KeyStore, Couplet } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { escapeHTML, buildIdToIndexMap, resolveDestination, branchTarget, buildTaxaContext } from '../utils.ts';
 import { syncField, reconcileCards } from './shared.ts';
+import { mountRichTextField, syncRichTextField, destroyRichTextFieldsIn, figureFieldSchema } from './richTextField.ts';
+import { commitCoupletField } from '../events/coupletEvents.ts';
+
+const ALT_PLACEHOLDER: Record<'alt1' | 'alt2', string> = {
+    alt1: 'Enter diagnostic trait details [fig: 1]...',
+    alt2: 'Enter contrast alternative description...',
+};
+
+/** Mounts the alt1/alt2 rich-text editors on a fresh card, wiring each to the store. */
+function mountCoupletEditors(card: HTMLElement, couplet: Couplet, store: KeyStore, uiState: UIStateStore, refreshAll: () => void) {
+    (['alt1', 'alt2'] as const).forEach(field => {
+        const host = card.querySelector(`.rte-host[data-field="${field}"]`) as HTMLElement | null;
+        if (!host) return;
+        mountRichTextField(host, {
+            schema: figureFieldSchema(store),
+            value: store.decodeTextReferencesForEditor(couplet[field]),
+            placeholder: ALT_PLACEHOLDER[field],
+            onChange: v => commitCoupletField(store, uiState, refreshAll, couplet.id, field, v),
+        });
+    });
+}
 
 /** Shows the inline create-taxon buttons only when that lead is an unlinked draft. */
 function syncCreateTaxonBtn(card: HTMLElement, field: 'dest1' | 'dest2', isUnlinkedTaxon?: boolean) {
@@ -38,7 +59,7 @@ function createCard(couplet: Couplet): HTMLElement {
           <span class="drag-handle">☰</span>
         </div>
         <div class="card-row">
-          <textarea class="input-sync card-textarea" data-field="alt1" placeholder="Enter diagnostic trait details [fig: 1]..."></textarea>
+          <div class="rte-host card-rte" data-field="alt1"></div>
           <div class="card-meta-pane">
             <label class="meta-label">→
               <input type="text" class="input-sync input-destination" data-field="dest1" placeholder="Taxon or Step #" />
@@ -47,7 +68,7 @@ function createCard(couplet: Couplet): HTMLElement {
           </div>
         </div>
         <div class="card-row">
-          <textarea class="input-sync card-textarea" data-field="alt2" placeholder="Enter contrast alternative description..."></textarea>
+          <div class="rte-host card-rte" data-field="alt2"></div>
           <div class="card-meta-pane">
             <label class="meta-label">→
               <input type="text" class="input-sync input-destination" data-field="dest2" placeholder="Taxon or Step #" />
@@ -63,7 +84,7 @@ function createCard(couplet: Couplet): HTMLElement {
  * High-Performance Incremental DOM Reconciliation.
  * Updates parameters, positions, and errors safely on existing elements without full teardown sweeps.
  */
-export function renderEditorCards(store: KeyStore, uiState: UIStateStore) {
+export function renderEditorCards(store: KeyStore, uiState: UIStateStore, refreshAll: () => void) {
     const container = document.getElementById('editor-container');
     if (!container) return;
 
@@ -135,13 +156,15 @@ export function renderEditorCards(store: KeyStore, uiState: UIStateStore) {
             if (badgeEl.innerHTML !== badgeHtml) badgeEl.innerHTML = badgeHtml;
         }
 
-        syncField(card, 'textarea[data-field="alt1"]', store.decodeTextReferencesForEditor(couplet.alt1));
+        const alt1Host = card.querySelector('.rte-host[data-field="alt1"]') as HTMLElement | null;
+        if (alt1Host) syncRichTextField(alt1Host, store.decodeTextReferencesForEditor(couplet.alt1));
         const dest1El = syncField(card, 'input[data-field="dest1"]', dest1.inputValue);
         dest1El?.classList.toggle('input-error', dest1.isUnresolved);
         dest1El?.classList.toggle('input-taxon-unlinked', !!dest1.isUnlinkedTaxon);
         syncCreateTaxonBtn(card, 'dest1', dest1.isUnlinkedTaxon);
 
-        syncField(card, 'textarea[data-field="alt2"]', store.decodeTextReferencesForEditor(couplet.alt2));
+        const alt2Host = card.querySelector('.rte-host[data-field="alt2"]') as HTMLElement | null;
+        if (alt2Host) syncRichTextField(alt2Host, store.decodeTextReferencesForEditor(couplet.alt2));
         const dest2El = syncField(card, 'input[data-field="dest2"]', dest2.inputValue);
         dest2El?.classList.toggle('input-error', dest2.isUnresolved);
         dest2El?.classList.toggle('input-taxon-unlinked', !!dest2.isUnlinkedTaxon);
@@ -163,7 +186,12 @@ export function renderEditorCards(store: KeyStore, uiState: UIStateStore) {
         container,
         items: key,
         getId: c => c.id,
-        create: createCard,
+        create: couplet => {
+            const card = createCard(couplet);
+            mountCoupletEditors(card, couplet, store, uiState, refreshAll);
+            return card;
+        },
         update: updateCard,
+        onRemove: destroyRichTextFieldsIn,
     });
 }

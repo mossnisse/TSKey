@@ -2,7 +2,7 @@
 import type { KeyStore } from '../store';
 import { triggerFileDownload, sanitizeFilename } from '../utils.ts';
 import type { DestinationResolution, LeadFormat, NameDisplayMode } from '../utils.ts';
-import { buildKeyDocumentModel, renderAltSegments, buildTaxonExportNames } from '../keyDocumentModel.ts';
+import { buildKeyDocumentModel, renderAltSegments, renderRichText, buildTaxonExportNames } from '../keyDocumentModel.ts';
 import type { AltSegmentRenderer, TaxonNameLine } from '../keyDocumentModel.ts';
 import { showToast } from '../uiRenderer.ts';
 
@@ -39,10 +39,19 @@ function latexLeadBox(lead: string, width: string): string {
 // Resolves figure tokens the same way as the plain-text and HTML exporters: every
 // resolvable token (stored [figID: N] or raw [fig: value]) becomes an inline
 // (Fig.~N) citation, and an unresolvable one stays visible as [Broken Fig: …].
+// Mark name → LaTeX wrapping macro.
+const LATEX_MARK: Record<string, (inner: string) => string> = {
+    bold: s => `\\textbf{${s}}`,
+    italic: s => `\\textit{${s}}`,
+    subscript: s => `\\textsubscript{${s}}`,
+    superscript: s => `\\textsuperscript{${s}}`,
+};
+
 const LATEX_ALT: AltSegmentRenderer = {
     text: escapeLaTeX,
     fig: seg => ` (Fig.~${seg.displayNum})`,
     brokenFig: seg => `[Broken Fig: ${escapeLaTeX(seg.label)}]`,
+    mark: (name, inner) => (LATEX_MARK[name] ?? ((s: string) => s))(inner),
 };
 
 /**
@@ -114,7 +123,9 @@ ${bodyContent}
 
             figures.forEach((fig, index) => {
                 const displayNum = index + 1;
-                const escapedCaption = escapeLaTeX(fig.caption || `Figure ${displayNum}`);
+                const escapedCaption = fig.caption
+                    ? renderRichText(fig.caption, LATEX_ALT)
+                    : escapeLaTeX(`Figure ${displayNum}`);
 
                 figuresAppendix += `\\begin{figure}[htbp]\n`;
                 figuresAppendix += `  \\centering\n`;
@@ -167,7 +178,7 @@ ${bodyContent}
                 }
 
                 if (taxon.synonyms.length > 0) taxaBody += field('Synonyms', taxon.synonyms.join('; '));
-                if (taxon.description) taxaBody += field('Description', taxon.description);
+                if (taxon.description) taxaBody += `\\noindent\\textbf{Description:} ${renderRichText(taxon.description, LATEX_ALT, figures)}\\par\n`;
                 if (taxon.biology) taxaBody += field('Biology', taxon.biology);
                 if (taxon.distribution) taxaBody += field('Distribution', taxon.distribution);
                 if (taxon.confusables.length > 0) {

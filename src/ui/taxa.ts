@@ -6,6 +6,8 @@ import type { KeyStore, Taxon, ConfusableSpecies } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import type { NameDisplayMode } from '../utils.ts';
 import { syncField, reconcileCards } from './shared.ts';
+import { mountRichTextField, syncRichTextField, destroyRichTextFieldsIn, figureFieldSchema } from './richTextField.ts';
+import { commitTaxonRichField } from '../events/taxaEvents.ts';
 
 /** One synonym per line. */
 export function synonymsToText(synonyms: readonly string[]): string {
@@ -57,7 +59,7 @@ function taxonCardMarkup(mode: NameDisplayMode): string {
         </div>
         <div class="taxon-field-row">
             <label>Description:</label>
-            <textarea class="input-sync taxon-textarea" data-field="description" rows="3"></textarea>
+            <div class="rte-host taxon-rte" data-field="description"></div>
         </div>
         <div class="taxon-field-row">
             <label>Biology:</label>
@@ -75,7 +77,7 @@ function taxonCardMarkup(mode: NameDisplayMode): string {
 }
 
 /** Patches a card's fields from a taxon record, skipping any field being edited. */
-function syncTaxonCard(card: HTMLElement, taxon: Taxon, displayNum: number) {
+function syncTaxonCard(card: HTMLElement, taxon: Taxon, displayNum: number, store: KeyStore) {
     const titleEl = card.querySelector('.taxon-card-title');
     const title = `${displayNum}.`;
     if (titleEl && titleEl.textContent !== title) titleEl.textContent = title;
@@ -84,22 +86,33 @@ function syncTaxonCard(card: HTMLElement, taxon: Taxon, displayNum: number) {
     syncField(card, 'input[data-field="auctor"]', taxon.auctor);
     syncField(card, 'input[data-field="vernacularName"]', taxon.vernacularName);
     syncField(card, 'textarea[data-field="synonyms"]', synonymsToText(taxon.synonyms));
-    syncField(card, 'textarea[data-field="description"]', taxon.description);
+    const descHost = card.querySelector('.rte-host[data-field="description"]') as HTMLElement | null;
+    if (descHost) syncRichTextField(descHost, store.decodeTextReferencesForEditor(taxon.description));
     syncField(card, 'textarea[data-field="biology"]', taxon.biology);
     syncField(card, 'textarea[data-field="distribution"]', taxon.distribution);
     syncField(card, 'textarea[data-field="confusables"]', confusablesToText(taxon.confusables));
 }
 
-function createTaxonCard(taxon: Taxon, mode: NameDisplayMode): HTMLElement {
+function createTaxonCard(taxon: Taxon, mode: NameDisplayMode, store: KeyStore, uiState: UIStateStore, refreshAll: () => void): HTMLElement {
     const block = document.createElement('div');
     block.className = 'taxon-card';
     block.setAttribute('data-id', taxon.id.toString());
     block.draggable = true;
     block.innerHTML = taxonCardMarkup(mode);
+
+    const descHost = block.querySelector('.rte-host[data-field="description"]') as HTMLElement | null;
+    if (descHost) {
+        mountRichTextField(descHost, {
+            schema: figureFieldSchema(store),
+            value: store.decodeTextReferencesForEditor(taxon.description),
+            placeholder: 'Diagnostic description — supports **bold**, *italic*, and [fig: 1]…',
+            onChange: v => commitTaxonRichField(store, uiState, refreshAll, taxon.id, 'description', v),
+        });
+    }
     return block;
 }
 
-export function renderTaxa(store: KeyStore, uiState: UIStateStore) {
+export function renderTaxa(store: KeyStore, uiState: UIStateStore, refreshAll: () => void) {
     if (uiState.isTaxaHidden) return;
 
     const container = document.getElementById('taxa-container');
@@ -108,7 +121,9 @@ export function renderTaxa(store: KeyStore, uiState: UIStateStore) {
     const mode = uiState.nameDisplayMode;
     // The leading name field depends on the display setting; when it changes, drop
     // the existing cards so the reconciler rebuilds them with the new field order.
+    // Destroy their editors first so they don't leak past the manual teardown.
     if (container.dataset.nameMode !== mode) {
+        destroyRichTextFieldsIn(container);
         container.replaceChildren();
         container.dataset.nameMode = mode;
     }
@@ -119,10 +134,11 @@ export function renderTaxa(store: KeyStore, uiState: UIStateStore) {
         container,
         items: store.getTaxa(),
         getId: t => t.id,
-        create: taxon => createTaxonCard(taxon, mode),
+        create: taxon => createTaxonCard(taxon, mode, store, uiState, refreshAll),
         update: (block, taxon, index) => {
             block.classList.toggle('is-selected', selectedIds.has(taxon.id));
-            syncTaxonCard(block, taxon, index + 1);
+            syncTaxonCard(block, taxon, index + 1, store);
         },
+        onRemove: destroyRichTextFieldsIn,
     });
 }
