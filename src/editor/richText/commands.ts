@@ -24,26 +24,30 @@ interface MarkSpan {
     contentEnd: number;
 }
 
-/** Every span of `mark` in `value`, paired with the same rules as the tokenizer
- *  (a longer same-char run — e.g. the `**` of bold — is never an italic delimiter). */
-function findSpans(value: string, mark: InlineMark): MarkSpan[] {
+/** Every span of `mark`, paired with the same rules as the tokenizer (a longer
+ *  same-char run — e.g. the `**` of bold — is never an italic delimiter). Delimiters
+ *  are detected against `masked` (the token-masked view of the source, so a delimiter
+ *  char that happens to sit inside a `[fig: ...]` token is not mistaken for a real
+ *  one), while the returned indices apply equally to the real `value` — the two are
+ *  the same length. */
+function findSpans(masked: string, mark: InlineMark): MarkSpan[] {
     const { open, close } = mark;
     const singleChar = open === close && open.length === 1;
     const spans: MarkSpan[] = [];
     let i = 0;
-    while (i < value.length) {
-        if (singleChar && value[i] === open) {
+    while (i < masked.length) {
+        if (singleChar && masked[i] === open) {
             // Skip longer same-char runs: they belong to another mark (bold's `**`).
             let runEnd = i;
-            while (runEnd + 1 < value.length && value[runEnd + 1] === open) runEnd++;
+            while (runEnd + 1 < masked.length && masked[runEnd + 1] === open) runEnd++;
             if (runEnd > i) {
                 i = runEnd + 1;
                 continue;
             }
         }
-        if (value.startsWith(open, i)) {
+        if (masked.startsWith(open, i)) {
             const contentStart = i + open.length;
-            const closeIdx = findClose(value, contentStart, open, close);
+            const closeIdx = findClose(masked, contentStart, open, close);
             if (closeIdx > contentStart) {
                 spans.push({ start: i, end: closeIdx + close.length, contentStart, contentEnd: closeIdx });
                 i = closeIdx + close.length;
@@ -64,13 +68,21 @@ function findSpans(value: string, mark: InlineMark): MarkSpan[] {
  *    so partial overlaps and multi-span selections merge into one contiguous run
  *    instead of producing nested or interleaved delimiters.
  */
-export function toggleMark(value: string, sel: Selection, mark: InlineMark): CommandResult {
+export function toggleMark(value: string, sel: Selection, mark: InlineMark, masked: string = value): CommandResult {
     const { open, close } = mark;
     const { start, end } = sel;
-    const spans = findSpans(value, mark);
+    const spans = findSpans(masked, mark);
 
-    // Unwrap: the selection lies within one marked span (delimiters included).
-    const covering = spans.find(s => start >= s.start && end <= s.end);
+    // Unwrap: the selection lies within one marked span. A range may sit flush against
+    // the span's outer edges (a whole-run selection should unwrap), but a *collapsed*
+    // caret must be strictly inside — a caret resting immediately before the opener or
+    // after the closer is adjacent to the run, not in it, and toggling there should
+    // start a new mark rather than silently stripping the neighbouring run. A range
+    // must also actually touch the span's content, so selecting only a bare delimiter
+    // glyph doesn't strip the whole run.
+    const covering = start === end
+        ? spans.find(s => start > s.start && start < s.end)
+        : spans.find(s => start >= s.start && end <= s.end && start < s.contentEnd && end > s.contentStart);
     if (covering) {
         const inner = value.slice(covering.contentStart, covering.contentEnd);
         const next = value.slice(0, covering.start) + inner + value.slice(covering.end);

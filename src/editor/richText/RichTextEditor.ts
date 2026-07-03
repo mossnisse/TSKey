@@ -8,7 +8,7 @@
 // that the serializer can't account for.
 
 import type { EditorSchema, InlineMark } from './schema.ts';
-import { tokenize } from './tokenize.ts';
+import { tokenize, maskTokens } from './tokenize.ts';
 import { renderAtoms } from './render.ts';
 import { serialize, captureRange, setSelection } from './caret.ts';
 import { toggleMark, insertToken } from './commands.ts';
@@ -45,6 +45,15 @@ export class RichTextEditor {
         this.composing = false;
         this.scheduleRerender();
     };
+    // Some browsers don't fire compositionend when focus is lost mid-composition,
+    // which would leave `composing` stuck true and make onInput ignore every future
+    // keystroke. Clearing it on blur guarantees the editor always recovers.
+    private readonly onBlur = () => {
+        if (this.composing) {
+            this.composing = false;
+            this.scheduleRerender();
+        }
+    };
 
     constructor(host: HTMLElement, opts: RichTextEditorOptions) {
         this.host = host;
@@ -66,6 +75,7 @@ export class RichTextEditor {
         host.addEventListener('drop', this.onDrop);
         host.addEventListener('compositionstart', this.onCompositionStart);
         host.addEventListener('compositionend', this.onCompositionEnd);
+        host.addEventListener('blur', this.onBlur);
 
         this.render();
     }
@@ -79,8 +89,15 @@ export class RichTextEditor {
     }
 
     setValue(next: string): void {
-        // setValue is authoritative: discard any pending DOM read-back, and re-render
-        // even for an equal string when a discarded edit left the DOM out of sync.
+        // Don't clobber an in-progress edit. Like the app's syncField (ui/shared.ts),
+        // which skips the focused element, a setValue that merely echoes back what the
+        // user has already typed (e.g. a store refresh after onChange) must not rewrite
+        // the DOM and drop the caret. getValue() reflects the live DOM when an edit is
+        // pending, so this equality holds for the echo case even mid-keystroke.
+        if (document.activeElement === this.host && next === this.getValue()) return;
+
+        // Otherwise setValue is authoritative: discard any pending DOM read-back, and
+        // re-render even for an equal string when a discarded edit left the DOM stale.
         const hadPending = this.rafId !== null;
         if (this.rafId !== null) {
             cancelAnimationFrame(this.rafId);
@@ -94,7 +111,9 @@ export class RichTextEditor {
     /** Applies a mark by name to the current selection (no-op if the name is unknown). */
     toggleMark(name: string): void {
         const mark = this.schema.marks.find(m => m.name === name);
-        if (mark) this.applyCommand(sel => toggleMark(this.value, sel, mark));
+        // Pass the token-masked source so delimiter detection matches the tokenizer's,
+        // and a delimiter char inside a `[fig: ...]` token is never toggled.
+        if (mark) this.applyCommand(sel => toggleMark(this.value, sel, mark, maskTokens(this.value, this.schema)));
     }
 
     /** Inserts a raw token source (e.g. `[fig: 1]`) at the current selection. */
@@ -119,6 +138,7 @@ export class RichTextEditor {
         this.host.removeEventListener('drop', this.onDrop);
         this.host.removeEventListener('compositionstart', this.onCompositionStart);
         this.host.removeEventListener('compositionend', this.onCompositionEnd);
+        this.host.removeEventListener('blur', this.onBlur);
         this.host.removeAttribute('contenteditable');
         this.changeHandlers.clear();
     }
@@ -184,11 +204,11 @@ export class RichTextEditor {
     private handleKeydown(e: KeyboardEvent): void {
         if (e.isComposing) return;
 
-        // Enter: insert a literal '\n' into the source (rendered via white-space:
-        // pre-wrap) instead of letting the browser plant a <div>/<br> the source
-        // string cannot represent.
+        // Enter (any modifier): insert a literal '\n' into the source (rendered via
+        // white-space: pre-wrap). We intercept every Enter chord — not just the bare
+        // key — because a fall-through would let the browser plant a <div>/<br> the
+        // source string cannot represent, and serialize() would silently drop it.
         if (e.key === 'Enter') {
-            if (e.ctrlKey || e.metaKey || e.altKey) return;
             e.preventDefault();
             this.applyCommand(sel => insertToken(this.value, sel, '\n'));
             return;
@@ -216,17 +236,33 @@ export class RichTextEditor {
         e.preventDefault();
         const text = e.dataTransfer?.getData('text/plain') ?? '';
         if (!text) return;
-        // Land the drop at the pointer when the browser can tell us where that is.
-        if (typeof document.caretRangeFromPoint === 'function') {
-            const range = document.caretRangeFromPoint(e.clientX, e.clientY);
-            if (range && this.host.contains(range.startContainer)) {
-                const sel = window.getSelection();
-                sel?.removeAllRanges();
-                sel?.addRange(range);
-            }
+        // Land the drop at the pointer. Chromium exposes caretRangeFromPoint; Firefox
+        // only caretPositionFromPoint — without this fallback a Firefox drop would land
+        // at the stale previous caret instead of where the user dropped.
+        const range = this.caretRangeAtPoint(e.clientX, e.clientY);
+        if (range && this.host.contains(range.startContainer)) {
+            const sel = window.getSelection();
+            sel?.removeAllRanges();
+            sel?.addRange(range);
         }
         this.host.focus();
         this.applyCommand(sel => insertToken(this.value, sel, text));
+    }
+
+    /** A collapsed Range at viewport point (x, y), across Chromium and Firefox APIs. */
+    private caretRangeAtPoint(x: number, y: number): Range | null {
+        const doc = document as Document & {
+            caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+        };
+        if (typeof doc.caretRangeFromPoint === 'function') {
+            return doc.caretRangeFromPoint(x, y);
+        }
+        const pos = doc.caretPositionFromPoint?.(x, y);
+        if (!pos) return null;
+        const range = document.createRange();
+        range.setStart(pos.offsetNode, pos.offset);
+        range.collapse(true);
+        return range;
     }
 
     private emitChange(): void {

@@ -10,6 +10,8 @@
 //   * captureRange(root)   current selection -> {start,end} source offsets
 //   * setSelection(...)    {start,end} source offsets -> DOM selection (after re-render)
 //
+// The per-node length rule lives in exactly one place (sourceLen / the *Len helpers)
+// so captureRange (offsetOfPoint) and setSelection (collectStops) can never drift.
 // Because mark delimiters are hidden and chips are atomic, a source offset may point
 // "inside" a hidden region; restoration clamps to the nearest real caret position.
 
@@ -18,6 +20,21 @@ const ELEMENT = Node.ELEMENT_NODE;
 
 function isChip(el: Element): boolean {
     return (el as HTMLElement).dataset.src !== undefined;
+}
+
+const chipLen = (el: HTMLElement): number => (el.dataset.src ?? '').length;
+const openLen = (el: HTMLElement): number => (el.dataset.open ?? '').length;
+const closeLen = (el: HTMLElement): number => (el.dataset.close ?? '').length;
+
+/** Full source length of a node's subtree — the single source of truth for the
+ *  accounting rule, consumed by both the DOM->offset and offset->DOM directions. */
+function sourceLen(node: Node): number {
+    if (node.nodeType === TEXT) return (node.textContent ?? '').length;
+    const el = node as HTMLElement;
+    if (isChip(el)) return chipLen(el);
+    let s = openLen(el) + closeLen(el);
+    for (const k of Array.from(el.childNodes)) s += sourceLen(k);
+    return s;
 }
 
 /** DOM subtree -> the source string it represents. */
@@ -60,11 +77,11 @@ function collectStops(root: Node): { stops: TextStop[]; positions: BoundaryPos[]
             } else if (child.nodeType === ELEMENT) {
                 const c = child as HTMLElement;
                 if (isChip(c)) {
-                    cursor += (c.dataset.src ?? '').length;
+                    cursor += chipLen(c);
                 } else {
-                    cursor += (c.dataset.open ?? '').length;
+                    cursor += openLen(c);
                     walk(c);
-                    cursor += (c.dataset.close ?? '').length;
+                    cursor += closeLen(c);
                 }
             }
             positions.push({ src: cursor, container: el, offset: idx + 1 });
@@ -98,20 +115,11 @@ function offsetOfPoint(root: Node, node: Node, offset: number): number {
     let total = 0;
     let done = false;
 
-    const fullLen = (n: Node): number => {
-        if (n.nodeType === TEXT) return (n.textContent ?? '').length;
-        const el = n as HTMLElement;
-        if (isChip(el)) return (el.dataset.src ?? '').length;
-        let s = (el.dataset.open ?? '').length + (el.dataset.close ?? '').length;
-        for (const k of Array.from(el.childNodes)) s += fullLen(k);
-        return s;
-    };
-
     const walk = (el: Node) => {
         if (done) return;
         // Point given as (element, offset): it sits before child index `offset`.
         if (el === node && el.nodeType !== TEXT) {
-            for (let i = 0; i < offset; i++) total += fullLen(el.childNodes[i]);
+            for (let i = 0; i < offset; i++) total += sourceLen(el.childNodes[i]);
             done = true;
             return;
         }
@@ -128,12 +136,12 @@ function offsetOfPoint(root: Node, node: Node, offset: number): number {
             } else if (child.nodeType === ELEMENT) {
                 const c = child as HTMLElement;
                 if (isChip(c)) {
-                    total += (c.dataset.src ?? '').length;
+                    total += chipLen(c);
                 } else {
-                    total += (c.dataset.open ?? '').length; // enter: hidden opener
+                    total += openLen(c); // enter: hidden opener
                     walk(c);
                     if (done) return;
-                    total += (c.dataset.close ?? '').length; // leave: hidden closer
+                    total += closeLen(c); // leave: hidden closer
                 }
             }
         }

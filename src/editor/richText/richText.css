@@ -40,8 +40,9 @@
     font-size: 0.9em;
     font-weight: 600;
     white-space: nowrap;
-    user-select: none;
     cursor: default;
+    /* No `user-select: none`: the chip is already atomic via contenteditable="false",
+       and suppressing selection would hide the highlight when the chip is selected. */
 }
 
 /* Unresolved / still-being-typed reference. */

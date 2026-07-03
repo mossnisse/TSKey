@@ -71,7 +71,10 @@ export function figureTokenRule(lookups?: FigureLookups): InlineToken {
                     displayNum = lookups.idToDisplayNum.get(parseInt(m[1], 10));
                 } else {
                     const value = (m[2] ?? '').trim();
-                    displayNum = resolveRawFigValue(value, lookups, lookups.idToDisplayNum.size)?.displayNum;
+                    // displayNumToFig.size === figures.length (display numbers are the
+                    // 1..N array positions), which is the figureCount the exporters use;
+                    // idToDisplayNum.size would undercount if two figures shared an id.
+                    displayNum = resolveRawFigValue(value, lookups, lookups.displayNumToFig.size)?.displayNum;
                 }
             }
             if (displayNum !== undefined) {
