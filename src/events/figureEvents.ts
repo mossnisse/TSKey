@@ -1,8 +1,8 @@
 // events/figureEvents.ts
 // Figure panel events (add, edit, image upload/removal, drag-and-drop) and the
 // figure-reference insertion tool. The generic panel wiring lives in entityPanel.ts;
-// this module adds the figure-specific image handling on top. `isFigureTextarea` and
-// `insertFigureReference` are also used by the keyboard shortcut (Alt+F).
+// this module adds the figure-specific image handling on top. `isFigureRefHost` and
+// `openFigureReferencePicker` are also used by the keyboard shortcut (Alt+F).
 import type { KeyStore, Figure } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { batchedRefresh, DEBOUNCE_TYPING_MS } from './shared.ts';

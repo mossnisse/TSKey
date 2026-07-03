@@ -306,11 +306,8 @@ export function createNewCoupletWithFocus(store: KeyStore, refreshAll: () => voi
     refreshAll();
 
     const newCard = document.querySelector(`.key-card[data-id="${newId}"]`);
-    const textarea = newCard?.querySelector('textarea[data-field="alt1"]') as HTMLTextAreaElement | null;
-
-    if (textarea) {
-        textarea.focus();
-    }
+    const altHost = newCard?.querySelector('.rte-host[data-field="alt1"]') as HTMLElement | null;
+    altHost?.focus();
 }
 
 /** Pastes clipboard steps relative to the current selection (or the key ends). */

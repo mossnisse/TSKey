@@ -8,7 +8,8 @@
 import { RichTextEditor, defaultMarks, figureTokenRule } from '../editor/richText/index.ts';
 import type { EditorSchema } from '../editor/richText/index.ts';
 import { buildFigureLookups } from '../figureTokens.ts';
-import type { KeyStore } from '../store';
+import type { FigureLookups } from '../figureTokens.ts';
+import type { KeyStore, Figure } from '../store';
 
 interface RteHost extends HTMLElement { _rte?: RichTextEditor; }
 
@@ -60,11 +61,28 @@ export function destroyRichTextFieldsIn(root: HTMLElement): void {
     }
 }
 
+// Reference-keyed cache for the figure lookups, shared by every mounted editor. The
+// token rule's getter runs once per chip per re-render (i.e. every keystroke), and each
+// build is O(figures); without this it would rebuild all four maps every time. Every
+// store mutation replaces `state.figures` with a new array (see KeyStore add/update/
+// reorder/delete/undo/load), so an unchanged array reference means unchanged lookups —
+// we rebuild only on a real figure change, not per chip.
+let cachedFigures: readonly Figure[] | null = null;
+let cachedLookups: FigureLookups | null = null;
+function liveFigureLookups(store: KeyStore): FigureLookups {
+    const figures = store.getFigures();
+    if (figures !== cachedFigures) {
+        cachedFigures = figures;
+        cachedLookups = buildFigureLookups(figures);
+    }
+    return cachedLookups!;
+}
+
 /** Schema for a figure-aware field (couplet alt1/alt2, taxa description): all four
  *  marks plus a figure-token rule reading *live* lookups, so chips renumber as figures
  *  are added/reordered without re-mounting the editor. */
 export function figureFieldSchema(store: KeyStore): EditorSchema {
-    return { marks: defaultMarks, tokens: [figureTokenRule(() => buildFigureLookups(store.getFigures()))] };
+    return { marks: defaultMarks, tokens: [figureTokenRule(() => liveFigureLookups(store))] };
 }
 
 /** Schema for a mark-only field (figure caption): text styling, no figure tokens. */
