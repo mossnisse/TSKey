@@ -189,6 +189,20 @@ export function renderRichText(rawText: string, r: AltSegmentRenderer, figures?:
     return renderAltSegments(parseRichText(rawText, figures), r);
 }
 
+/** Renders a field to plain text: figure tokens resolve to "(Fig. N)" and inline mark
+ *  markers are stripped. For in-app plain-text previews (the path popover, the image
+ *  lightbox caption) that must not leak raw `**`/`~`/`^` markers. Pass `figures` to
+ *  resolve figure citations; omit for mark-only fields (captions). */
+const PLAIN_TEXT_RENDERER: AltSegmentRenderer = {
+    text: value => value,
+    fig: seg => `(Fig. ${seg.displayNum})`,
+    brokenFig: seg => `[Broken Fig: ${seg.label}]`,
+    mark: (_name, inner) => inner,
+};
+export function renderPlainText(rawText: string, figures?: readonly Figure[]): string {
+    return renderRichText(rawText, PLAIN_TEXT_RENDERER, figures);
+}
+
 // ==========================================
 // DOCUMENT MODEL
 // ==========================================

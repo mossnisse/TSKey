@@ -12,6 +12,7 @@ import { workspaceStorage, activeObjectURLs } from '../store';
 import { openImageLightbox } from '../ui/imageLightbox.ts';
 import { openPopover } from '../popover.ts';
 import { getFieldEditor } from '../ui/richTextField.ts';
+import { renderPlainText } from '../keyDocumentModel.ts';
 import type { RichTextEditor } from '../editor/richText/index.ts';
 
 // The figure-aware rich-text field (and its caret) most recently focused, so the menu
@@ -112,7 +113,9 @@ export function setupFigurePanel(store: KeyStore, uiState: UIStateStore, refresh
                 const card = img.closest('.figure-card') as HTMLElement | null;
                 const num = card?.querySelector('.figure-card-title')?.textContent?.trim() ?? '';
                 const captionHost = card?.querySelector('.figure-input-caption') as HTMLElement | null;
-                const caption = (captionHost ? getFieldEditor(captionHost)?.getValue() : '') ?? '';
+                // Strip mark markers so the lightbox caption shows styled text as plain
+                // prose (captions carry no figure tokens, so no figures are needed).
+                const caption = renderPlainText((captionHost ? getFieldEditor(captionHost)?.getValue() : '') ?? '');
                 openImageLightbox(src, [num, caption].filter(Boolean).join('  '));
                 return true;
             }

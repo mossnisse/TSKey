@@ -40,10 +40,26 @@ export function getFieldEditor(host: HTMLElement | null): RichTextEditor | undef
     return host ? (host as RteHost)._rte : undefined;
 }
 
-/** Pushes a fresh value into a mounted field without clobbering an in-progress edit
- *  (RichTextEditor.setValue skips the focused-echo case, like syncField). */
+/** Pushes a fresh value into a mounted field during a refresh, without clobbering an
+ *  in-progress edit. Skips the focused editor entirely — exactly like syncField for
+ *  textareas — because while focused the editor is the source of truth (its onChange
+ *  already keeps the store in sync). setValue's own guard only skips the focused *echo*
+ *  case (next === getValue), which is not enough: a refresh that fires in the ~1 frame
+ *  between a keystroke and the editor's rAF commit would carry a momentarily-stale value
+ *  (store not yet updated) that differs from the live DOM, and setValue would cancel the
+ *  pending rerender and re-render the stale value — dropping the just-typed character.
+ *  Any store change made while focused (e.g. figure renumbering) is applied on the next
+ *  refresh after blur. */
 export function syncRichTextField(host: HTMLElement, value: string): void {
-    (host as RteHost)._rte?.setValue(value);
+    const rte = (host as RteHost)._rte;
+    if (!rte) return;
+    // Skip the focused editor (it's the source of truth), and also one that has an
+    // uncommitted pending edit — e.g. a char typed and then blurred within the same
+    // frame: it isn't the active element, but its DOM edit is newer than the store
+    // value we'd be handing back, so setValue would cancel the pending rerender and
+    // drop the character. The pending edit's own rerender will commit + re-sync.
+    if (document.activeElement === host || rte.hasPendingEdit()) return;
+    rte.setValue(value);
 }
 
 /** Destroys every editor mounted within (and on) `root`, releasing its DOM listeners.

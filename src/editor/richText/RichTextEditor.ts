@@ -88,6 +88,14 @@ export class RichTextEditor {
         return this.rafId !== null ? serialize(this.host) : this.value;
     }
 
+    /** True when the DOM holds a user edit not yet read back into `value` (a re-render
+     *  is queued). Such an edit is newer than any value the store can hand back, so an
+     *  external setValue during this window would carry a stale value — callers refreshing
+     *  from the store should skip the editor while this is true (see syncRichTextField). */
+    hasPendingEdit(): boolean {
+        return this.rafId !== null;
+    }
+
     setValue(next: string): void {
         // Don't clobber an in-progress edit. Like the app's syncField (ui/shared.ts),
         // which skips the focused element, a setValue that merely echoes back what the

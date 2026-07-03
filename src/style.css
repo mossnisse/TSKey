@@ -395,7 +395,6 @@ html, body {
 /* Unified styling for every editable field in the key editor and figure panels —
    descriptions, destinations, filenames and captions all look identical, with the
    same underline and focus highlight. (The menu-bar title input is separate.) */
-.card-textarea,
 .input-destination,
 .figure-card .figure-input-filename,
 .figure-card .figure-input-caption {
@@ -412,7 +411,6 @@ html, body {
     user-select: text;
 }
 
-.card-textarea:focus,
 .input-destination:focus,
 .figure-card .figure-input-filename:focus,
 .figure-card .figure-input-caption:focus {
@@ -456,14 +454,6 @@ html, body {
 }
 .card-row:last-of-type { margin-bottom: 0; }
 .card-row:last-of-type::before { content: "└"; }
-
-.card-textarea {
-    flex: 1;
-    min-height: 24px;
-    resize: none;
-    overflow: hidden;
-    field-sizing: content;
-}
 
 .card-meta-pane {
     display: flex;
