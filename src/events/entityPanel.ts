@@ -129,12 +129,23 @@ export function setupEntityPanel(config: EntityPanelConfig): void {
         batchedRefresh(refreshAll);
     }, { signal });
 
+    // --- Field focus: disable card dragging so a mouse text-selection inside a field
+    // selects text instead of starting a drag (a draggable ancestor otherwise hijacks
+    // the gesture). Mirrors the key-editor cards (setupCoupletFocus). ---
+    container.addEventListener('focusin', (e) => {
+        const target = e.target as HTMLElement;
+        if (!target.matches('input, textarea, .rte-host')) return;
+        const card = target.closest(cardSelector) as HTMLElement | null;
+        if (card) card.draggable = false;
+    }, { signal });
+
     // --- Focus-settle refresh ---
     container.addEventListener('focusout', (e: FocusEvent) => {
         const target = e.target as HTMLElement;
         if (!target.matches('input, textarea, .rte-host')) return;
         const card = target.closest(cardSelector) as HTMLElement | null;
         if (!card) return;
+        card.draggable = true;   // re-enable dragging once the field is left
 
         const id = Number(card.getAttribute('data-id'));
         const field = target.getAttribute('data-field');

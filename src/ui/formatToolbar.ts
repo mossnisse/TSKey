@@ -9,6 +9,7 @@
 
 import type { KeyStore } from '../store';
 import { getFieldEditor } from './richTextField.ts';
+import { defaultMarks } from '../editor/richText/index.ts';
 import { openFigureReferencePicker } from '../events/figureEvents.ts';
 
 const MARK_BUTTONS: ReadonlyArray<{ mark: string; title: string; html: string }> = [
@@ -17,6 +18,31 @@ const MARK_BUTTONS: ReadonlyArray<{ mark: string; title: string; html: string }>
     { mark: 'subscript', title: 'Subscript', html: 'x<sub>2</sub>' },
     { mark: 'superscript', title: 'Superscript', html: 'x<sup>2</sup>' },
 ];
+
+// Render tag (STRONG/EM/SUB/SUP) → mark name, from the editor's own schema so the
+// toolbar's active-state detection stays in sync with what the editor renders.
+const TAG_TO_MARK = new Map(defaultMarks.map(m => [m.tag.toUpperCase(), m.name]));
+
+/** The marks that fully wrap the current selection — i.e. mark elements (carrying
+ *  data-open, as rendered by the editor) on the ancestor chain of the selection's
+ *  common ancestor. Used to show the corresponding buttons as pressed. */
+function activeMarksForSelection(host: HTMLElement): Set<string> {
+    const active = new Set<string>();
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return active;
+    let node: Node | null = sel.getRangeAt(0).commonAncestorContainer;
+    while (node && node !== host) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+            const el = node as HTMLElement;
+            if (el.dataset.open !== undefined) {
+                const mark = TAG_TO_MARK.get(el.tagName);
+                if (mark) active.add(mark);
+            }
+        }
+        node = node.parentNode;
+    }
+    return active;
+}
 
 let toolbar: HTMLElement | null = null;
 let currentHost: HTMLElement | null = null;
@@ -46,7 +72,7 @@ function build(): HTMLElement {
     el.setAttribute('role', 'toolbar');
     el.style.display = 'none';
     el.innerHTML =
-        MARK_BUTTONS.map(b => `<button type="button" data-mark="${b.mark}" title="${b.title}">${b.html}</button>`).join('') +
+        MARK_BUTTONS.map(b => `<button type="button" data-mark="${b.mark}" title="${b.title}" aria-pressed="false">${b.html}</button>`).join('') +
         `<button type="button" data-fig title="Insert figure reference (Alt+F)">Fig</button>`;
 
     // Never blur the editor: a toolbar mousedown must not steal the selection.
@@ -85,6 +111,14 @@ function reposition(): void {
     }
     const figBtn = toolbar.querySelector('[data-fig]') as HTMLElement;
     figBtn.style.display = host.dataset.rteFigures === 'true' ? '' : 'none';
+
+    // Reflect the styles active over the selection as pressed buttons.
+    const active = activeMarksForSelection(host);
+    toolbar.querySelectorAll<HTMLElement>('[data-mark]').forEach(btn => {
+        const on = active.has(btn.getAttribute('data-mark')!);
+        btn.classList.toggle('is-active', on);
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
 
     // Show (hidden) to measure, then place above the selection, flipping below when the
     // top would clip, and clamping horizontally into the viewport.

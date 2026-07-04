@@ -352,9 +352,19 @@ html, body {
     transition: var(--transition-base), transform 0.15s ease;
 }
 
-/* Key- and figure-cards share one tightened padding footprint. */
+/* Key- and figure-cards share one tightened padding footprint. Cards are draggable,
+   so their chrome shows the grab cursor (see the text-field override below). */
 .key-card { padding: var(--space-md); cursor: grab; }
-.figure-card { padding: var(--space-md); display: flex; flex-direction: column; gap: var(--space-sm); cursor: pointer; }
+.figure-card { padding: var(--space-md); display: flex; flex-direction: column; gap: var(--space-sm); cursor: grab; }
+
+/* Text fields inside a draggable card — inputs, textareas, and the rich-text editor
+   hosts — show the caret so a mouse drag selects text instead of dragging the card
+   (dragging is also disabled on the card while a field is focused; see entityPanel /
+   setupCoupletFocus). */
+.key-card input, .key-card textarea,
+.taxon-card input, .taxon-card textarea,
+.figure-card input, .figure-card textarea,
+.rte-host { cursor: text; }
 
 .figure-card:last-of-type { border-bottom: none; }
 
@@ -573,7 +583,7 @@ html, body {
     display: flex;
     flex-direction: column;
     gap: var(--space-sm);
-    cursor: pointer;
+    cursor: grab;
     position: relative;
 }
 .taxon-card:last-of-type { border-bottom: none; }
@@ -707,6 +717,27 @@ html, body {
     background: var(--color-primary-light);
     color: var(--color-primary-hover);
 }
+/* Pressed/active: the style is applied over the current selection. */
+.format-toolbar button.is-active {
+    background: var(--color-primary);
+    color: #fff;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+.format-toolbar button.is-active:hover {
+    background: var(--color-primary-hover);
+    color: #fff;
+}
+/* Distinguish the sub/superscript buttons. The buttons are inline-flex, so their
+   `x` and `<sub>`/`<sup>` are flex items and `vertical-align` is ignored — use relative
+   positioning (which works on flex items) to nudge the digit down vs. up. */
+.format-toolbar sub,
+.format-toolbar sup {
+    position: relative;
+    font-size: 0.72em;
+    font-weight: 700;
+}
+.format-toolbar sub { top: 0.35em; }   /* nudge the digit below the x */
+.format-toolbar sup { top: -0.4em; }   /* nudge the digit above the x */
 
 /* Header row for the figure-reference picker popover. */
 .popover-header {
