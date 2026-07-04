@@ -156,15 +156,23 @@ export function renderEditorCards(store: KeyStore, uiState: UIStateStore, refres
         }
 
         const alt1Host = card.querySelector('.rte-host[data-field="alt1"]') as HTMLElement | null;
-        if (alt1Host) syncRichTextField(alt1Host, store.decodeTextReferencesForEditor(couplet.alt1));
+        if (alt1Host) {
+            alt1Host.setAttribute('aria-label', `Step ${displayNum}, first alternative description`);
+            syncRichTextField(alt1Host, store.decodeTextReferencesForEditor(couplet.alt1));
+        }
         const dest1El = syncField(card, 'input[data-field="dest1"]', dest1.inputValue);
+        dest1El?.setAttribute('aria-label', `Step ${displayNum}, first alternative destination`);
         dest1El?.classList.toggle('input-error', dest1.isUnresolved);
         dest1El?.classList.toggle('input-taxon-unlinked', !!dest1.isUnlinkedTaxon);
         syncCreateTaxonBtn(card, 'dest1', dest1.isUnlinkedTaxon);
 
         const alt2Host = card.querySelector('.rte-host[data-field="alt2"]') as HTMLElement | null;
-        if (alt2Host) syncRichTextField(alt2Host, store.decodeTextReferencesForEditor(couplet.alt2));
+        if (alt2Host) {
+            alt2Host.setAttribute('aria-label', `Step ${displayNum}, second alternative description`);
+            syncRichTextField(alt2Host, store.decodeTextReferencesForEditor(couplet.alt2));
+        }
         const dest2El = syncField(card, 'input[data-field="dest2"]', dest2.inputValue);
+        dest2El?.setAttribute('aria-label', `Step ${displayNum}, second alternative destination`);
         dest2El?.classList.toggle('input-error', dest2.isUnresolved);
         dest2El?.classList.toggle('input-taxon-unlinked', !!dest2.isUnlinkedTaxon);
         syncCreateTaxonBtn(card, 'dest2', dest2.isUnlinkedTaxon);

@@ -72,7 +72,6 @@ html, body {
 .app-shell {
     font-family: sans-serif;
     padding: var(--space-xl);
-    max-width: 1400px;
     margin: 0 auto;
     display: flex;
     flex-direction: column;
@@ -84,6 +83,7 @@ html, body {
     display: flex;
     gap: var(--space-xl);
     align-items: stretch;
+    justify-content: center;
     user-select: none;
     flex: 1;
     min-height: 0;
@@ -99,10 +99,10 @@ html, body {
     min-height: 0;
 }
 
-.editor-column { flex: 1.2; }
-.figure-column { flex: 1; }
-.taxa-column   { flex: 1; }
-.print-column  { flex: 0.8; }
+.editor-column { flex: 1.2; max-width: 700px; }
+.figure-column { flex: 1;   max-width: 600px; }
+.taxa-column   { flex: 1;   max-width: 600px; }
+.print-column  { flex: 0.8; max-width: 520px; }
 
 /* ==========================================
    UNIFIED INTERNAL SCROLL PANES
@@ -206,7 +206,6 @@ html, body {
     padding: 4px 0;
 }
 
-.menu-item:hover .menu-dropdown,
 .menu-trigger[aria-expanded="true"] + .menu-dropdown {
     display: block;
 }
@@ -1317,6 +1316,13 @@ button.popover-path-row:hover { background: var(--color-bg-muted); }
 .import-preview-empty {
     color: var(--color-text-muted);
     font-size: var(--text-base);
+    text-align: center;
+    padding: var(--space-2xl) var(--space-md);
+}
+/* Placeholder shown in the live publication view while the key has no steps. */
+.print-empty-notice {
+    color: var(--color-text-muted);
+    font-style: italic;
     text-align: center;
     padding: var(--space-2xl) var(--space-md);
 }

@@ -70,18 +70,20 @@ export function setupDialogs(store: KeyStore, uiState: UIStateStore, refreshAll:
     }, { signal });
 
     // --- DIALOG MODAL CLOSE TRIGGERS ---
-    document.getElementById('modal-shortcuts-close')?.addEventListener('click', () => {
-        modalShortcuts.style.display = 'none';
-    }, { signal });
-    document.getElementById('modal-options-close')?.addEventListener('click', () => {
-        modalOptions.style.display = 'none';
-    }, { signal });
-    document.getElementById('modal-about-close')?.addEventListener('click', () => {
-        modalAbout.style.display = 'none';
-    }, { signal });
-    document.getElementById('modal-project-close')?.addEventListener('click', () => {
-        modalProjectHub.style.display = 'none';
-    }, { signal });
+    // Close on the × button and on a backdrop click (a click that lands on the
+    // overlay itself rather than the modal window inside it).
+    const wireModalClose = (modal: HTMLElement, closeBtnId: string) => {
+        document.getElementById(closeBtnId)?.addEventListener('click', () => {
+            modal.style.display = 'none';
+        }, { signal });
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) modal.style.display = 'none';
+        }, { signal });
+    };
+    wireModalClose(modalShortcuts, 'modal-shortcuts-close');
+    wireModalClose(modalOptions, 'modal-options-close');
+    wireModalClose(modalAbout, 'modal-about-close');
+    wireModalClose(modalProjectHub, 'modal-project-close');
 
     // --- PROJECT WORKSPACE HUB ROW ACTIONS ---
     document.getElementById('project-hub-list')?.addEventListener('click', async (e) => {

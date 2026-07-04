@@ -24,17 +24,17 @@ export function confusablesToText(confusables: readonly ConfusableSpecies[]): st
 const SCIENTIFIC_NAME_ROW = `
         <div class="taxon-field-row">
             <label>Scientific name:</label>
-            <input type="text" class="input-sync taxon-input" data-field="scientificName" />
+            <input type="text" class="input-sync taxon-input" data-field="scientificName" aria-label="Scientific name" />
         </div>`;
 const AUCTOR_ROW = `
         <div class="taxon-field-row">
             <label>Auctor:</label>
-            <input type="text" class="input-sync taxon-input" data-field="auctor" />
+            <input type="text" class="input-sync taxon-input" data-field="auctor" aria-label="Author citation (auctor)" />
         </div>`;
 const VERNACULAR_NAME_ROW = `
         <div class="taxon-field-row">
             <label>Vernacular name:</label>
-            <input type="text" class="input-sync taxon-input" data-field="vernacularName" placeholder="Vernacular name" />
+            <input type="text" class="input-sync taxon-input" data-field="vernacularName" placeholder="Vernacular name" aria-label="Vernacular name" />
         </div>`;
 
 /**
@@ -55,23 +55,23 @@ function taxonCardMarkup(mode: NameDisplayMode): string {
         ${nameRows}
         <div class="taxon-field-row">
             <label>Synonyms (one per line):</label>
-            <textarea class="input-sync taxon-textarea" data-field="synonyms" rows="2"></textarea>
+            <textarea class="input-sync taxon-textarea" data-field="synonyms" rows="2" aria-label="Synonyms, one per line"></textarea>
         </div>
         <div class="taxon-field-row">
             <label>Description:</label>
-            <div class="rte-host taxon-rte" data-field="description"></div>
+            <div class="rte-host taxon-rte" data-field="description" aria-label="Taxon description"></div>
         </div>
         <div class="taxon-field-row">
             <label>Biology:</label>
-            <textarea class="input-sync taxon-textarea" data-field="biology" rows="3"></textarea>
+            <textarea class="input-sync taxon-textarea" data-field="biology" rows="3" aria-label="Biology"></textarea>
         </div>
         <div class="taxon-field-row">
             <label>Distribution:</label>
-            <textarea class="input-sync taxon-textarea" data-field="distribution" rows="2"></textarea>
+            <textarea class="input-sync taxon-textarea" data-field="distribution" rows="2" aria-label="Distribution"></textarea>
         </div>
         <div class="taxon-field-row">
             <label>Confusable species (name | how to distinguish, one per line):</label>
-            <textarea class="input-sync taxon-textarea" data-field="confusables" rows="3"></textarea>
+            <textarea class="input-sync taxon-textarea" data-field="confusables" rows="3" aria-label="Confusable species, one per line"></textarea>
         </div>
     `;
 }

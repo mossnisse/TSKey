@@ -68,8 +68,14 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
         create: fig => createFigureCard(fig, store, uiState, refreshAll),
         onRemove: destroyRichTextFieldsIn,
         update: (block, fig, index) => {
+            const figNum = index + 1;
             const labelEl = block.querySelector('.figure-card-title');
-            if (labelEl) labelEl.textContent = `${index + 1}.`;
+            if (labelEl) labelEl.textContent = `${figNum}.`;
+
+            block.querySelector('.btn-trigger-upload')?.setAttribute('aria-label', `Choose image for Figure ${figNum}`);
+            block.querySelector('.btn-remove-image')?.setAttribute('aria-label', `Remove image for Figure ${figNum}`);
+            block.querySelector('.figure-input-filename')?.setAttribute('aria-label', `Figure ${figNum} filename`);
+            block.querySelector('.rte-host[data-field="caption"]')?.setAttribute('aria-label', `Figure ${figNum} caption`);
 
             block.classList.toggle('is-selected', store.getSelectedFigureIds().has(fig.id));
 

@@ -80,6 +80,12 @@ export function renderPrintView(store: KeyStore, uiState: UIStateStore) {
     // Drives the dash-alignment rule for lettered/minimal styles (see style.css).
     container.dataset.leadFormat = uiState.leadFormat;
 
+    if (model.isEmpty) {
+        container.innerHTML = `<p class="print-empty-notice">This preview updates as you build your key. Add a step in the editor to get started.</p>`;
+        return;
+    }
+    container.querySelector('.print-empty-notice')?.remove();
+
     reconcileCards<RenderableCouplet>({
         container,
         items: model.couplets,

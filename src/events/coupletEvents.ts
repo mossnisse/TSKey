@@ -6,7 +6,7 @@ import type { KeyStore, Couplet } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { batchedRefresh, commitRichField, DEBOUNCE_TYPING_MS, setupCardDragReorder } from './shared.ts';
 import { resolveDestination, parseDestinationInput, buildIdToIndexMap, buildTaxaContext } from '../utils.ts';
-import { findTaxonByAnyName } from '../store';
+import { findTaxonByAnyName, workspaceStorage } from '../store';
 import { scrollIntoViewAndFlash } from './navigationEvents.ts';
 import { showToast } from '../uiRenderer.ts';
 
@@ -14,22 +14,59 @@ import { showToast } from '../uiRenderer.ts';
 // when focus moves to a different card, not when tabbing between a card's two fields.
 let lastFocusedCardId: number | null = null;
 
-/** Title input: commit a trimmed rename on blur, reverting to the current name if blank. */
+/** Title input: commit a trimmed rename on blur or Enter, reverting to the current name if blank. */
 export function setupTitleEditing(store: KeyStore, refreshAll: () => void, signal: AbortSignal) {
     const titleInput = document.getElementById('key-title-input') as HTMLInputElement | null;
     if (!titleInput) return;
 
-    titleInput.addEventListener('blur', () => {
-        store.endTypingSession();
+    let committing = false;
+    const commit = async () => {
+        if (committing) return;
+        committing = true;
+        try {
+            store.endTypingSession();
 
-        const newTitle = titleInput.value.trim();
-        if (!newTitle) {
-            titleInput.value = store.getTitle();
-            return;
+            const newTitle = titleInput.value.trim();
+            if (!newTitle) {
+                titleInput.value = store.getTitle();
+                return;
+            }
+
+            // Reject a rename that would shadow a different saved project (the current
+            // project's own persisted record doesn't count as a collision).
+            const currentPersisted = store.getPersistedTitle().toLowerCase();
+            const projectList = await workspaceStorage.getProjectList();
+            const collides = projectList.some(p => {
+                const name = p.name.toLowerCase();
+                return name === newTitle.toLowerCase() && name !== currentPersisted;
+            });
+            if (collides) {
+                showToast(`⚠️ A project named "${newTitle}" already exists. Reverted the title.`, "error");
+                titleInput.value = store.getTitle();
+                return;
+            }
+
+            store.setTitle(newTitle);
+            batchedRefresh(refreshAll);
+        } finally {
+            committing = false;
         }
+    };
 
-        store.setTitle(newTitle);
-        batchedRefresh(refreshAll);
+    titleInput.addEventListener('blur', commit, { signal });
+
+    // Enter commits the rename immediately instead of only on focus-out; Escape
+    // abandons the edit, restoring the current title. Both then drop focus.
+    titleInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            commit();
+            titleInput.blur();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            titleInput.value = store.getTitle();
+            titleInput.blur();
+        }
     }, { signal });
 }
 
@@ -225,12 +262,6 @@ export function setupCoupletFocus(keyContainer: HTMLElement, store: KeyStore, ui
                 // Encode any [fig: N] tokens that the debounce may not have reached
                 if ((field === 'alt1' || field === 'alt2') && id !== null) {
                     encodeCoupletField(store, id, field);
-                }
-
-                // Trigger the warning toast if the field has an unresolved destination
-                if (target.classList.contains('input-error') && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) && card) {
-                    const invalidVal = target.value;
-                    showToast(`⚠️ Step "${invalidVal}" doesn't exist yet — kept as a pending link.`, "error");
                 }
 
                 // Evaluate next target context defensively (ensuring target is an Element node)

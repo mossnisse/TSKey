@@ -417,6 +417,19 @@ export function setupMenuBarNavigation(signal: AbortSignal) {
         }
     }, { signal });
 
+    // Windows-style menus: nothing opens on plain hover, but once a menu is
+    // open, hovering a sibling trigger switches the open dropdown to it.
+    menuBar.addEventListener('pointerover', (e) => {
+        const trigger = (e.target as HTMLElement).closest('.menu-trigger') as HTMLButtonElement | null;
+        if (!trigger || trigger.getAttribute('aria-expanded') === 'true') return;
+
+        const anyOpen = getTriggers().some(t => t.getAttribute('aria-expanded') === 'true');
+        if (anyOpen) {
+            closeAllMenus();
+            trigger.setAttribute('aria-expanded', 'true');
+        }
+    }, { signal });
+
     document.addEventListener('click', () => closeAllMenus(), { signal });
 
     menuBar.addEventListener('keydown', (e) => {
