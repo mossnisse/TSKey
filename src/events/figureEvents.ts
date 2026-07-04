@@ -19,16 +19,12 @@ import type { RichTextEditor } from '../editor/richText/index.ts';
 // item / shortcut can target it even though clicking the menu blurs the editor.
 let lastFigureField: { host: HTMLElement; selection: { start: number; end: number } | null } | null = null;
 
-/** True for a mounted figure-aware rich-text field (couplet alt1/alt2 or taxa
- *  description) — the fields where figure references are allowed. */
 export function isFigureRefHost(el: EventTarget | null): el is HTMLElement {
     return el instanceof HTMLElement
         && el.classList.contains('rte-host')
         && el.dataset.rteFigures === 'true';
 }
 
-/** Resolves the field to insert into and the caret to insert at: the focused editor,
- *  else the most recently focused one. */
 function resolveFigureTarget(): { editor: RichTextEditor; selection: { start: number; end: number } | null } | null {
     const active = document.activeElement;
     if (isFigureRefHost(active)) {
@@ -42,11 +38,8 @@ function resolveFigureTarget(): { editor: RichTextEditor; selection: { start: nu
     return null;
 }
 
-/**
- * Opens a figure picker at (x, y) and inserts the chosen `[fig: N]` reference at the
- * target field's caret. A chip editor can't host an editable empty `[fig: ]` skeleton,
- * so we pick a real figure and insert a complete, resolvable reference instead.
- */
+// A chip editor can't host an editable empty `[fig: ]` skeleton, so this picks a real
+// figure and inserts a complete, resolvable reference instead.
 export function openFigureReferencePicker(store: KeyStore, x: number, y: number, signal: AbortSignal): void {
     const target = resolveFigureTarget();
     if (!target) {
@@ -113,8 +106,6 @@ export function setupFigurePanel(store: KeyStore, uiState: UIStateStore, refresh
                 const card = img.closest('.figure-card') as HTMLElement | null;
                 const num = card?.querySelector('.figure-card-title')?.textContent?.trim() ?? '';
                 const captionHost = card?.querySelector('.figure-input-caption') as HTMLElement | null;
-                // Strip mark markers so the lightbox caption shows styled text as plain
-                // prose (captions carry no figure tokens, so no figures are needed).
                 const caption = renderPlainText((captionHost ? getFieldEditor(captionHost)?.getValue() : '') ?? '');
                 openImageLightbox(src, [num, caption].filter(Boolean).join('  '));
                 return true;
@@ -179,9 +170,8 @@ export function setupFigurePanel(store: KeyStore, uiState: UIStateStore, refresh
     }, { signal });
 }
 
-/** Commits a rich-text caption edit: immediate store sync + undo checkpoint, then a
- *  debounced refresh. Captions are mark-only (no figure tokens), so there is no encode
- *  step. Wired to the mounted editor's onChange. */
+/** Commits a rich-text caption edit: immediate store sync, then a debounced refresh
+ *  (captions are mark-only, no figure-token encode needed). */
 export function commitFigureCaption(
     store: KeyStore,
     uiState: UIStateStore,
@@ -194,12 +184,8 @@ export function commitFigureCaption(
     uiState.typing.figures.extendTimeout(DEBOUNCE_TYPING_MS, () => batchedRefresh(refreshAll));
 }
 
-/**
- * Figure-reference tool: tracks the last-focused figure-aware editor + caret (so the
- * menu item can target it after the click steals focus) and wires the Insert Figure
- * Reference menu command to the figure picker. The Alt+F shortcut lives in
- * keyboardShortcuts.ts. Tracking is document-level so taxa descriptions qualify too.
- */
+// Tracks the last-focused figure-aware editor + caret so the menu item can target it
+// after the click steals focus. Tracking is document-level so taxa descriptions qualify too.
 export function setupFigureReference(store: KeyStore, signal: AbortSignal) {
     const captureCaret = (e: Event) => {
         const host = (e.target instanceof HTMLElement) ? e.target.closest('.rte-host') as HTMLElement | null : null;
@@ -212,7 +198,6 @@ export function setupFigureReference(store: KeyStore, signal: AbortSignal) {
     );
 
     document.querySelector('#cmd-insert-figref')?.addEventListener('click', (e) => {
-        // Anchor the picker near the menu item that opened it.
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
         openFigureReferencePicker(store, rect.left, rect.bottom + 4, signal);
     }, { signal });

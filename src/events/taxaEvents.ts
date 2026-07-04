@@ -7,9 +7,8 @@ import type { UIStateStore } from '../uiState.ts';
 import { setupEntityPanel } from './entityPanel.ts';
 import { batchedRefresh, DEBOUNCE_TYPING_MS } from './shared.ts';
 
-/** Plain string fields editable directly as input/textarea values. The `description`
- *  field is edited in a mounted rich-text editor (see ui/taxa.ts + commitTaxonRichField),
- *  so it is committed there rather than through the delegated input path. */
+// `description` is edited in a mounted rich-text editor (ui/taxa.ts + commitTaxonRichField)
+// and committed there rather than through the delegated input path.
 const SIMPLE_FIELDS = new Set<keyof Taxon>(['scientificName', 'auctor', 'vernacularName', 'description', 'biology', 'distribution']);
 
 /** Encodes any complete [fig: N] tokens in a taxon's description to stable [figID: N]. */
@@ -20,11 +19,8 @@ export function encodeTaxonDescription(store: KeyStore, id: number): void {
     if (encoded !== taxon.description) store.updateTaxon(id, { description: encoded });
 }
 
-/**
- * Commits a rich-text description edit: immediate store sync + undo checkpoint, then a
- * debounced figure-token encode, draft relink, and refresh. Wired to the mounted
- * editor's onChange; blur-time encoding runs via the panel's settleField hook.
- */
+/** Commits a rich-text description edit: immediate store sync, then a debounced
+ *  figure-token encode, draft relink, and refresh. */
 export function commitTaxonRichField(
     store: KeyStore,
     uiState: UIStateStore,
@@ -94,8 +90,7 @@ export function setupTaxaPanel(store: KeyStore, uiState: UIStateStore, refreshAl
         reorder: (src, tgt) => store.reorderTaxa(src, tgt),
         // A settled name edit may make a lead's draft match this taxon — link it.
         onSettle: () => store.relinkTaxonDrafts(),
-        // Encode the description's figure tokens on blur (the debounce is cancelled when
-        // focus leaves the field, so this guarantees a stable [figID: N] gets stored).
+        // Blur cancels the debounced encode, so encode figure tokens here too.
         settleField: (id, field) => { if (field === 'description') encodeTaxonDescription(store, id); },
         keepFocusWithin: ['#add-taxon-btn', '.format-toolbar'],
     });

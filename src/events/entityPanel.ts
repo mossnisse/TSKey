@@ -42,11 +42,8 @@ export interface EntityPanelConfig {
      * moved to another panel control (e.g. taxa relinking a lead's draft).
      */
     onSettle?: () => boolean;
-    /**
-     * Optional: runs when a specific field's edit settles (typing pause / blur), for
-     * per-field commit work the delegated input path doesn't do — e.g. encoding figure
-     * tokens in a mounted rich-text field. `field` is the settling field's data-field.
-     */
+    /** Optional: per-field commit work on settle (e.g. encoding figure tokens in a
+     *  mounted rich-text field), for work the delegated input path doesn't do. */
     settleField?: (id: number, field: string) => void;
     /** Optional: handle a click before selection logic; return true if it was handled. */
     extraClick?: (target: HTMLElement, e: MouseEvent) => boolean;
@@ -129,9 +126,8 @@ export function setupEntityPanel(config: EntityPanelConfig): void {
         batchedRefresh(refreshAll);
     }, { signal });
 
-    // --- Field focus: disable card dragging so a mouse text-selection inside a field
-    // selects text instead of starting a drag (a draggable ancestor otherwise hijacks
-    // the gesture). Mirrors the key-editor cards (setupCoupletFocus). ---
+    // Disable card dragging while a field has focus, so mouse text-selection inside it
+    // doesn't get hijacked into a drag.
     container.addEventListener('focusin', (e) => {
         const target = e.target as HTMLElement;
         if (!target.matches('input, textarea, .rte-host')) return;
@@ -145,15 +141,14 @@ export function setupEntityPanel(config: EntityPanelConfig): void {
         if (!target.matches('input, textarea, .rte-host')) return;
         const card = target.closest(cardSelector) as HTMLElement | null;
         if (!card) return;
-        card.draggable = true;   // re-enable dragging once the field is left
+        card.draggable = true;
 
         const id = Number(card.getAttribute('data-id'));
         const field = target.getAttribute('data-field');
         const fieldKey = id && field ? `${fieldKeyPrefix}-${id}-${field}` : null;
 
         typing.end(fieldKey, () => {
-            // Per-field settle work (e.g. encoding figure tokens) before the panel-wide
-            // settle, since blur cancels the debounced encode in the field's onChange.
+            // Blur cancels the field's debounced encode, so run settleField first.
             if (field) settleField?.(id, field);
             const settled = onSettle?.() ?? false;
 

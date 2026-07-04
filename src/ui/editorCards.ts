@@ -15,7 +15,6 @@ const ALT_PLACEHOLDER: Record<'alt1' | 'alt2', string> = {
     alt2: 'Enter contrast alternative description...',
 };
 
-/** Mounts the alt1/alt2 rich-text editors on a fresh card, wiring each to the store. */
 function mountCoupletEditors(card: HTMLElement, couplet: Couplet, store: KeyStore, uiState: UIStateStore, refreshAll: () => void) {
     (['alt1', 'alt2'] as const).forEach(field => {
         const host = card.querySelector(`.rte-host[data-field="${field}"]`) as HTMLElement | null;

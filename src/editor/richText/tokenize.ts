@@ -1,14 +1,7 @@
-// editor/richText/tokenize.ts
-// Pure transform: source string -> flat/nested Atom tree, driven by a schema.
-//
-// Tokens are atomic and take precedence, but a mark may still SPAN a token
-// (`**bold [fig: 1] text**` is one bold run wrapping text + a chip + text). To make
-// both true at once, token characters are masked to ' ' in a parallel string;
-// mark delimiters are matched against that mask (so a delimiter can never be found
-// inside a token, and a token never breaks a delimiter pair), while the atoms are
-// emitted from the real value with tokens spliced back in. Unbalanced or still-being-
-// typed delimiters (no matching close) stay literal text — so `**bold` reads as plain
-// text until the closing `**` is typed, then collapses into a bold atom.
+// Source string -> Atom tree. Tokens are atomic but a mark may still span one
+// (`**bold [fig: 1] text**`): token chars are masked to ' ' in a parallel string so
+// mark delimiters are matched against the mask, then atoms are emitted from the real
+// value with tokens spliced back in.
 
 import type { EditorSchema, InlineMark } from './schema.ts';
 
@@ -25,7 +18,7 @@ export interface MarkAtom {
 
 export interface TokenAtom {
     kind: 'token';
-    src: string;        // the raw matched source (chip round-trips to exactly this)
+    src: string;
     html: string;
     className: string;
 }
@@ -38,31 +31,28 @@ interface Hit {
     atom: TokenAtom;
 }
 
-/** Finds the index of a mark's closing delimiter in [from, end), or -1.
- *  For a single-char symmetric delimiter (italic `*`, `~`, `^`) a longer run of the
- *  same char is another mark's delimiter (e.g. bold's `**`), so a *paired* run and its
- *  mate are skipped over — but an unpaired longer run has no mate to close, so its
- *  first char serves as our closer (typing `*a*` then another `*` keeps the italic
- *  alive instead of collapsing the whole span back to literal text). */
+// For a single-char symmetric delimiter, a longer same-char run belongs to another
+// mark (bold's `**`), so a *paired* run and its mate are skipped; an unpaired longer
+// run has no mate, so its first char closes us (keeps `*a*` + another `*` as italic).
 export function findClose(text: string, from: number, open: string, close: string, end: number = text.length): number {
     if (open === close && close.length === 1) {
         const c = close;
-        let insideLongRun = false;   // between a skipped longer run and its mate
+        let insideLongRun = false;
         let j = from;
         while (j < end) {
             if (text[j] !== c) { j++; continue; }
             let runEnd = j;
             while (runEnd + 1 < end && text[runEnd + 1] === c) runEnd++;
-            if (runEnd === j) return j;                    // isolated single char
+            if (runEnd === j) return j;
             if (insideLongRun) {
-                insideLongRun = false;                     // the mate: skip it too
+                insideLongRun = false;
             } else {
                 const pat = c.repeat(runEnd - j + 1);
                 const mate = text.indexOf(pat, runEnd + 1);
                 if (mate !== -1 && mate + pat.length <= end) {
-                    insideLongRun = true;                  // paired: skip both runs
+                    insideLongRun = true;
                 } else {
-                    return j;                              // unpaired: first char closes us
+                    return j;
                 }
             }
             j = runEnd + 1;
@@ -73,7 +63,6 @@ export function findClose(text: string, from: number, open: string, close: strin
     return idx !== -1 && idx + close.length <= end ? idx : -1;
 }
 
-/** Emits value[lo, hi) as text atoms, splicing back any tokens that start within it. */
 function emitText(atoms: Atom[], value: string, hitByStart: Map<number, Hit>, lo: number, hi: number): void {
     let textStart = lo;
     let i = lo;
@@ -91,8 +80,6 @@ function emitText(atoms: Atom[], value: string, hitByStart: Map<number, Hit>, lo
     if (hi > textStart) atoms.push({ kind: 'text', value: value.slice(textStart, hi) });
 }
 
-/** Recursive-descent parse of marks over value[lo, hi), matching delimiters against
- *  the token-masked string and extracting tokens into the emitted text. */
 function parseMarks(
     value: string,
     masked: string,
@@ -114,7 +101,7 @@ function parseMarks(
             if (i + mark.open.length > hi || !masked.startsWith(mark.open, i)) continue;
             const contentStart = i + mark.open.length;
             const closeIdx = findClose(masked, contentStart, mark.open, mark.close, hi);
-            if (closeIdx <= contentStart) continue; // no close, or empty content
+            if (closeIdx <= contentStart) continue;
             flush(i);
             const children: Atom[] = [];
             parseMarks(value, masked, ordered, hitByStart, contentStart, closeIdx, children);
@@ -129,8 +116,8 @@ function parseMarks(
     flush(hi);
 }
 
-/** Collects every non-overlapping token hit, resolving overlaps greedily by earliest
- *  start (ties: longest match), so a `[figID: 5]` is one atom, never split. */
+// Resolves overlaps greedily by earliest start (ties: longest match) so e.g. a
+// `[figID: 5]` is one atom, never split.
 function collectHits(value: string, schema: EditorSchema): Hit[] {
     const rawHits: Hit[] = [];
     for (const token of schema.tokens) {
@@ -148,16 +135,14 @@ function collectHits(value: string, schema: EditorSchema): Hit[] {
     const hits: Hit[] = [];
     let claimed = 0;
     for (const hit of rawHits) {
-        if (hit.start < claimed) continue; // overlapped by an earlier-claimed token
+        if (hit.start < claimed) continue;
         hits.push(hit);
         claimed = hit.end;
     }
     return hits;
 }
 
-/** Blanks token spans to spaces (a non-delimiter, length-preserving char) so mark
- *  delimiters can't be matched inside a token, and a token between two delimiters
- *  never breaks the pair. Offsets stay 1:1 with `value`. */
+// Blanks token spans to spaces (length-preserving) so mark delimiters never match inside one.
 function buildMask(value: string, hits: readonly Hit[]): string {
     if (hits.length === 0) return value;
     const chars = value.split('');
@@ -167,13 +152,11 @@ function buildMask(value: string, hits: readonly Hit[]): string {
     return chars.join('');
 }
 
-/** The token-masked view of `value` (see buildMask). Shared with commands.ts so mark
- *  toggling detects delimiters against exactly the same masking the tokenizer uses. */
+// Shared with commands.ts so mark toggling uses the same masking as the tokenizer.
 export function maskTokens(value: string, schema: EditorSchema): string {
     return buildMask(value, collectHits(value, schema));
 }
 
-/** Source string -> Atom tree: collect tokens, mask them, then parse marks around them. */
 export function tokenize(value: string, schema: EditorSchema): Atom[] {
     if (!value) return [];
 
@@ -181,7 +164,6 @@ export function tokenize(value: string, schema: EditorSchema): Atom[] {
     const masked = buildMask(value, hits);
     const hitByStart = new Map<number, Hit>(hits.map(h => [h.start, h]));
 
-    // Longer openers first so `**` wins over `*`.
     const ordered = [...schema.marks].sort((a, b) => b.open.length - a.open.length);
     const atoms: Atom[] = [];
     parseMarks(value, masked, ordered, hitByStart, 0, value.length, atoms);

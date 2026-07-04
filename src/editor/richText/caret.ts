@@ -1,19 +1,6 @@
-// editor/richText/caret.ts
-// The bridge between the contenteditable DOM and the source string. Three concerns,
-// all sharing ONE accounting convention so offsets round-trip exactly:
-//
-//   source length of a node = text -> textContent.length
-//                             chip -> data-src.length
-//                             mark -> data-open.length + <children> + data-close.length
-//
-//   * serialize(root)      DOM -> source string (reads user edits back out)
-//   * captureRange(root)   current selection -> {start,end} source offsets
-//   * setSelection(...)    {start,end} source offsets -> DOM selection (after re-render)
-//
-// The per-node length rule lives in exactly one place (sourceLen / the *Len helpers)
-// so captureRange (offsetOfPoint) and setSelection (collectStops) can never drift.
-// Because mark delimiters are hidden and chips are atomic, a source offset may point
-// "inside" a hidden region; restoration clamps to the nearest real caret position.
+// Bridges the contenteditable DOM and the source string. Per-node source length
+// (text/chip/mark) is computed in one place (sourceLen / *Len helpers) so
+// captureRange and setSelection can never drift on the accounting rule.
 
 const TEXT = Node.TEXT_NODE;
 const ELEMENT = Node.ELEMENT_NODE;
@@ -26,8 +13,6 @@ const chipLen = (el: HTMLElement): number => (el.dataset.src ?? '').length;
 const openLen = (el: HTMLElement): number => (el.dataset.open ?? '').length;
 const closeLen = (el: HTMLElement): number => (el.dataset.close ?? '').length;
 
-/** Full source length of a node's subtree — the single source of truth for the
- *  accounting rule, consumed by both the DOM->offset and offset->DOM directions. */
 function sourceLen(node: Node): number {
     if (node.nodeType === TEXT) return (node.textContent ?? '').length;
     const el = node as HTMLElement;
@@ -37,7 +22,6 @@ function sourceLen(node: Node): number {
     return s;
 }
 
-/** DOM subtree -> the source string it represents. */
 export function serialize(root: Node): string {
     let out = '';
     for (const child of Array.from(root.childNodes)) {
@@ -58,9 +42,8 @@ export function serialize(root: Node): string {
 interface TextStop { node: Text; start: number; end: number; }
 interface BoundaryPos { src: number; container: Node; offset: number; }
 
-/** One DFS that records, in source-offset space: the range each text node covers, and
- *  a caret-placeable DOM position at every inter-child boundary (used to land the caret
- *  next to chips / at the very end, where no text node exists). */
+// Records each text node's source-offset range plus a caret-placeable DOM position at
+// every inter-child boundary (needed to land the caret next to chips / at the very end).
 function collectStops(root: Node): { stops: TextStop[]; positions: BoundaryPos[] } {
     const stops: TextStop[] = [];
     const positions: BoundaryPos[] = [];
@@ -92,12 +75,9 @@ function collectStops(root: Node): { stops: TextStop[]; positions: BoundaryPos[]
     return { stops, positions };
 }
 
-/** Source offset of a single (node, offset) DOM caret position within `root`. */
 function offsetOfPoint(root: Node, node: Node, offset: number): number {
-    // Chips are atomic: no caret position exists inside one. A point inside a chip's
-    // subtree (the browser can produce one — e.g. a triple-click selection endpoint,
-    // or a caret parked at the chip after Backspace) is snapped to the chip's
-    // boundary: its start when at the leading edge, otherwise its end.
+    // Chips are atomic: snap a point inside a chip's subtree (browsers can produce one,
+    // e.g. triple-click or Backspace) to the chip's start or end boundary.
     let anc: Node | null = node;
     while (anc && anc !== root) {
         if (anc.nodeType === ELEMENT && isChip(anc as Element)) {
@@ -111,13 +91,11 @@ function offsetOfPoint(root: Node, node: Node, offset: number): number {
         anc = anc.parentNode;
     }
 
-    // Accumulate the source length of everything before the point, in document order.
     let total = 0;
     let done = false;
 
     const walk = (el: Node) => {
         if (done) return;
-        // Point given as (element, offset): it sits before child index `offset`.
         if (el === node && el.nodeType !== TEXT) {
             for (let i = 0; i < offset; i++) total += sourceLen(el.childNodes[i]);
             done = true;
@@ -125,7 +103,6 @@ function offsetOfPoint(root: Node, node: Node, offset: number): number {
         }
         for (const child of Array.from(el.childNodes)) {
             if (done) return;
-            // Point given as (textNode, offset): `offset` chars into this text node.
             if (child === node && child.nodeType === TEXT) {
                 total += offset;
                 done = true;
@@ -138,10 +115,10 @@ function offsetOfPoint(root: Node, node: Node, offset: number): number {
                 if (isChip(c)) {
                     total += chipLen(c);
                 } else {
-                    total += openLen(c); // enter: hidden opener
+                    total += openLen(c);
                     walk(c);
                     if (done) return;
-                    total += closeLen(c); // leave: hidden closer
+                    total += closeLen(c);
                 }
             }
         }
@@ -151,7 +128,6 @@ function offsetOfPoint(root: Node, node: Node, offset: number): number {
     return total;
 }
 
-/** Current selection as source offsets, or null when the selection isn't in `root`. */
 export function captureRange(root: HTMLElement): { start: number; end: number } | null {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return null;
@@ -162,8 +138,7 @@ export function captureRange(root: HTMLElement): { start: number; end: number } 
     return { start: Math.min(a, b), end: Math.max(a, b) };
 }
 
-/** Maps a source offset to a concrete DOM caret position, clamping into hidden regions
- *  and chips to the nearest real position (and to the very end when past all text). */
+// Clamps into hidden regions/chips to the nearest real caret position.
 function locate(root: HTMLElement, target: number, stops: TextStop[], positions: BoundaryPos[]): { node: Node; offset: number } {
     for (const s of stops) {
         if (target >= s.start && target <= s.end) return { node: s.node, offset: target - s.start };
@@ -178,7 +153,6 @@ function locate(root: HTMLElement, target: number, stops: TextStop[], positions:
     return { node: best.container, offset: best.offset };
 }
 
-/** Restores a selection (collapsed when start===end) from source offsets. */
 export function setSelection(root: HTMLElement, start: number, end: number): void {
     const sel = window.getSelection();
     if (!sel) return;

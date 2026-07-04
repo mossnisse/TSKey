@@ -148,8 +148,7 @@ export function setupNavigationClicks(store: KeyStore, uiState: UIStateStore, si
             return;
         }
 
-        // 4. Editor figure chip (a [fig: N] / [figID: N] reference rendered by the
-        // rich-text editor) → its figure. The chip's data-src carries the raw token.
+        // 4. Editor figure chip → its figure (data-src carries the raw token).
         const chip = target.closest<HTMLElement>('.rte-host .tsk-chip[data-src]');
         if (chip) {
             const token = figureTokenAtIndex(chip.getAttribute('data-src') ?? '', 0);
@@ -170,8 +169,7 @@ export function setupNavigationClicks(store: KeyStore, uiState: UIStateStore, si
 export function setupContextMenu(store: KeyStore, refreshAll: () => void, signal: AbortSignal) {
     document.addEventListener('contextmenu', (e) => {
         const target = e.target as HTMLElement;
-        // Keep the native context menu inside editable fields (incl. rich-text hosts,
-        // so right-click still offers spellcheck / copy-paste inside the editors).
+        // Keep the native context menu inside editable fields, incl. rich-text hosts.
         if (target.closest('input, textarea, .rte-host')) return;
 
         const host = target.closest('.key-card') || target.closest('.print-step-block');

@@ -1,9 +1,5 @@
-// ui/richTextField.ts
-// Mount/lifecycle adapter that lets a live RichTextEditor stand in for the plain
-// textareas the card reconcilers used to render. Each editor instance is stashed on
-// its host element (`_rte`) so the refresh pass can push new values (setValue), the
-// reconciler can tear it down on card removal (destroy), and the format toolbar /
-// figure-reference tool can find the editor a selection sits in.
+// Mount/lifecycle adapter: lets a live RichTextEditor stand in for the plain textareas
+// the card reconcilers used to render. Each instance is stashed on its host (`_rte`).
 
 import { RichTextEditor, defaultMarks, figureTokenRule } from '../editor/richText/index.ts';
 import type { EditorSchema } from '../editor/richText/index.ts';
@@ -20,9 +16,6 @@ export interface RichTextFieldOptions {
     onChange: (value: string) => void;
 }
 
-/** Mounts a RichTextEditor on `host`, stashing the instance for later sync/teardown.
- *  Figure-aware fields are flagged (`data-rte-figures`) so the toolbar knows to offer
- *  the insert-figure button and the figure-reference tool can target them. */
 export function mountRichTextField(host: HTMLElement, opts: RichTextFieldOptions): RichTextEditor {
     const editor = new RichTextEditor(host, {
         schema: opts.schema,
@@ -35,36 +28,20 @@ export function mountRichTextField(host: HTMLElement, opts: RichTextFieldOptions
     return editor;
 }
 
-/** The editor mounted on a host, if any. */
 export function getFieldEditor(host: HTMLElement | null): RichTextEditor | undefined {
     return host ? (host as RteHost)._rte : undefined;
 }
 
-/** Pushes a fresh value into a mounted field during a refresh, without clobbering an
- *  in-progress edit. Skips the focused editor entirely — exactly like syncField for
- *  textareas — because while focused the editor is the source of truth (its onChange
- *  already keeps the store in sync). setValue's own guard only skips the focused *echo*
- *  case (next === getValue), which is not enough: a refresh that fires in the ~1 frame
- *  between a keystroke and the editor's rAF commit would carry a momentarily-stale value
- *  (store not yet updated) that differs from the live DOM, and setValue would cancel the
- *  pending rerender and re-render the stale value — dropping the just-typed character.
- *  Any store change made while focused (e.g. figure renumbering) is applied on the next
- *  refresh after blur. */
+// Skips the focused editor (it's the source of truth) and one with an uncommitted
+// pending edit — otherwise a refresh racing the editor's rAF commit could drop a
+// just-typed character by rewriting the DOM with a momentarily-stale store value.
 export function syncRichTextField(host: HTMLElement, value: string): void {
     const rte = (host as RteHost)._rte;
     if (!rte) return;
-    // Skip the focused editor (it's the source of truth), and also one that has an
-    // uncommitted pending edit — e.g. a char typed and then blurred within the same
-    // frame: it isn't the active element, but its DOM edit is newer than the store
-    // value we'd be handing back, so setValue would cancel the pending rerender and
-    // drop the character. The pending edit's own rerender will commit + re-sync.
     if (document.activeElement === host || rte.hasPendingEdit()) return;
     rte.setValue(value);
 }
 
-/** Destroys every editor mounted within (and on) `root`, releasing its DOM listeners.
- *  Called from the reconciler's onRemove and before any manual container teardown, so
- *  editors never leak on card delete / reorder / project switch. */
 export function destroyRichTextFieldsIn(root: HTMLElement): void {
     const hosts: HTMLElement[] = [...root.querySelectorAll<HTMLElement>('.rte-host')];
     if (root.matches?.('.rte-host')) hosts.push(root);
@@ -77,12 +54,9 @@ export function destroyRichTextFieldsIn(root: HTMLElement): void {
     }
 }
 
-// Reference-keyed cache for the figure lookups, shared by every mounted editor. The
-// token rule's getter runs once per chip per re-render (i.e. every keystroke), and each
-// build is O(figures); without this it would rebuild all four maps every time. Every
-// store mutation replaces `state.figures` with a new array (see KeyStore add/update/
-// reorder/delete/undo/load), so an unchanged array reference means unchanged lookups —
-// we rebuild only on a real figure change, not per chip.
+// Cached by array reference: every store mutation replaces `state.figures` with a new
+// array, so an unchanged reference means lookups are still valid — avoids rebuilding
+// on every chip re-render (the token rule's getter runs per chip per keystroke).
 let cachedFigures: readonly Figure[] | null = null;
 let cachedLookups: FigureLookups | null = null;
 function liveFigureLookups(store: KeyStore): FigureLookups {
@@ -94,14 +68,10 @@ function liveFigureLookups(store: KeyStore): FigureLookups {
     return cachedLookups!;
 }
 
-/** Schema for a figure-aware field (couplet alt1/alt2, taxa description): all four
- *  marks plus a figure-token rule reading *live* lookups, so chips renumber as figures
- *  are added/reordered without re-mounting the editor. */
 export function figureFieldSchema(store: KeyStore): EditorSchema {
     return { marks: defaultMarks, tokens: [figureTokenRule(() => liveFigureLookups(store))] };
 }
 
-/** Schema for a mark-only field (figure caption): text styling, no figure tokens. */
 export function markOnlyFieldSchema(): EditorSchema {
     return { marks: defaultMarks, tokens: [] };
 }

@@ -1,12 +1,6 @@
-// editor/richText/render.ts
-// Pure transform: Atom tree -> HTML string for the contenteditable projection.
-//
-// The render is *hybrid*: marks render as their visual tag (bold looks bold) with the
-// markdown delimiters hidden, and tokens render as atomic, non-editable chips. The
-// caret math (caret.ts) and DOM->source read-back (serialize) reconstruct the hidden
-// source purely from data-* attributes, so every element records exactly what it hides:
-//   - a mark wrapper carries data-open / data-close (its hidden delimiter strings)
-//   - a token chip carries data-src (its full raw source) and contenteditable="false"
+// Atom tree -> HTML for the contenteditable projection. Marks render as their visual
+// tag with delimiters hidden in data-open/data-close; tokens render as atomic chips
+// carrying data-src — caret.ts reconstructs the hidden source purely from these attrs.
 
 import { escapeHTML } from '../../utils.ts';
 import type { Atom } from './tokenize.ts';

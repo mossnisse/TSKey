@@ -119,9 +119,7 @@ export function renderTaxa(store: KeyStore, uiState: UIStateStore, refreshAll: (
     if (!container) return;
 
     const mode = uiState.nameDisplayMode;
-    // The leading name field depends on the display setting; when it changes, drop
-    // the existing cards so the reconciler rebuilds them with the new field order.
-    // Destroy their editors first so they don't leak past the manual teardown.
+    // Name-field order depends on the display setting; drop cards to rebuild on change.
     if (container.dataset.nameMode !== mode) {
         destroyRichTextFieldsIn(container);
         container.replaceChildren();

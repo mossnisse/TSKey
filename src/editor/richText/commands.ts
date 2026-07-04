@@ -1,8 +1,5 @@
-// editor/richText/commands.ts
-// Editing commands as pure string transforms over (value, selection). Keeping them
-// pure means the toolbar buttons and keyboard shortcuts share one code path, and the
-// logic is trivially testable without a DOM. Each returns the new source and the new
-// selection (in source-offset space) for the caller to render + restore.
+// Editing commands as pure string transforms over (value, selection), so the toolbar
+// and keyboard shortcuts share one code path with no DOM dependency.
 
 import type { InlineMark } from './schema.ts';
 import { findClose } from './tokenize.ts';
@@ -18,18 +15,14 @@ export interface CommandResult {
 }
 
 interface MarkSpan {
-    start: number;          // index of the opening delimiter
-    end: number;            // index just past the closing delimiter
+    start: number;
+    end: number;
     contentStart: number;
     contentEnd: number;
 }
 
-/** Every span of `mark`, paired with the same rules as the tokenizer (a longer
- *  same-char run — e.g. the `**` of bold — is never an italic delimiter). Delimiters
- *  are detected against `masked` (the token-masked view of the source, so a delimiter
- *  char that happens to sit inside a `[fig: ...]` token is not mistaken for a real
- *  one), while the returned indices apply equally to the real `value` — the two are
- *  the same length. */
+// Delimiters are detected against `masked` (the token-masked source, so a delimiter char
+// inside a `[fig: ...]` token isn't mistaken for real) but indices apply equally to `value`.
 function findSpans(masked: string, mark: InlineMark): MarkSpan[] {
     const { open, close } = mark;
     const singleChar = open === close && open.length === 1;
@@ -59,48 +52,33 @@ function findSpans(masked: string, mark: InlineMark): MarkSpan[] {
     return spans;
 }
 
-/**
- * Toggles a mark over the current selection, span-aware:
- *  - Selection (or caret) inside a single marked span → unwrap that whole span.
- *  - Collapsed caret in plain text → insert an empty delimiter pair, caret between.
- *  - Otherwise → wrap: the selection is unioned with every span it touches, this
- *    mark's delimiters inside the union are stripped, and the union is wrapped once —
- *    so partial overlaps and multi-span selections merge into one contiguous run
- *    instead of producing nested or interleaved delimiters.
- */
+/** Toggles a mark: unwraps if the selection is inside one marked span, inserts an
+ *  empty pair for a collapsed caret in plain text, otherwise wraps the union of every
+ *  touched span so overlapping selections merge into one run. */
 export function toggleMark(value: string, sel: Selection, mark: InlineMark, masked: string = value): CommandResult {
     const { open, close } = mark;
     const { start, end } = sel;
     const spans = findSpans(masked, mark);
 
-    // Unwrap: the selection lies within one marked span. A range may sit flush against
-    // the span's outer edges (a whole-run selection should unwrap), but a *collapsed*
-    // caret must be strictly inside — a caret resting immediately before the opener or
-    // after the closer is adjacent to the run, not in it, and toggling there should
-    // start a new mark rather than silently stripping the neighbouring run. A range
-    // must also actually touch the span's content, so selecting only a bare delimiter
-    // glyph doesn't strip the whole run.
+    // A collapsed caret must be strictly inside the span (not adjacent to its
+    // delimiters) to unwrap; a range must touch actual content, not just a delimiter glyph.
     const covering = start === end
         ? spans.find(s => start > s.start && start < s.end)
         : spans.find(s => start >= s.start && end <= s.end && start < s.contentEnd && end > s.contentStart);
     if (covering) {
         const inner = value.slice(covering.contentStart, covering.contentEnd);
         const next = value.slice(0, covering.start) + inner + value.slice(covering.end);
-        // Shift into content coords, clamping positions that sat inside a delimiter.
         const map = (p: number) =>
             Math.min(Math.max(p - open.length, covering.start), covering.start + inner.length);
         return { value: next, selection: { start: map(start), end: map(end) } };
     }
 
-    // Collapsed caret in plain text: empty pair with the caret between the markers.
     if (start === end) {
         const next = value.slice(0, start) + open + close + value.slice(end);
         const caret = start + open.length;
         return { value: next, selection: { start: caret, end: caret } };
     }
 
-    // Wrap: union the selection with every touched span, strip this mark's delimiters
-    // inside the union, and wrap the result once.
     const touched = spans.filter(s => s.start < end && start < s.end);
     const uStart = Math.min(start, ...touched.map(s => s.start));
     const uEnd = Math.max(end, ...touched.map(s => s.end));
@@ -117,8 +95,7 @@ export function toggleMark(value: string, sel: Selection, mark: InlineMark, mask
     inner += value.slice(cursor, uEnd);
     const next = value.slice(0, uStart) + open + inner + close + value.slice(uEnd);
 
-    // Map an original position into the new string, accounting for removed delimiter
-    // chunks before it (positions inside a removed chunk clamp to the chunk start).
+    // Positions inside a removed delimiter chunk clamp to the chunk's start.
     const map = (p: number) => {
         let removed = 0;
         for (const ch of chunks) {
@@ -131,7 +108,6 @@ export function toggleMark(value: string, sel: Selection, mark: InlineMark, mask
     return { value: next, selection: { start: map(start), end: map(end) } };
 }
 
-/** Replaces the selection with raw source text (a token, pasted text…), caret after. */
 export function insertToken(value: string, sel: Selection, src: string): CommandResult {
     const { start, end } = sel;
     const next = value.slice(0, start) + src + value.slice(end);

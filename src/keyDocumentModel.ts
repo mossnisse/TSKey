@@ -47,9 +47,6 @@ export interface BrokenFigSegment {
     label: string;             // "ID 5" for a stored token, or the raw value for a raw one
 }
 
-/** An inline style span (bold/italic/sub/sup) wrapping further segments. `markName`
- *  is the schema mark name ('bold' | 'italic' | 'subscript' | 'superscript'); each
- *  formatter maps it to its own markup. Marks nest and may span figure citations. */
 export interface MarkSegment {
     kind: 'mark';
     markName: string;
@@ -63,28 +60,22 @@ export interface AltSegmentRenderer {
     text: (value: string) => string;
     fig: (seg: FigSegment) => string;
     brokenFig: (seg: BrokenFigSegment) => string;
-    /** Wraps already-rendered inner output in this mark's markup. */
     mark: (markName: string, inner: string) => string;
 }
 
-/** Mark name → HTML tag, taken from the editor's own mark schema so the HTML export,
- *  the live print view, and the editor render each mark with the same element. Built
- *  lazily: `schema.ts` imports back from this module, so reading `defaultMarks` at
- *  module-init time would hit a circular-import TDZ depending on load order. */
+// Built lazily: schema.ts imports back from this module, so reading defaultMarks at
+// module-init time would hit a circular-import TDZ depending on load order.
 let markHtmlTagMap: Map<string, string> | null = null;
 function markHtmlTag(name: string): string | undefined {
     if (!markHtmlTagMap) markHtmlTagMap = new Map(defaultMarks.map(m => [m.name, m.tag]));
     return markHtmlTagMap.get(name);
 }
 
-/** Wraps `inner` in a mark's HTML element (`<strong>`/`<em>`/`<sub>`/`<sup>`); shared by
- *  the HTML exporter and the live print view. Unknown marks pass through unwrapped. */
 export function htmlMark(markName: string, inner: string): string {
     const tag = markHtmlTag(markName);
     return tag ? `<${tag}>${inner}</${tag}>` : inner;
 }
 
-/** Renders a resolved alternative to a string using the formatter's per-kind renderers. */
 export function renderAltSegments(segments: readonly AltSegment[], r: AltSegmentRenderer): string {
     let out = '';
     for (const seg of segments) {
@@ -96,8 +87,7 @@ export function renderAltSegments(segments: readonly AltSegment[], r: AltSegment
     return out;
 }
 
-/** Resolves a raw [fig: value] token: a 1-based display number or a filename → figure.
- *  Exported so the rich-text editor's figure chips resolve identically to exports. */
+/** Resolves a raw [fig: value] token: a 1-based display number or a filename → figure. */
 export function resolveRawFigValue(
     value: string,
     lookups: FigureLookups,
@@ -120,16 +110,13 @@ export function resolveRawFigValue(
     return null;
 }
 
-/** The model's figure-token rule: matches both token forms so `tokenize` treats a
- *  `[figID: N]` / `[fig: value]` as one atomic unit (and masks it so mark delimiters
- *  inside it aren't parsed). The chip HTML is irrelevant here — the model reads the
- *  atom's raw `src` and resolves it itself — so `render` returns an empty shell. */
+// The chip HTML is irrelevant here — the model reads the atom's raw src and resolves
+// it itself — so render() returns an empty shell.
 function modelFigureTokenRule(): InlineToken {
     const pattern = new RegExp(`${figIdTokenRegex().source}|${figRawTokenRegex().source}`, 'gi');
     return { name: 'figure', pattern, render: () => ({ html: '', className: '' }) };
 }
 
-/** Resolves one figure-token source string into a resolved or broken figure segment. */
 function resolveFigureToken(src: string, lookups: FigureLookups, figureCount: number): AltSegment {
     const idMatch = /\[figID:\s*(\d+)\s*\]/i.exec(src);
     if (idMatch) {
@@ -149,8 +136,6 @@ function resolveFigureToken(src: string, lookups: FigureLookups, figureCount: nu
         : { kind: 'brokenFig', label: value };
 }
 
-/** Maps the editor's Atom tree into resolved AltSegments: marks nest, figure tokens
- *  resolve to fig/brokenFig, everything else is literal text. */
 function atomsToSegments(atoms: readonly Atom[], lookups: FigureLookups, figureCount: number): AltSegment[] {
     const segments: AltSegment[] = [];
     for (const atom of atoms) {
@@ -165,34 +150,23 @@ function atomsToSegments(atoms: readonly Atom[], lookups: FigureLookups, figureC
     return segments;
 }
 
-/** Parses raw field text into resolved segments off prebuilt lookups (the hot path,
- *  called per couplet by buildKeyDocumentModel). `withFigures` toggles figure-token
- *  resolution — off for mark-only fields like captions. */
 function segmentsFrom(rawText: string, lookups: FigureLookups, figureCount: number, withFigures: boolean): AltSegment[] {
     if (!rawText) return [];
     const schema: EditorSchema = { marks: defaultMarks, tokens: withFigures ? [modelFigureTokenRule()] : [] };
     return atomsToSegments(tokenize(rawText, schema), lookups, figureCount);
 }
 
-/** Parses raw field text into resolved segments, driven by the *same* editor tokenizer
- *  that renders the live editor — so marks (bold/italic/sub/sup) and figure citations
- *  can never drift between editing, the live view, and exports. Pass `figures` to
- *  enable figure-token resolution; omit it for mark-only fields (e.g. captions). */
+// Driven by the same editor tokenizer that renders the live editor, so marks and
+// figure citations can never drift between editing, the live view, and exports.
 export function parseRichText(rawText: string, figures?: readonly Figure[]): AltSegment[] {
     const withFigures = figures !== undefined;
     return segmentsFrom(rawText, buildFigureLookups(withFigures ? figures : []), figures?.length ?? 0, withFigures);
 }
 
-/** Convenience: parse + render a rich field in one call, for the taxa/figure fields
- *  the exporters render outside the couplet segment pipeline. */
 export function renderRichText(rawText: string, r: AltSegmentRenderer, figures?: readonly Figure[]): string {
     return renderAltSegments(parseRichText(rawText, figures), r);
 }
 
-/** Renders a field to plain text: figure tokens resolve to "(Fig. N)" and inline mark
- *  markers are stripped. For in-app plain-text previews (the path popover, the image
- *  lightbox caption) that must not leak raw `**`/`~`/`^` markers. Pass `figures` to
- *  resolve figure citations; omit for mark-only fields (captions). */
 const PLAIN_TEXT_RENDERER: AltSegmentRenderer = {
     text: value => value,
     fig: seg => `(Fig. ${seg.displayNum})`,

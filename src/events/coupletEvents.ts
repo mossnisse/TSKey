@@ -33,12 +33,8 @@ export function setupTitleEditing(store: KeyStore, refreshAll: () => void, signa
     }, { signal });
 }
 
-/**
- * Commits a rich-text alt1/alt2 edit: immediate store sync + undo checkpoint, then a
- * debounced figure-token encode + refresh. Wired to the mounted editor's onChange (the
- * old delegated `input` path in setupCoupletInput still handles the dest text inputs).
- * Blur-time encoding stays in setupCoupletFocus, matching the original textarea flow.
- */
+/** Commits a rich-text alt1/alt2 edit: immediate store sync, then a debounced
+ *  figure-token encode + refresh. Wired to the mounted editor's onChange. */
 export function commitCoupletField(
     store: KeyStore,
     uiState: UIStateStore,

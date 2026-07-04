@@ -10,8 +10,7 @@ import { commitFigureCaption } from '../events/figureEvents.ts';
 
 let pendingFigureRefresh: number | null = null;
 
-/** Figure-card skeleton + mounted caption editor; thumbnail, title, and field values
- *  are filled in by update. The caption is mark-only (no figure references). */
+// Caption is mark-only (no figure references); thumbnail/title/values are filled by update.
 function createFigureCard(fig: Figure, store: KeyStore, uiState: UIStateStore, refreshAll: () => void): HTMLElement {
     const block = document.createElement('div');
     block.className = 'figure-card';

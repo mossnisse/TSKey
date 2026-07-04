@@ -1,11 +1,6 @@
-// editor/richText/RichTextEditor.ts
-// Binds the pure pieces (tokenize -> render, caret map, commands) to a host <div>,
-// turning it into a hybrid rich-text editor. The source string is the single source of
-// truth; the contenteditable DOM is a disposable projection re-rendered on every edit,
-// with the caret captured/restored in source-offset space around each re-render.
-// Enter, paste, and drop are all intercepted and routed through plain source-string
-// splices, so the browser never plants foreign structure (divs, brs, styled spans)
-// that the serializer can't account for.
+// The source string is the single source of truth; the contenteditable DOM is a
+// disposable projection re-rendered on every edit. Enter/paste/drop are intercepted and
+// routed through source-string splices so the browser never plants foreign DOM structure.
 
 import type { EditorSchema, InlineMark } from './schema.ts';
 import { tokenize, maskTokens } from './tokenize.ts';
@@ -36,8 +31,7 @@ export class RichTextEditor {
     private readonly onKeydown = (e: KeyboardEvent) => this.handleKeydown(e);
     private readonly onPaste = (e: ClipboardEvent) => this.handlePaste(e);
     private readonly onDrop = (e: DragEvent) => this.handleDrop(e);
-    // IME guard: never rip the DOM out from under an in-progress composition — the
-    // input method targets a live text node. Re-sync once the text is committed.
+    // Never re-render mid-composition: it would rip the DOM out from under the IME.
     private readonly onCompositionStart = () => {
         this.composing = true;
     };
@@ -45,9 +39,8 @@ export class RichTextEditor {
         this.composing = false;
         this.scheduleRerender();
     };
-    // Some browsers don't fire compositionend when focus is lost mid-composition,
-    // which would leave `composing` stuck true and make onInput ignore every future
-    // keystroke. Clearing it on blur guarantees the editor always recovers.
+    // Some browsers skip compositionend on blur mid-composition, which would leave
+    // `composing` stuck true; clear it here so the editor always recovers.
     private readonly onBlur = () => {
         if (this.composing) {
             this.composing = false;
@@ -83,29 +76,20 @@ export class RichTextEditor {
     // ---- public API -------------------------------------------------------
 
     getValue(): string {
-        // A pending re-render means this.value hasn't absorbed the latest DOM edit
-        // yet — read the DOM directly so callers never see a stale value.
+        // While a re-render is queued, this.value is stale — read the DOM directly.
         return this.rafId !== null ? serialize(this.host) : this.value;
     }
 
-    /** True when the DOM holds a user edit not yet read back into `value` (a re-render
-     *  is queued). Such an edit is newer than any value the store can hand back, so an
-     *  external setValue during this window would carry a stale value — callers refreshing
-     *  from the store should skip the editor while this is true (see syncRichTextField). */
+    /** True while a DOM edit hasn't been read back into `value` yet (see syncRichTextField). */
     hasPendingEdit(): boolean {
         return this.rafId !== null;
     }
 
     setValue(next: string): void {
-        // Don't clobber an in-progress edit. Like the app's syncField (ui/shared.ts),
-        // which skips the focused element, a setValue that merely echoes back what the
-        // user has already typed (e.g. a store refresh after onChange) must not rewrite
-        // the DOM and drop the caret. getValue() reflects the live DOM when an edit is
-        // pending, so this equality holds for the echo case even mid-keystroke.
+        // Don't clobber an in-progress edit: skip when this merely echoes back what's
+        // already live in the DOM (e.g. a store refresh after onChange).
         if (document.activeElement === this.host && next === this.getValue()) return;
 
-        // Otherwise setValue is authoritative: discard any pending DOM read-back, and
-        // re-render even for an equal string when a discarded edit left the DOM stale.
         const hadPending = this.rafId !== null;
         if (this.rafId !== null) {
             cancelAnimationFrame(this.rafId);
@@ -116,24 +100,18 @@ export class RichTextEditor {
         this.render();
     }
 
-    /** Applies a mark by name to the current selection (no-op if the name is unknown). */
     toggleMark(name: string): void {
         const mark = this.schema.marks.find(m => m.name === name);
-        // Pass the token-masked source so delimiter detection matches the tokenizer's,
-        // and a delimiter char inside a `[fig: ...]` token is never toggled.
+        // Mask tokens first so a delimiter char inside a `[fig: ...]` token is never toggled.
         if (mark) this.applyCommand(sel => toggleMark(this.value, sel, mark, maskTokens(this.value, this.schema)));
     }
 
-    /** Inserts a raw token source (e.g. `[fig: 1]`) at the current selection, or at the
-     *  provided source-offset selection when `at` is given (used when a picker/menu stole
-     *  focus and we want the token to land where the caret was, not at the end). */
+    /** Inserts at `at` instead of the live selection when a focus-stealing picker
+     *  captured the selection before the caret position could be used. */
     insertToken(src: string, at?: Selection): void {
         this.applyCommand(sel => insertToken(this.value, at ?? sel, src));
     }
 
-    /** The current selection as source offsets, or null when the editor isn't focused /
-     *  has no selection in it. Capture this before a focus-stealing UI (a picker popover)
-     *  opens, then pass it back to insertToken so the insertion lands at the caret. */
     getSelection(): Selection | null {
         return captureRange(this.host);
     }
@@ -162,7 +140,6 @@ export class RichTextEditor {
 
     // ---- internals --------------------------------------------------------
 
-    /** Queues a DOM read-back + re-render on the next frame (one per frame at most). */
     private scheduleRerender(): void {
         if (this.rafId !== null) return;
         this.rafId = requestAnimationFrame(() => {
@@ -171,7 +148,6 @@ export class RichTextEditor {
         });
     }
 
-    /** Reads the user's edit back out of the DOM, re-renders, and restores the caret. */
     private rerenderFromDom(): void {
         const caret = captureRange(this.host);
         const next = serialize(this.host);
@@ -183,16 +159,14 @@ export class RichTextEditor {
         if (changed) this.emitChange();
     }
 
-    /** The projection HTML for the current value. A trailing '\n' gets a placeholder
-     *  <br> so the browser will park the caret on the empty last line; the <br>
-     *  serializes to '' and has zero source length, so it never leaks into the value. */
+    // Trailing '\n' gets a placeholder <br> so the caret can park on the empty last
+    // line; it serializes to '' so it never leaks back into the value.
     private renderHtml(): string {
         let html = renderAtoms(tokenize(this.value, this.schema));
         if (this.value.endsWith('\n')) html += '<br>';
         return html;
     }
 
-    /** Runs a queued DOM read-back immediately so commands never see a stale value. */
     private flushPendingRerender(): void {
         if (this.rafId === null) return;
         cancelAnimationFrame(this.rafId);
@@ -200,7 +174,6 @@ export class RichTextEditor {
         this.rerenderFromDom();
     }
 
-    /** Applies a pure command, then renders and restores the returned selection. */
     private applyCommand(run: (sel: Selection) => { value: string; selection: Selection }): void {
         this.flushPendingRerender();
         const sel = captureRange(this.host) ?? { start: this.value.length, end: this.value.length };
@@ -221,10 +194,8 @@ export class RichTextEditor {
     private handleKeydown(e: KeyboardEvent): void {
         if (e.isComposing) return;
 
-        // Enter (any modifier): insert a literal '\n' into the source (rendered via
-        // white-space: pre-wrap). We intercept every Enter chord — not just the bare
-        // key — because a fall-through would let the browser plant a <div>/<br> the
-        // source string cannot represent, and serialize() would silently drop it.
+        // Intercept every Enter chord, not just the bare key: a fall-through would let
+        // the browser plant a <div>/<br> the source string can't represent.
         if (e.key === 'Enter') {
             e.preventDefault();
             this.applyCommand(sel => insertToken(this.value, sel, '\n'));
@@ -240,7 +211,6 @@ export class RichTextEditor {
         }
     }
 
-    /** Force plain-text paste so pasted rich content never pollutes the source string. */
     private handlePaste(e: ClipboardEvent): void {
         e.preventDefault();
         const text = e.clipboardData?.getData('text/plain') ?? '';
@@ -248,14 +218,10 @@ export class RichTextEditor {
         this.applyCommand(sel => insertToken(this.value, sel, text));
     }
 
-    /** Same guard for drag-and-drop: dropped rich content is inserted as plain text. */
     private handleDrop(e: DragEvent): void {
         e.preventDefault();
         const text = e.dataTransfer?.getData('text/plain') ?? '';
         if (!text) return;
-        // Land the drop at the pointer. Chromium exposes caretRangeFromPoint; Firefox
-        // only caretPositionFromPoint — without this fallback a Firefox drop would land
-        // at the stale previous caret instead of where the user dropped.
         const range = this.caretRangeAtPoint(e.clientX, e.clientY);
         if (range && this.host.contains(range.startContainer)) {
             const sel = window.getSelection();
@@ -266,7 +232,7 @@ export class RichTextEditor {
         this.applyCommand(sel => insertToken(this.value, sel, text));
     }
 
-    /** A collapsed Range at viewport point (x, y), across Chromium and Firefox APIs. */
+    // Chromium exposes caretRangeFromPoint; Firefox only caretPositionFromPoint.
     private caretRangeAtPoint(x: number, y: number): Range | null {
         const doc = document as Document & {
             caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;

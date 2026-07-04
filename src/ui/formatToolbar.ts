@@ -1,11 +1,6 @@
-// ui/formatToolbar.ts
-// A single floating formatting toolbar shared by every mounted rich-text field. It
-// appears above a non-empty selection inside any `.rte-host` and offers bold/italic/
-// subscript/superscript (and, for figure-aware fields, an insert-figure button that
-// opens the figure picker). Modeled on popover.ts, but two things differ by necessity:
-// its buttons use mousedown+preventDefault so clicking one never blurs the editor (the
-// selection must survive), and it persists across clicks — dismissing only when the
-// selection collapses / leaves an editor, on Escape, or on teardown.
+// A single floating formatting toolbar shared by every mounted rich-text field. Modeled
+// on popover.ts, but its buttons use mousedown+preventDefault so clicking one never
+// blurs the editor / collapses the selection.
 
 import type { KeyStore } from '../store';
 import { getFieldEditor } from './richTextField.ts';
@@ -19,13 +14,8 @@ const MARK_BUTTONS: ReadonlyArray<{ mark: string; title: string; html: string }>
     { mark: 'superscript', title: 'Superscript', html: 'x<sup>2</sup>' },
 ];
 
-// Render tag (STRONG/EM/SUB/SUP) → mark name, from the editor's own schema so the
-// toolbar's active-state detection stays in sync with what the editor renders.
 const TAG_TO_MARK = new Map(defaultMarks.map(m => [m.tag.toUpperCase(), m.name]));
 
-/** The marks that fully wrap the current selection — i.e. mark elements (carrying
- *  data-open, as rendered by the editor) on the ancestor chain of the selection's
- *  common ancestor. Used to show the corresponding buttons as pressed. */
 function activeMarksForSelection(host: HTMLElement): Set<string> {
     const active = new Set<string>();
     const sel = window.getSelection();
@@ -50,14 +40,12 @@ let rafId: number | null = null;
 let pickerStore: KeyStore | null = null;
 let pickerSignal: AbortSignal | null = null;
 
-/** The `.rte-host` a node lives in, or null. */
 function closestHost(node: Node | null): HTMLElement | null {
     if (!node) return null;
     const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
     return (el?.closest('.rte-host') as HTMLElement | null) ?? null;
 }
 
-/** The single editor host a non-empty selection sits entirely within, or null. */
 function hostFromSelection(): HTMLElement | null {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
@@ -75,7 +63,6 @@ function build(): HTMLElement {
         MARK_BUTTONS.map(b => `<button type="button" data-mark="${b.mark}" title="${b.title}" aria-pressed="false">${b.html}</button>`).join('') +
         `<button type="button" data-fig title="Insert figure reference (Alt+F)">Fig</button>`;
 
-    // Never blur the editor: a toolbar mousedown must not steal the selection.
     el.addEventListener('mousedown', e => e.preventDefault());
 
     el.addEventListener('click', e => {
@@ -85,8 +72,6 @@ function build(): HTMLElement {
         if (mark) {
             getFieldEditor(currentHost)?.toggleMark(mark);
         } else if (btn.hasAttribute('data-fig') && pickerStore && pickerSignal) {
-            // The editor still holds focus + selection (mousedown was prevented), so the
-            // picker resolves this field as its target and inserts at the live caret.
             const r = el.getBoundingClientRect();
             openFigureReferencePicker(pickerStore, r.left, r.bottom + 4, pickerSignal);
         }
@@ -112,7 +97,6 @@ function reposition(): void {
     const figBtn = toolbar.querySelector('[data-fig]') as HTMLElement;
     figBtn.style.display = host.dataset.rteFigures === 'true' ? '' : 'none';
 
-    // Reflect the styles active over the selection as pressed buttons.
     const active = activeMarksForSelection(host);
     toolbar.querySelectorAll<HTMLElement>('[data-mark]').forEach(btn => {
         const on = active.has(btn.getAttribute('data-mark')!);
@@ -120,8 +104,7 @@ function reposition(): void {
         btn.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
 
-    // Show (hidden) to measure, then place above the selection, flipping below when the
-    // top would clip, and clamping horizontally into the viewport.
+    // Measure hidden, then place above the selection (flip below if it would clip).
     toolbar.style.display = 'flex';
     toolbar.style.visibility = 'hidden';
     const rect = window.getSelection()!.getRangeAt(0).getBoundingClientRect();
@@ -139,7 +122,6 @@ function schedule(): void {
     if (rafId === null) rafId = requestAnimationFrame(reposition);
 }
 
-/** Wires the shared selection toolbar for the app's lifetime. */
 export function setupFormatToolbar(store: KeyStore, signal: AbortSignal): void {
     pickerStore = store;
     pickerSignal = signal;
