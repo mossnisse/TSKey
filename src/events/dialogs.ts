@@ -126,7 +126,11 @@ export function setupDialogs(store: KeyStore, uiState: UIStateStore, refreshAll:
                     await workspaceStorage.deleteProject(projectName);
                     showToast(`🗑️ Workspace "${projectName}" deleted.`, "success");
 
-                    const currentOpenName = store.getTitle();
+                    // Compare against the persisted (on-disk) title, not the mutable
+                    // in-memory one: an unsaved rename would otherwise hide that the project
+                    // being deleted is the one currently open (deleteProject removes the
+                    // record and its shared-uid figure blobs regardless).
+                    const currentOpenName = store.getPersistedTitle();
 
                     if (currentOpenName === projectName) {
                         const remaining = await workspaceStorage.getProjectList();

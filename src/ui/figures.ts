@@ -99,6 +99,18 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
                         workspaceStorage.getFigureBinary(uidAtLoad, fig.id).then(blob => {
                             previewImg.removeAttribute('data-loading-state');
                             if (store.getActiveProjectUid() !== uidAtLoad) return;
+
+                            // An upload (or another render) may have cached a URL while this
+                            // read was in flight; don't clobber it — or leak its object URL —
+                            // with the now-stale stored blob. Display the cached one instead.
+                            const cachedNow = activeObjectURLs.get(fig.id);
+                            if (cachedNow) {
+                                if (previewImg.src !== cachedNow) previewImg.src = cachedNow;
+                                previewImg.style.display = 'block';
+                                if (removeBtn) removeBtn.style.display = 'inline-block';
+                                return;
+                            }
+
                             if (blob) {
                                 const newUrl = URL.createObjectURL(blob);
                                 activeObjectURLs.set(fig.id, newUrl);

@@ -136,8 +136,13 @@ ${bodyContent}
                     // neutralizing catcode-active characters such as underscores.
                     figuresAppendix += `  \\includegraphics[width=0.7\\linewidth]{\\detokenize{figures/${filename}}}\n`;
 
-                    // \detokenize cannot rescue spaces or multiple dots — flag those for the user.
-                    if (/\s/.test(filename) || (filename.match(/\./g)?.length ?? 0) > 1) {
+                    // The filename must match the real image file, so we can't rewrite it —
+                    // instead flag anything that won't compile so the user can rename the file.
+                    // \detokenize neutralizes catcodes INSIDE its argument, but characters the
+                    // TeX tokenizer acts on first — braces, %, #, backslash — still break the
+                    // \detokenize{...} group; spaces and multiple dots confuse graphicx's
+                    // extension handling.
+                    if (/\s/.test(filename) || (filename.match(/\./g)?.length ?? 0) > 1 || /[{}\\%#]/.test(filename)) {
                         problematicFilenames.push(filename);
                     }
                 } else {
@@ -231,7 +236,7 @@ ${figuresAppendix}
 
         if (problematicFilenames.length > 0) {
             showToast(
-                `⚠️ ${problematicFilenames.length} image filename(s) contain spaces or multiple dots and may fail to compile in LaTeX. Consider renaming: ${problematicFilenames.join(', ')}`,
+                `⚠️ ${problematicFilenames.length} image filename(s) contain spaces, multiple dots, or LaTeX-special characters ({ } % # \\) and may fail to compile. Rename the image file(s) to match: ${problematicFilenames.join(', ')}`,
                 'error'
             );
         }
