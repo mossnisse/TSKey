@@ -5,7 +5,7 @@
 // `openFigureReferencePicker` are also used by the keyboard shortcut (Alt+F).
 import type { KeyStore, Figure } from '../store';
 import type { UIStateStore } from '../uiState.ts';
-import { batchedRefresh, DEBOUNCE_TYPING_MS } from './shared.ts';
+import { batchedRefresh, commitRichField } from './shared.ts';
 import { setupEntityPanel } from './entityPanel.ts';
 import { showToast } from '../uiRenderer.ts';
 import { workspaceStorage, activeObjectURLs } from '../store';
@@ -179,9 +179,14 @@ export function commitFigureCaption(
     id: number,
     value: string,
 ) {
-    uiState.typing.figures.start(`fig-${id}-caption`, () => store.endTypingSession());
-    store.updateFigure(id, { caption: value });
-    uiState.typing.figures.extendTimeout(DEBOUNCE_TYPING_MS, () => batchedRefresh(refreshAll));
+    commitRichField({
+        session: uiState.typing.figures,
+        fieldKey: `fig-${id}-caption`,
+        endTypingSession: () => store.endTypingSession(),
+        applyUpdate: () => store.updateFigure(id, { caption: value }),
+        // Captions are mark-only — no figure-token encode needed.
+        refreshAll,
+    });
 }
 
 // Tracks the last-focused figure-aware editor + caret so the menu item can target it

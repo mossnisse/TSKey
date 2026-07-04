@@ -1,6 +1,14 @@
 import { defineConfig } from 'vite';
 
-export default defineConfig({
-  base: '/TSKey/', // deployed at https://mossnisse.github.io/TSKey/
+export default defineConfig(({ command }) => ({
+  // Production build keeps the GitHub Pages sub-path; the dev server is served at the
+  // root so the Claude preview (and a plain browser) opens straight to the app.
+  base: command === 'serve' ? '/' : '/TSKey/', // deployed at https://mossnisse.github.io/TSKey/
   // Single entry point: Vite defaults to the root index.html (the main app).
-});
+  server: {
+    port: 5173,
+    // Fail loudly if 5173 is taken instead of silently drifting to 5174/5175 — a
+    // drifted port no longer matches .claude/launch.json, which breaks the preview.
+    strictPort: true,
+  },
+}));

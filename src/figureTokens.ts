@@ -37,3 +37,26 @@ export function buildFigureLookups(figures: readonly Figure[]): FigureLookups {
 
     return { idToDisplayNum, displayNumToFig, filenameToFig, idToFig };
 }
+
+/** Resolves a raw [fig: value] token: a 1-based display number or a filename → figure. */
+export function resolveRawFigValue(
+    value: string,
+    lookups: FigureLookups,
+    figureCount: number
+): { figId: number; displayNum: number } | null {
+    const { displayNumToFig, filenameToFig, idToDisplayNum } = lookups;
+
+    const asNum = parseInt(value, 10);
+    if (!isNaN(asNum) && String(asNum) === value && asNum >= 1 && asNum <= figureCount) {
+        const fig = displayNumToFig.get(asNum);
+        if (fig) return { figId: fig.id, displayNum: asNum };
+    }
+
+    const fig = filenameToFig.get(value.toLowerCase());
+    if (fig) {
+        const displayNum = idToDisplayNum.get(fig.id);
+        if (displayNum !== undefined) return { figId: fig.id, displayNum };
+    }
+
+    return null;
+}

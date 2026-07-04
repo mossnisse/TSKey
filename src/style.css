@@ -594,7 +594,7 @@ html, body {
 .taxon-card-title  { margin: 0; color: var(--color-primary); font-weight: 700; font-size: var(--text-lg); font-family: monospace; }
 
 .taxon-field-row { display: flex; flex-direction: column; gap: 2px; }
-.taxon-field-row > label { font-size: var(--text-sm); color: var(--color-text-muted); font-weight: 500; }
+.taxon-field-row > label { font-size: var(--text-sm); color: var(--color-text-muted); font-weight: 500; cursor: pointer; }
 .taxon-input,
 .taxon-textarea {
     font-family: sans-serif;
@@ -632,6 +632,7 @@ html, body {
     flex-shrink: 0;
     padding-top: 2px;
     user-select: none;
+    cursor: pointer;
 }
 
 .figure-card .figure-input-filename,

@@ -5,7 +5,7 @@
 import type { KeyStore, Taxon, ConfusableSpecies } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { setupEntityPanel } from './entityPanel.ts';
-import { batchedRefresh, DEBOUNCE_TYPING_MS } from './shared.ts';
+import { commitRichField } from './shared.ts';
 
 // `description` is edited in a mounted rich-text editor (ui/taxa.ts + commitTaxonRichField)
 // and committed there rather than through the delegated input path.
@@ -29,14 +29,16 @@ export function commitTaxonRichField(
     field: 'description',
     value: string,
 ) {
-    const fieldKey = `taxon-${id}-${field}`;
-    uiState.typing.taxa.start(fieldKey, () => store.endTypingSession());
-    store.updateTaxon(id, { [field]: value } as Partial<Omit<Taxon, 'id'>>);
-
-    uiState.typing.taxa.extendTimeout(DEBOUNCE_TYPING_MS, () => {
-        encodeTaxonDescription(store, id);
-        store.relinkTaxonDrafts();
-        batchedRefresh(refreshAll);
+    commitRichField({
+        session: uiState.typing.taxa,
+        fieldKey: `taxon-${id}-${field}`,
+        endTypingSession: () => store.endTypingSession(),
+        applyUpdate: () => store.updateTaxon(id, { [field]: value } as Partial<Omit<Taxon, 'id'>>),
+        onSettle: () => {
+            encodeTaxonDescription(store, id);
+            store.relinkTaxonDrafts();
+        },
+        refreshAll,
     });
 }
 

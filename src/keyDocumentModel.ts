@@ -15,7 +15,7 @@ import {
     resolveDestination,
 } from './utils.ts';
 import type { DestinationResolution, LeadFormat, NameDisplayMode } from './utils.ts';
-import { buildFigureLookups, figIdTokenRegex, figRawTokenRegex } from './figureTokens.ts';
+import { buildFigureLookups, figIdTokenRegex, figRawTokenRegex, resolveRawFigValue } from './figureTokens.ts';
 import type { FigureLookups } from './figureTokens.ts';
 import { tokenize } from './editor/richText/tokenize.ts';
 import type { Atom } from './editor/richText/tokenize.ts';
@@ -63,16 +63,12 @@ export interface AltSegmentRenderer {
     mark: (markName: string, inner: string) => string;
 }
 
-// Built lazily: schema.ts imports back from this module, so reading defaultMarks at
-// module-init time would hit a circular-import TDZ depending on load order.
-let markHtmlTagMap: Map<string, string> | null = null;
-function markHtmlTag(name: string): string | undefined {
-    if (!markHtmlTagMap) markHtmlTagMap = new Map(defaultMarks.map(m => [m.name, m.tag]));
-    return markHtmlTagMap.get(name);
-}
+// defaultMarks flows one way (schema.ts no longer imports back from this module), so
+// this can be read at module-init without a circular-import TDZ.
+const markHtmlTagMap = new Map(defaultMarks.map(m => [m.name, m.tag]));
 
 export function htmlMark(markName: string, inner: string): string {
-    const tag = markHtmlTag(markName);
+    const tag = markHtmlTagMap.get(markName);
     return tag ? `<${tag}>${inner}</${tag}>` : inner;
 }
 
@@ -85,29 +81,6 @@ export function renderAltSegments(segments: readonly AltSegment[], r: AltSegment
         else out += r.mark(seg.markName, renderAltSegments(seg.children, r));
     }
     return out;
-}
-
-/** Resolves a raw [fig: value] token: a 1-based display number or a filename → figure. */
-export function resolveRawFigValue(
-    value: string,
-    lookups: FigureLookups,
-    figureCount: number
-): { figId: number; displayNum: number } | null {
-    const { displayNumToFig, filenameToFig, idToDisplayNum } = lookups;
-
-    const asNum = parseInt(value, 10);
-    if (!isNaN(asNum) && String(asNum) === value && asNum >= 1 && asNum <= figureCount) {
-        const fig = displayNumToFig.get(asNum);
-        if (fig) return { figId: fig.id, displayNum: asNum };
-    }
-
-    const fig = filenameToFig.get(value.toLowerCase());
-    if (fig) {
-        const displayNum = idToDisplayNum.get(fig.id);
-        if (displayNum !== undefined) return { figId: fig.id, displayNum };
-    }
-
-    return null;
 }
 
 // The chip HTML is irrelevant here — the model reads the atom's raw src and resolves

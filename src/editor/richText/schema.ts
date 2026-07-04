@@ -2,9 +2,8 @@
 // like bold/italic) and "tokens" (atomic regex-matched chips like figure references).
 
 import { escapeHTML } from '../../utils.ts';
-import { figIdTokenRegex, figRawTokenRegex } from '../../figureTokens.ts';
+import { figIdTokenRegex, figRawTokenRegex, resolveRawFigValue } from '../../figureTokens.ts';
 import type { FigureLookups } from '../../figureTokens.ts';
-import { resolveRawFigValue } from '../../keyDocumentModel.ts';
 
 export interface InlineMark {
     name: string;
