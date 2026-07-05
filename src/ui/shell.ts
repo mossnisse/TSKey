@@ -2,7 +2,7 @@
 // The one-time application shell HTML (menu bar, three-column layout, modals, and the
 // plain-text import view) plus the panel-visibility sync.
 import { APP_NAME, APP_VERSION } from '../store';
-import type { UIStateStore } from '../uiState.ts';
+import type { UIStateStore, PanelKey } from '../uiState.ts';
 import { IS_MAC } from '../utils.ts';
 
 /**
@@ -174,26 +174,46 @@ export function initializeShell(appDiv: HTMLDivElement) {
       </div>
 
       <div class="main-layout">
-        <div class="editor-column">
-          <h2>Key Editor: <span id="active-project-title">Untitled Key</span></h2>
+        <div class="editor-column" data-panel="editor">
+          <h2 class="panel-header">
+            <button type="button" class="panel-toggle" aria-expanded="true" title="Collapse / expand panel">
+              <span class="panel-caret" aria-hidden="true">▾</span>
+              <span class="panel-title">Key Editor: <span id="active-project-title">Untitled Key</span></span>
+            </button>
+          </h2>
           <div id="editor-container"></div>
           <button id="add-couplet-btn" class="btn-add-block">+ Add New Step (Alt+N)</button>
         </div>
 
-        <div class="figure-column">
-          <h2>Figure References</h2>
+        <div class="figure-column" data-panel="figures">
+          <h2 class="panel-header">
+            <button type="button" class="panel-toggle" aria-expanded="true" title="Collapse / expand panel">
+              <span class="panel-caret" aria-hidden="true">▾</span>
+              <span class="panel-title">Figure References</span>
+            </button>
+          </h2>
           <div id="figure-container"></div>
           <button id="add-figure-btn" class="btn-add-block">+ Add New Figure</button>
         </div>
 
-        <div class="taxa-column">
-          <h2>Taxa</h2>
+        <div class="taxa-column" data-panel="taxa">
+          <h2 class="panel-header">
+            <button type="button" class="panel-toggle" aria-expanded="true" title="Collapse / expand panel">
+              <span class="panel-caret" aria-hidden="true">▾</span>
+              <span class="panel-title">Taxa</span>
+            </button>
+          </h2>
           <div id="taxa-container"></div>
           <button id="add-taxon-btn" class="btn-add-block">+ Add New Taxon</button>
         </div>
 
-        <div class="print-column">
-          <h2>Live Publication View</h2>
+        <div class="print-column" data-panel="print">
+          <h2 class="panel-header">
+            <button type="button" class="panel-toggle" aria-expanded="true" title="Collapse / expand panel">
+              <span class="panel-caret" aria-hidden="true">▾</span>
+              <span class="panel-title">Live Publication View</span>
+            </button>
+          </h2>
           <hr class="hr-print" />
           <div id="print-view-container" class="print-grid"></div>
         </div>
@@ -422,4 +442,15 @@ export function applyPanelVisibility(uiState: UIStateStore): void {
     document.querySelector('.figure-column')?.classList.toggle('is-hidden', uiState.isFiguresHidden);
     document.querySelector('.taxa-column')?.classList.toggle('is-hidden', uiState.isTaxaHidden);
     document.querySelector('.print-column')?.classList.toggle('is-hidden', uiState.isPrintHidden);
+
+    // Collapsed panels (persisted per panel). Mirror the state onto the column class
+    // and the header toggle's aria-expanded so a reload restores the layout.
+    const panels: PanelKey[] = ['editor', 'figures', 'taxa', 'print'];
+    for (const panel of panels) {
+        const column = document.querySelector(`[data-panel="${panel}"]`);
+        if (!column) continue;
+        const collapsed = uiState.isPanelCollapsed(panel);
+        column.classList.toggle('is-collapsed', collapsed);
+        column.querySelector('.panel-toggle')?.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    }
 }

@@ -5,9 +5,42 @@
 import type { KeyStore, Taxon, ConfusableSpecies } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { setupEntityPanel } from './entityPanel.ts';
+import { commitRichField } from './shared.ts';
 
-/** Plain string fields editable directly as input/textarea values. */
+// `description` is edited in a mounted rich-text editor (ui/taxa.ts + commitTaxonRichField)
+// and committed there rather than through the delegated input path.
 const SIMPLE_FIELDS = new Set<keyof Taxon>(['scientificName', 'auctor', 'vernacularName', 'description', 'biology', 'distribution']);
+
+/** Encodes any complete [fig: N] tokens in a taxon's description to stable [figID: N]. */
+export function encodeTaxonDescription(store: KeyStore, id: number): void {
+    const taxon = store.getTaxa().find(t => t.id === id);
+    if (!taxon) return;
+    const encoded = store.encodeFigureTokens(taxon.description);
+    if (encoded !== taxon.description) store.updateTaxon(id, { description: encoded });
+}
+
+/** Commits a rich-text description edit: immediate store sync, then a debounced
+ *  figure-token encode, draft relink, and refresh. */
+export function commitTaxonRichField(
+    store: KeyStore,
+    uiState: UIStateStore,
+    refreshAll: () => void,
+    id: number,
+    field: 'description',
+    value: string,
+) {
+    commitRichField({
+        session: uiState.typing.taxa,
+        fieldKey: `taxon-${id}-${field}`,
+        endTypingSession: () => store.endTypingSession(),
+        applyUpdate: () => store.updateTaxon(id, { [field]: value } as Partial<Omit<Taxon, 'id'>>),
+        onSettle: () => {
+            encodeTaxonDescription(store, id);
+            store.relinkTaxonDrafts();
+        },
+        refreshAll,
+    });
+}
 
 /** One synonym per line; blank lines dropped. */
 function textToSynonyms(text: string): string[] {
@@ -59,6 +92,8 @@ export function setupTaxaPanel(store: KeyStore, uiState: UIStateStore, refreshAl
         reorder: (src, tgt) => store.reorderTaxa(src, tgt),
         // A settled name edit may make a lead's draft match this taxon — link it.
         onSettle: () => store.relinkTaxonDrafts(),
-        keepFocusWithin: ['#add-taxon-btn'],
+        // Blur cancels the debounced encode, so encode figure tokens here too.
+        settleField: (id, field) => { if (field === 'description') encodeTaxonDescription(store, id); },
+        keepFocusWithin: ['#add-taxon-btn', '.format-toolbar'],
     });
 }

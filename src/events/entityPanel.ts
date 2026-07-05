@@ -42,6 +42,9 @@ export interface EntityPanelConfig {
      * moved to another panel control (e.g. taxa relinking a lead's draft).
      */
     onSettle?: () => boolean;
+    /** Optional: per-field commit work on settle (e.g. encoding figure tokens in a
+     *  mounted rich-text field), for work the delegated input path doesn't do. */
+    settleField?: (id: number, field: string) => void;
     /** Optional: handle a click before selection logic; return true if it was handled. */
     extraClick?: (target: HTMLElement, e: MouseEvent) => boolean;
     /**
@@ -61,7 +64,7 @@ export function setupEntityPanel(config: EntityPanelConfig): void {
     const {
         container, cardSelector, addButton, fieldKeyPrefix, typing, signal, refreshAll,
         onAdd, endTypingSession, buildUpdate, applyUpdate, toggleSelection, clearSelection,
-        getItems, reorder, onSettle, extraClick, keepFocusWithin = [],
+        getItems, reorder, onSettle, settleField, extraClick, keepFocusWithin = [],
     } = config;
 
     addButton?.addEventListener('click', () => {
@@ -111,7 +114,7 @@ export function setupEntityPanel(config: EntityPanelConfig): void {
 
         // Clicking into a field selects the card (without stealing the click) only
         // when it isn't already selected.
-        if (target.closest('input, textarea')) {
+        if (target.closest('input, textarea, .rte-host')) {
             if (!card.classList.contains('is-selected')) {
                 toggleSelection(id, multiSelect);
                 batchedRefresh(refreshAll);
@@ -123,18 +126,30 @@ export function setupEntityPanel(config: EntityPanelConfig): void {
         batchedRefresh(refreshAll);
     }, { signal });
 
+    // Disable card dragging while a field has focus, so mouse text-selection inside it
+    // doesn't get hijacked into a drag.
+    container.addEventListener('focusin', (e) => {
+        const target = e.target as HTMLElement;
+        if (!target.matches('input, textarea, .rte-host')) return;
+        const card = target.closest(cardSelector) as HTMLElement | null;
+        if (card) card.draggable = false;
+    }, { signal });
+
     // --- Focus-settle refresh ---
     container.addEventListener('focusout', (e: FocusEvent) => {
         const target = e.target as HTMLElement;
-        if (!target.matches('input, textarea')) return;
+        if (!target.matches('input, textarea, .rte-host')) return;
         const card = target.closest(cardSelector) as HTMLElement | null;
         if (!card) return;
+        card.draggable = true;
 
         const id = Number(card.getAttribute('data-id'));
         const field = target.getAttribute('data-field');
         const fieldKey = id && field ? `${fieldKeyPrefix}-${id}-${field}` : null;
 
         typing.end(fieldKey, () => {
+            // Blur cancels the field's debounced encode, so run settleField first.
+            if (field) settleField?.(id, field);
             const settled = onSettle?.() ?? false;
 
             const destination = e.relatedTarget as HTMLElement | null;

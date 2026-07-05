@@ -2,6 +2,7 @@
 // Cross-cutting helpers shared by the event modules.
 import type { KeyStore } from '../store';
 import { workspaceStorage } from '../store';
+import type { TypingSession } from '../uiState.ts';
 import { renderProjectHubList } from '../uiRenderer.ts';
 
 export const DEBOUNCE_TYPING_MS = 800;
@@ -18,6 +19,37 @@ export function batchedRefresh(refreshFn: () => void) {
     requestAnimationFrame(() => {
         refreshScheduled = false;
         refreshFn();
+    });
+}
+
+export interface RichFieldCommit {
+    /** The typing session that debounces this field's edits. */
+    session: TypingSession;
+    /** Stable per-field key so consecutive edits of one field share one history frame. */
+    fieldKey: string;
+    /** Ends the current typing session / commits the pending history frame. */
+    endTypingSession: () => void;
+    /** Applies the edited value to the store immediately (before the debounce). */
+    applyUpdate: () => void;
+    /** Optional settle work run once typing pauses, before the refresh (e.g. encoding
+     *  figure tokens, relinking taxon drafts). */
+    onSettle?: () => void;
+    refreshAll: () => void;
+}
+
+/**
+ * Shared commit path for a mounted rich-text field's onChange: sync the value to the
+ * store immediately, then on a typing pause run any settle work and refresh. Used by
+ * the couplet alt1/alt2, taxon description, and figure caption editors, which differ
+ * only in which store collection they write and what settles afterwards.
+ */
+export function commitRichField(commit: RichFieldCommit): void {
+    const { session, fieldKey, endTypingSession, applyUpdate, onSettle, refreshAll } = commit;
+    session.start(fieldKey, endTypingSession);
+    applyUpdate();
+    session.extendTimeout(DEBOUNCE_TYPING_MS, () => {
+        onSettle?.();
+        batchedRefresh(refreshAll);
     });
 }
 

@@ -7,7 +7,8 @@ import type { UIStateStore } from '../uiState.ts';
 import { batchedRefresh } from './shared.ts';
 import { openPopover } from '../popover.ts';
 import type { PopoverItem } from '../popover.ts';
-import { branchTarget, buildIdToIndexMap, escapeHTML, buildFigureIdToDisplayNumMap } from '../utils.ts';
+import { branchTarget, buildIdToIndexMap, escapeHTML } from '../utils.ts';
+import { renderPlainText } from '../keyDocumentModel.ts';
 import { buildFigureLookups, figIdTokenRegex, figRawTokenRegex } from '../figureTokens.ts';
 import { workspaceStorage, activeObjectURLs } from '../store';
 
@@ -147,15 +148,14 @@ export function setupNavigationClicks(store: KeyStore, uiState: UIStateStore, si
             return;
         }
 
-        // 4. Editor textarea: a [fig: N] token under the caret.
-        if (target instanceof HTMLTextAreaElement && target.classList.contains('card-textarea')) {
-            const token = figureTokenAtIndex(target.value, target.selectionStart ?? -1);
-            if (token) {
-                const figId = resolveEditorFigToken(token.value, store);
-                if (figId !== null) {
-                    handled();
-                    navigateToFigure(figId, store, uiState, e.clientX, e.clientY, signal);
-                }
+        // 4. Editor figure chip → its figure (data-src carries the raw token).
+        const chip = target.closest<HTMLElement>('.rte-host .tsk-chip[data-src]');
+        if (chip) {
+            const token = figureTokenAtIndex(chip.getAttribute('data-src') ?? '', 0);
+            const figId = token ? resolveEditorFigToken(token.value, store) : null;
+            if (figId !== null) {
+                handled();
+                navigateToFigure(figId, store, uiState, e.clientX, e.clientY, signal);
             }
         }
     }, { signal, capture: true });
@@ -169,8 +169,8 @@ export function setupNavigationClicks(store: KeyStore, uiState: UIStateStore, si
 export function setupContextMenu(store: KeyStore, refreshAll: () => void, signal: AbortSignal) {
     document.addEventListener('contextmenu', (e) => {
         const target = e.target as HTMLElement;
-        // Keep the native context menu inside editable fields.
-        if (target.closest('input, textarea')) return;
+        // Keep the native context menu inside editable fields, incl. rich-text hosts.
+        if (target.closest('input, textarea, .rte-host')) return;
 
         const host = target.closest('.key-card') || target.closest('.print-step-block');
         if (!host) return;
@@ -190,7 +190,6 @@ export function setupContextMenu(store: KeyStore, refreshAll: () => void, signal
         } else {
             // Show each step on the route with the actual text of the alternative taken
             // (alt1 for choice 'a', alt2 for 'b'); the last row is the step itself.
-            const idToDisplay = buildFigureIdToDisplayNumMap(store.getFigures());
             const rows = path.steps.map(s => {
                 const numLabel = `${s.stepNum}${s.choice ?? ''}`;
                 if (s.choice === undefined) {
@@ -198,7 +197,7 @@ export function setupContextMenu(store: KeyStore, refreshAll: () => void, signal
                 }
                 const couplet = key.find(c => c.id === s.id);
                 const raw = couplet ? (s.choice === 'a' ? couplet.alt1 : couplet.alt2) : '';
-                const text = store.resolveTextReferences(raw, idToDisplay).trim() || '(no description)';
+                const text = renderPlainText(raw, store.getFigures()).trim() || '(no description)';
                 return `<button type="button" class="popover-path-row" data-step-id="${s.id}">`
                     + `<span class="popover-path-num">${escapeHTML(numLabel)}</span>`
                     + `<span class="popover-path-text">${escapeHTML(text)}</span></button>`;

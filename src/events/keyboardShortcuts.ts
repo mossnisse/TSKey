@@ -4,13 +4,14 @@
 // helpers directly.
 import type { KeyStore } from '../store';
 import { IS_MAC } from '../utils.ts';
-import { isFigureTextarea, insertFigureReference } from './figureEvents.ts';
+import { isFigureRefHost, openFigureReferencePicker } from './figureEvents.ts';
 import { executePaste } from './coupletEvents.ts';
 
 /**
  * Desktop Command Shortcut Interceptor Engine.
  */
 export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) {
+    const controller = new AbortController();
     const handleKeyDown = (e: KeyboardEvent) => {
         const importView = document.getElementById('plain-text-import-view') as HTMLElement | null;
         if (importView && importView.style.display === 'flex') return;
@@ -47,9 +48,10 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
             activeElement.hasAttribute('contenteditable')
         );
 
-        if (e.altKey && !hasModifier && !e.shiftKey && e.code === 'KeyF' && isFigureTextarea(activeElement)) {
+        if (e.altKey && !hasModifier && !e.shiftKey && e.code === 'KeyF' && isFigureRefHost(activeElement)) {
             e.preventDefault();
-            insertFigureReference(activeElement, activeElement.selectionStart ?? 0, activeElement.selectionEnd ?? 0);
+            const rect = activeElement.getBoundingClientRect();
+            openFigureReferencePicker(store, rect.left + 16, rect.top + 24, controller.signal);
             return;
         }
 
@@ -160,9 +162,9 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
             }
         }
     };
-    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, { signal: controller.signal });
 
     return () => {
-        window.removeEventListener('keydown', handleKeyDown);
+        controller.abort();
     };
 }

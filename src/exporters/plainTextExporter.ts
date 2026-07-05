@@ -3,15 +3,17 @@ import type { KeyStore } from '../store';
 import { showToast } from '../uiRenderer.ts';
 import { triggerFileDownload, sanitizeFilename } from '../utils.ts';
 import type { LeadFormat, NameDisplayMode } from '../utils.ts';
-import { buildKeyDocumentModel, renderAltSegments, buildTaxonExportNames } from '../keyDocumentModel.ts';
+import { buildKeyDocumentModel, renderAltSegments, renderRichText, buildTaxonExportNames } from '../keyDocumentModel.ts';
 import type { AltSegmentRenderer, TaxonNameLine } from '../keyDocumentModel.ts';
 
 // Figure tokens resolve to plain "(Fig. N)"; unresolvable ones stay visible as
-// "[Broken Fig: …]" so the omission is obvious in the exported text.
+// "[Broken Fig: …]" so the omission is obvious in the exported text; mark markers are
+// stripped (the emphasis is dropped, leaving clean prose).
 const PLAIN_ALT: AltSegmentRenderer = {
     text: value => value,
     fig: seg => `(Fig. ${seg.displayNum})`,
     brokenFig: seg => `[Broken Fig: ${seg.label}]`,
+    mark: (_name, inner) => inner,
 };
 
 /**
@@ -59,7 +61,7 @@ export function exportKeyToPlainText(store: KeyStore, leadFormat: LeadFormat, sh
                 if (names.secondary) content += `  ${names.secondary.label}: ${withAuctor(names.secondary)}\n`;
 
                 if (taxon.synonyms.length > 0) content += `  Synonyms: ${taxon.synonyms.join('; ')}\n`;
-                if (taxon.description) content += `  Description: ${taxon.description}\n`;
+                if (taxon.description) content += `  Description: ${renderRichText(taxon.description, PLAIN_ALT, figures)}\n`;
                 if (taxon.biology) content += `  Biology: ${taxon.biology}\n`;
                 if (taxon.distribution) content += `  Distribution: ${taxon.distribution}\n`;
                 if (taxon.confusables.length > 0) {
@@ -82,7 +84,7 @@ export function exportKeyToPlainText(store: KeyStore, leadFormat: LeadFormat, sh
             figures.forEach((fig, index) => {
                 const displayNum = index + 1;
                 const filename = fig.filename || 'Untitled File';
-                const caption = fig.caption || 'No caption provided.';
+                const caption = fig.caption ? renderRichText(fig.caption, PLAIN_ALT) : 'No caption provided.';
 
                 content += `Figure #${displayNum}\n`;
                 content += `  Filename: ${filename}\n`;

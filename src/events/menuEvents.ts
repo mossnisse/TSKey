@@ -2,7 +2,7 @@
 // Menu-bar command bindings: the File menu (new/save/import/export), the Edit/View/
 // Tools menu actions, and menu-bar mouse + keyboard navigation.
 import type { KeyStore } from '../store';
-import type { UIStateStore } from '../uiState.ts';
+import type { UIStateStore, PanelKey } from '../uiState.ts';
 import { batchedRefresh, refreshHubView } from './shared.ts';
 import { executePaste, createNewCoupletWithFocus } from './coupletEvents.ts';
 import { showToast } from '../uiRenderer.ts';
@@ -388,6 +388,29 @@ export function setupEditMenu(store: KeyStore, uiState: UIStateStore, refreshAll
     }, { signal });
 }
 
+/**
+ * Panel collapsing: clicking a column's header toggles its persisted collapse state,
+ * which shrinks the column to its rotated header (see the collapsible-panel CSS) so it
+ * frees horizontal space for the panels that stay open. The class/aria are applied by
+ * applyPanelVisibility on the ensuing refresh, so the layout survives a reload.
+ */
+export function setupPanelCollapse(uiState: UIStateStore, refreshAll: () => void, signal: AbortSignal) {
+    const layout = document.querySelector('.main-layout') as HTMLElement | null;
+    if (!layout) return;
+
+    layout.addEventListener('click', (e) => {
+        const toggle = (e.target as HTMLElement).closest('.panel-toggle') as HTMLButtonElement | null;
+        if (!toggle) return;
+
+        const column = toggle.closest('[data-panel]') as HTMLElement | null;
+        const panel = column?.dataset.panel as PanelKey | undefined;
+        if (!panel) return;
+
+        uiState.togglePanelCollapse(panel);
+        batchedRefresh(refreshAll);
+    }, { signal });
+}
+
 /** Menu bar mouse toggling and full keyboard navigation (arrows / Enter / Escape). */
 export function setupMenuBarNavigation(signal: AbortSignal) {
     const menuBar = document.querySelector('.app-menu-bar') as HTMLElement;
@@ -414,6 +437,19 @@ export function setupMenuBarNavigation(signal: AbortSignal) {
             const isExpanded = trigger.getAttribute('aria-expanded') === 'true';
             closeAllMenus();
             trigger.setAttribute('aria-expanded', isExpanded ? 'false' : 'true');
+        }
+    }, { signal });
+
+    // Windows-style menus: nothing opens on plain hover, but once a menu is
+    // open, hovering a sibling trigger switches the open dropdown to it.
+    menuBar.addEventListener('pointerover', (e) => {
+        const trigger = (e.target as HTMLElement).closest('.menu-trigger') as HTMLButtonElement | null;
+        if (!trigger || trigger.getAttribute('aria-expanded') === 'true') return;
+
+        const anyOpen = getTriggers().some(t => t.getAttribute('aria-expanded') === 'true');
+        if (anyOpen) {
+            closeAllMenus();
+            trigger.setAttribute('aria-expanded', 'true');
         }
     }, { signal });
 

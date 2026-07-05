@@ -7,11 +7,15 @@ import type { LeadFormat, NameDisplayMode } from './utils.ts';
 
 export const UI_STATE_STORAGE_KEY = 'dichotomous_key_ui';
 
+/** The main-layout columns that can be collapsed to a rotated header. */
+export type PanelKey = 'editor' | 'figures' | 'taxa' | 'print';
+
 export interface UIPanelState {
     isFiguresHidden: boolean;
     isPrintHidden: boolean;
     isImagesHidden: boolean;
     isTaxaHidden: boolean;
+    collapsedPanels: Record<PanelKey, boolean>;
     activeProjectTitle: string;
     leadFormat: LeadFormat;
     showBackReference: boolean;
@@ -23,6 +27,7 @@ const DEFAULTS: UIPanelState = {
     isPrintHidden: false,
     isImagesHidden: false,
     isTaxaHidden: false,
+    collapsedPanels: { editor: false, figures: false, taxa: false, print: false },
     activeProjectTitle: 'Untitled Key',
     leadFormat: DEFAULT_LEAD_FORMAT,
     showBackReference: false,
@@ -146,6 +151,10 @@ export class UIStateStore {
         return this.state.isPrintHidden;
     }
 
+    public isPanelCollapsed(panel: PanelKey): boolean {
+        return this.state.collapsedPanels[panel] ?? false;
+    }
+
     get activeProjectTitle(): string {
         return this.state.activeProjectTitle || 'Untitled Key';
     }
@@ -187,6 +196,15 @@ export class UIStateStore {
         this.persist();
     }
 
+    public togglePanelCollapse(panel: PanelKey): void {
+        const collapsed = !(this.state.collapsedPanels[panel] ?? false);
+        this.state = {
+            ...this.state,
+            collapsedPanels: { ...this.state.collapsedPanels, [panel]: collapsed },
+        };
+        this.persist();
+    }
+
     public setNameDisplayMode(mode: NameDisplayMode): void {
         if (!isNameDisplayMode(mode) || this.state.nameDisplayMode === mode) return;
         this.state = { ...this.state, nameDisplayMode: mode };
@@ -213,7 +231,11 @@ export class UIStateStore {
         try {
             const raw = localStorage.getItem(UI_STATE_STORAGE_KEY);
             if (!raw) return { ...DEFAULTS };
-            const merged: UIPanelState = { ...DEFAULTS, ...JSON.parse(raw) };
+            const parsed = JSON.parse(raw);
+            const merged: UIPanelState = { ...DEFAULTS, ...parsed };
+            // Nested record needs its own merge so a partial persisted value from an
+            // older build keeps the defaults for any newly added panel keys.
+            merged.collapsedPanels = { ...DEFAULTS.collapsedPanels, ...(parsed.collapsedPanels ?? {}) };
             // Guard against stale/invalid persisted values from an older build.
             if (!isLeadFormat(merged.leadFormat)) merged.leadFormat = DEFAULT_LEAD_FORMAT;
             if (!isNameDisplayMode(merged.nameDisplayMode)) merged.nameDisplayMode = DEFAULT_NAME_DISPLAY_MODE;

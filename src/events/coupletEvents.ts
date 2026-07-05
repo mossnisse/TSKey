@@ -4,9 +4,9 @@
 // menu and keyboard handlers.
 import type { KeyStore, Couplet } from '../store';
 import type { UIStateStore } from '../uiState.ts';
-import { batchedRefresh, DEBOUNCE_TYPING_MS, setupCardDragReorder } from './shared.ts';
+import { batchedRefresh, commitRichField, DEBOUNCE_TYPING_MS, setupCardDragReorder } from './shared.ts';
 import { resolveDestination, parseDestinationInput, buildIdToIndexMap, buildTaxaContext } from '../utils.ts';
-import { findTaxonByAnyName } from '../store';
+import { findTaxonByAnyName, workspaceStorage } from '../store';
 import { scrollIntoViewAndFlash } from './navigationEvents.ts';
 import { showToast } from '../uiRenderer.ts';
 
@@ -14,23 +14,91 @@ import { showToast } from '../uiRenderer.ts';
 // when focus moves to a different card, not when tabbing between a card's two fields.
 let lastFocusedCardId: number | null = null;
 
-/** Title input: commit a trimmed rename on blur, reverting to the current name if blank. */
+/** Title input: commit a trimmed rename on blur or Enter, reverting to the current name if blank. */
 export function setupTitleEditing(store: KeyStore, refreshAll: () => void, signal: AbortSignal) {
     const titleInput = document.getElementById('key-title-input') as HTMLInputElement | null;
     if (!titleInput) return;
 
-    titleInput.addEventListener('blur', () => {
-        store.endTypingSession();
+    let committing = false;
+    const commit = async () => {
+        if (committing) return;
+        committing = true;
+        try {
+            store.endTypingSession();
 
-        const newTitle = titleInput.value.trim();
-        if (!newTitle) {
-            titleInput.value = store.getTitle();
-            return;
+            const newTitle = titleInput.value.trim();
+            if (!newTitle) {
+                titleInput.value = store.getTitle();
+                return;
+            }
+
+            // Reject a rename that would shadow a different saved project (the current
+            // project's own persisted record doesn't count as a collision).
+            const currentPersisted = store.getPersistedTitle().toLowerCase();
+            const projectList = await workspaceStorage.getProjectList();
+            const collides = projectList.some(p => {
+                const name = p.name.toLowerCase();
+                return name === newTitle.toLowerCase() && name !== currentPersisted;
+            });
+            if (collides) {
+                showToast(`⚠️ A project named "${newTitle}" already exists. Reverted the title.`, "error");
+                titleInput.value = store.getTitle();
+                return;
+            }
+
+            store.setTitle(newTitle);
+            batchedRefresh(refreshAll);
+        } finally {
+            committing = false;
         }
+    };
 
-        store.setTitle(newTitle);
-        batchedRefresh(refreshAll);
+    titleInput.addEventListener('blur', commit, { signal });
+
+    // Enter commits the rename immediately instead of only on focus-out; Escape
+    // abandons the edit, restoring the current title. Both then drop focus.
+    titleInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            commit();
+            titleInput.blur();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            titleInput.value = store.getTitle();
+            titleInput.blur();
+        }
     }, { signal });
+}
+
+/** Encodes any complete [fig: N] tokens in a couplet alt field to stable [figID: N]. */
+export function encodeCoupletField(store: KeyStore, id: number, field: 'alt1' | 'alt2'): void {
+    const couplet = store.getKey().find(c => c.id === id);
+    if (!couplet) return;
+    const encoded = store.encodeFigureTokens(couplet[field]);
+    if (encoded !== couplet[field]) {
+        store.updateCouplet(id, { [field]: encoded } as Partial<Omit<Couplet, 'id'>>);
+    }
+}
+
+/** Commits a rich-text alt1/alt2 edit: immediate store sync, then a debounced
+ *  figure-token encode + refresh. Wired to the mounted editor's onChange. */
+export function commitCoupletField(
+    store: KeyStore,
+    uiState: UIStateStore,
+    refreshAll: () => void,
+    id: number,
+    field: 'alt1' | 'alt2',
+    value: string,
+) {
+    store.setActiveCouplet(id);
+    commitRichField({
+        session: uiState.typing.couplets,
+        fieldKey: `${id}-${field}`,
+        endTypingSession: () => store.endTypingSession(),
+        applyUpdate: () => store.updateCouplet(id, { [field]: value } as Partial<Omit<Couplet, 'id'>>),
+        onSettle: () => encodeCoupletField(store, id, field),
+        refreshAll,
+    });
 }
 
 /** Card selection clicks (with Ctrl/Cmd/Shift multi-select) and background-click clearing. */
@@ -69,8 +137,9 @@ export function setupCoupletSelection(keyContainer: HTMLElement, store: KeyStore
             return;
         }
 
-        // Prevent card selection if the user is interacting with text inputs or textareas
-        if (target.closest('input, textarea')) return;
+        // Prevent card selection if the user is interacting with a field (input, textarea,
+        // or a mounted rich-text host).
+        if (target.closest('input, textarea, .rte-host')) return;
 
         const card = target.closest('.key-card') as HTMLElement;
         if (!card) return;
@@ -85,8 +154,10 @@ export function setupCoupletSelection(keyContainer: HTMLElement, store: KeyStore
 }
 
 /**
- * Consolidated couplet input router: immediate store sync, undo debouncing,
- * figure-token encoding, and destination link validation.
+ * Destination-input router for the key cards: immediate branch sync, undo
+ * debouncing, and link validation. The alt1/alt2 description fields are mounted
+ * rich-text editors (not `.input-sync`) and commit via commitCoupletField, so the
+ * only `.input-sync` fields that reach here are the dest1/dest2 destination inputs.
  */
 export function setupCoupletInput(keyContainer: HTMLElement, store: KeyStore, uiState: UIStateStore, refreshAll: () => void, signal: AbortSignal) {
     keyContainer.addEventListener('input', (e) => {
@@ -95,8 +166,10 @@ export function setupCoupletInput(keyContainer: HTMLElement, store: KeyStore, ui
         const card = target.closest('.key-card') as HTMLElement;
         if (!card) return;
 
-        const id = Number(card.getAttribute('data-id'));
         const field = target.getAttribute('data-field')!;
+        if (field !== 'dest1' && field !== 'dest2') return;
+
+        const id = Number(card.getAttribute('data-id'));
         const fieldKey = `${id}-${field}`;
         store.setActiveCouplet(id);
 
@@ -105,57 +178,29 @@ export function setupCoupletInput(keyContainer: HTMLElement, store: KeyStore, ui
             store.endTypingSession();
         });
 
-        // Synchronize the text change immediately to the store without waiting
-        const updatePayload: Partial<Omit<Couplet, 'id'>> = {};
-        const currentValue = target.value;
-        type CoupletStringField = 'alt1' | 'alt2';
-
-        if (field === 'dest1' || field === 'dest2') {
-            const branchField = field === 'dest1' ? 'branch1' : 'branch2';
-
-            // We parse using the current snapshot of the key array
-            let branch = parseDestinationInput(currentValue, store.getKey());
-            // Link to an existing taxon live as the typed name matches one — by its
-            // scientific OR vernacular name (reliable, no timer). A non-matching name
-            // stays a draft until the user clicks one of the create buttons.
-            if (branch.kind === 'taxonDraft') {
-                const match = findTaxonByAnyName(store.getTaxa(), branch.name);
-                if (match) branch = { kind: 'taxon', taxonId: match.id };
-            }
-            updatePayload[branchField] = branch;
-        } else {
-            updatePayload[field as CoupletStringField] = currentValue;
+        // Synchronize the destination change immediately to the store without waiting.
+        const branchField = field === 'dest1' ? 'branch1' : 'branch2';
+        // We parse using the current snapshot of the key array
+        let branch = parseDestinationInput(target.value, store.getKey());
+        // Link to an existing taxon live as the typed name matches one — by its
+        // scientific OR vernacular name (reliable, no timer). A non-matching name
+        // stays a draft until the user clicks one of the create buttons.
+        if (branch.kind === 'taxonDraft') {
+            const match = findTaxonByAnyName(store.getTaxa(), branch.name);
+            if (match) branch = { kind: 'taxon', taxonId: match.id };
         }
-
-        store.updateCouplet(id, updatePayload);
+        store.updateCouplet(id, { [branchField]: branch } as Partial<Omit<Couplet, 'id'>>);
 
         // If user stops typing for 800ms, trigger heavy map lookups & structural warnings
         uiState.typing.couplets.extendTimeout(DEBOUNCE_TYPING_MS, () => {
-            // Encode any complete [fig: N] or [fig: filename] tokens to stable [figID: N] format.
-            if (field !== 'dest1' && field !== 'dest2') {
-                const currentCouplet = store.getKey().find(c => c.id === id);
-                if (currentCouplet) {
-                    const rawValue = currentCouplet[field as keyof Omit<Couplet, 'id'>] as string;
-                    const encodedValue = store.encodeFigureTokens(rawValue);
-                    if (encodedValue !== rawValue) {
-                        store.updateCouplet(id, { [field]: encodedValue } as Partial<Omit<Couplet, 'id'>>);
-                    }
-                }
-            }
-
             // Perform link validation safely inside the debounce window
-            if (field === 'dest1' || field === 'dest2') {
-                const updatedKey = store.getKey();
-                const currentCouplet = updatedKey.find(c => c.id === id);
-
-                if (currentCouplet) {
-                    const branch = field === 'dest1' ? currentCouplet.branch1 : currentCouplet.branch2;
-                    const idToIndexMap = buildIdToIndexMap(updatedKey);
-                    const taxaCtx = buildTaxaContext(store.getTaxa(), uiState.nameDisplayMode);
-                    const resolution = resolveDestination(branch, idToIndexMap, taxaCtx);
-
-                    target.classList.toggle('input-error', resolution.isUnresolved);
-                }
+            const updatedKey = store.getKey();
+            const currentCouplet = updatedKey.find(c => c.id === id);
+            if (currentCouplet) {
+                const idToIndexMap = buildIdToIndexMap(updatedKey);
+                const taxaCtx = buildTaxaContext(store.getTaxa(), uiState.nameDisplayMode);
+                const resolution = resolveDestination(currentCouplet[branchField], idToIndexMap, taxaCtx);
+                target.classList.toggle('input-error', resolution.isUnresolved);
             }
 
             batchedRefresh(refreshAll);
@@ -173,7 +218,7 @@ export function setupCoupletFocus(keyContainer: HTMLElement, store: KeyStore, ui
     keyContainer.addEventListener('focusin', (e) => {
         const target = e.target as HTMLElement;
 
-        if (target.matches('input, textarea')) {
+        if (target.matches('input, textarea, .rte-host')) {
             const card = target.closest('.key-card') as HTMLElement;
             if (!card) return;
             card.draggable = false;
@@ -201,7 +246,7 @@ export function setupCoupletFocus(keyContainer: HTMLElement, store: KeyStore, ui
     keyContainer.addEventListener('focusout', (e: FocusEvent) => {
         const target = e.target as HTMLElement;
 
-        if (target.matches('input, textarea')) {
+        if (target.matches('input, textarea, .rte-host')) {
             const card = target.closest('.key-card') as HTMLElement;
             if (card) card.draggable = true;
 
@@ -215,21 +260,8 @@ export function setupCoupletFocus(keyContainer: HTMLElement, store: KeyStore, ui
                 store.clearActiveCouplet();
 
                 // Encode any [fig: N] tokens that the debounce may not have reached
-                if (field && field !== 'dest1' && field !== 'dest2' && id !== null) {
-                    const currentCouplet = store.getKey().find(c => c.id === id);
-                    if (currentCouplet) {
-                        const rawValue = currentCouplet[field as keyof Omit<Couplet, 'id'>] as string;
-                        const encodedValue = store.encodeFigureTokens(rawValue);
-                        if (encodedValue !== rawValue) {
-                            store.updateCouplet(id, { [field]: encodedValue } as Partial<Omit<Couplet, 'id'>>);
-                        }
-                    }
-                }
-
-                // Trigger the warning toast if the field has an unresolved destination
-                if (target.classList.contains('input-error') && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) && card) {
-                    const invalidVal = target.value;
-                    showToast(`⚠️ Step "${invalidVal}" doesn't exist yet — kept as a pending link.`, "error");
+                if ((field === 'alt1' || field === 'alt2') && id !== null) {
+                    encodeCoupletField(store, id, field);
                 }
 
                 // Evaluate next target context defensively (ensuring target is an Element node)
@@ -273,11 +305,8 @@ export function createNewCoupletWithFocus(store: KeyStore, refreshAll: () => voi
     refreshAll();
 
     const newCard = document.querySelector(`.key-card[data-id="${newId}"]`);
-    const textarea = newCard?.querySelector('textarea[data-field="alt1"]') as HTMLTextAreaElement | null;
-
-    if (textarea) {
-        textarea.focus();
-    }
+    const altHost = newCard?.querySelector('.rte-host[data-field="alt1"]') as HTMLElement | null;
+    altHost?.focus();
 }
 
 /** Pastes clipboard steps relative to the current selection (or the key ends). */

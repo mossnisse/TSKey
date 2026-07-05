@@ -1,59 +1,72 @@
 // events/figureEvents.ts
 // Figure panel events (add, edit, image upload/removal, drag-and-drop) and the
 // figure-reference insertion tool. The generic panel wiring lives in entityPanel.ts;
-// this module adds the figure-specific image handling on top. `isFigureTextarea` and
-// `insertFigureReference` are also used by the keyboard shortcut (Alt+F).
+// this module adds the figure-specific image handling on top. `isFigureRefHost` and
+// `openFigureReferencePicker` are also used by the keyboard shortcut (Alt+F).
 import type { KeyStore, Figure } from '../store';
 import type { UIStateStore } from '../uiState.ts';
-import { batchedRefresh } from './shared.ts';
+import { batchedRefresh, commitRichField } from './shared.ts';
 import { setupEntityPanel } from './entityPanel.ts';
 import { showToast } from '../uiRenderer.ts';
 import { workspaceStorage, activeObjectURLs } from '../store';
 import { openImageLightbox } from '../ui/imageLightbox.ts';
+import { openPopover } from '../popover.ts';
+import { getFieldEditor } from '../ui/richTextField.ts';
+import { renderPlainText } from '../keyDocumentModel.ts';
+import type { RichTextEditor } from '../editor/richText/index.ts';
 
-// Figure-reference insertion (key editor alt1/alt2 text only).
-const FIG_REF_TOKEN = '[fig: ]';
-const FIG_REF_CARET_OFFSET = '[fig: '.length; // caret lands just after the colon+space
+// The figure-aware rich-text field (and its caret) most recently focused, so the menu
+// item / shortcut can target it even though clicking the menu blurs the editor.
+let lastFigureField: { host: HTMLElement; selection: { start: number; end: number } | null } | null = null;
 
-// The alt1/alt2 textarea (and caret) most recently edited, so the menu item can
-// target it even though clicking the menu blurs the textarea.
-let lastFigureField: { el: HTMLTextAreaElement; start: number; end: number } | null = null;
-
-/** True only for the key editor's alt1/alt2 description textareas, where figure refs live. */
-export function isFigureTextarea(el: EventTarget | null): el is HTMLTextAreaElement {
-    return el instanceof HTMLTextAreaElement
-        && (el.dataset.field === 'alt1' || el.dataset.field === 'alt2')
-        && el.closest('.key-card') !== null;
+export function isFigureRefHost(el: EventTarget | null): el is HTMLElement {
+    return el instanceof HTMLElement
+        && el.classList.contains('rte-host')
+        && el.dataset.rteFigures === 'true';
 }
 
-/** Resolves the textarea to insert into: the focused one, else the last one edited. */
-function resolveFigureTarget(): { el: HTMLTextAreaElement; start: number; end: number } | null {
+function resolveFigureTarget(): { editor: RichTextEditor; selection: { start: number; end: number } | null } | null {
     const active = document.activeElement;
-    if (isFigureTextarea(active)) {
-        return { el: active, start: active.selectionStart ?? 0, end: active.selectionEnd ?? 0 };
+    if (isFigureRefHost(active)) {
+        const editor = getFieldEditor(active);
+        if (editor) return { editor, selection: editor.getSelection() };
     }
-    if (lastFigureField && document.body.contains(lastFigureField.el)) {
-        return lastFigureField;
+    if (lastFigureField && document.body.contains(lastFigureField.host)) {
+        const editor = getFieldEditor(lastFigureField.host);
+        if (editor) return { editor, selection: lastFigureField.selection };
     }
     return null;
 }
 
-/**
- * Inserts a "[fig: ]" reference skeleton at the caret/selection of a key-step
- * textarea and parks the caret just after the colon, ready for a figure number.
- * Dispatches `input` so the store syncs and the edit is captured for undo.
- */
-export function insertFigureReference(el: HTMLTextAreaElement, start: number, end: number): void {
-    const value = el.value;
-    const from = Math.min(Math.max(start, 0), value.length);
-    const to = Math.min(Math.max(end, from), value.length);
+// A chip editor can't host an editable empty `[fig: ]` skeleton, so this picks a real
+// figure and inserts a complete, resolvable reference instead.
+export function openFigureReferencePicker(store: KeyStore, x: number, y: number, signal: AbortSignal): void {
+    const target = resolveFigureTarget();
+    if (!target) {
+        showToast('Click into a key step or taxon description first, then insert a figure reference.', 'error');
+        return;
+    }
 
-    el.value = value.slice(0, from) + FIG_REF_TOKEN + value.slice(to);
+    const figures = store.getFigures();
+    if (figures.length === 0) {
+        showToast('Add a figure in the Figures panel first, then insert a reference.', 'error');
+        return;
+    }
 
-    const caret = from + FIG_REF_CARET_OFFSET;
-    el.focus();
-    el.setSelectionRange(caret, caret);
-    el.dispatchEvent(new Event('input', { bubbles: true }));
+    openPopover({
+        x,
+        y,
+        signal,
+        headerHtml: '<div class="popover-header">Insert figure reference</div>',
+        items: figures.map((fig, i) => {
+            const displayNum = i + 1;
+            const detail = fig.caption || fig.filename || '';
+            return {
+                label: detail ? `Fig. ${displayNum} — ${detail}` : `Fig. ${displayNum}`,
+                onSelect: () => target.editor.insertToken(`[fig: ${displayNum}]`, target.selection ?? undefined),
+            };
+        }),
+    });
 }
 
 /** Figure panel: add button, text fields, image upload/removal, and figure drag-and-drop. */
@@ -92,7 +105,8 @@ export function setupFigurePanel(store: KeyStore, uiState: UIStateStore, refresh
             if (img.style.display !== 'none' && src) {
                 const card = img.closest('.figure-card') as HTMLElement | null;
                 const num = card?.querySelector('.figure-card-title')?.textContent?.trim() ?? '';
-                const caption = (card?.querySelector('.figure-input-caption') as HTMLTextAreaElement | null)?.value ?? '';
+                const captionHost = card?.querySelector('.figure-input-caption') as HTMLElement | null;
+                const caption = renderPlainText((captionHost ? getFieldEditor(captionHost)?.getValue() : '') ?? '');
                 openImageLightbox(src, [num, caption].filter(Boolean).join('  '));
                 return true;
             }
@@ -118,8 +132,9 @@ export function setupFigurePanel(store: KeyStore, uiState: UIStateStore, refresh
         getItems: () => store.getFigures(),
         reorder: (src, tgt) => store.reorderFigures(src, tgt),
         extraClick: handleFigureClick,
-        // A figure field can also lose focus to a key-card figure reference.
-        keepFocusWithin: ['.key-card', '#add-figure-btn'],
+        // A figure field can also lose focus to a key-card figure reference or the
+        // floating format toolbar.
+        keepFocusWithin: ['.key-card', '#add-figure-btn', '.format-toolbar'],
     });
 
     // Image upload: when the OS file picker resolves, stage the binary + thumbnail.
@@ -155,28 +170,40 @@ export function setupFigurePanel(store: KeyStore, uiState: UIStateStore, refresh
     }, { signal });
 }
 
-/**
- * Figure-reference tool: remembers the last alt1/alt2 caret (so the menu item can
- * target it after the click steals focus) and wires the Insert Figure Reference
- * menu command. The keyboard shortcut (Alt+F) lives in keyboardShortcuts.ts.
- */
-export function setupFigureReference(keyContainer: HTMLElement, signal: AbortSignal) {
+/** Commits a rich-text caption edit: immediate store sync, then a debounced refresh
+ *  (captions are mark-only, no figure-token encode needed). */
+export function commitFigureCaption(
+    store: KeyStore,
+    uiState: UIStateStore,
+    refreshAll: () => void,
+    id: number,
+    value: string,
+) {
+    commitRichField({
+        session: uiState.typing.figures,
+        fieldKey: `fig-${id}-caption`,
+        endTypingSession: () => store.endTypingSession(),
+        applyUpdate: () => store.updateFigure(id, { caption: value }),
+        // Captions are mark-only — no figure-token encode needed.
+        refreshAll,
+    });
+}
+
+// Tracks the last-focused figure-aware editor + caret so the menu item can target it
+// after the click steals focus. Tracking is document-level so taxa descriptions qualify too.
+export function setupFigureReference(store: KeyStore, signal: AbortSignal) {
     const captureCaret = (e: Event) => {
-        if (isFigureTextarea(e.target)) {
-            const t = e.target as HTMLTextAreaElement;
-            lastFigureField = { el: t, start: t.selectionStart ?? 0, end: t.selectionEnd ?? 0 };
+        const host = (e.target instanceof HTMLElement) ? e.target.closest('.rte-host') as HTMLElement | null : null;
+        if (host && isFigureRefHost(host)) {
+            lastFigureField = { host, selection: getFieldEditor(host)?.getSelection() ?? null };
         }
     };
-    (['focusout', 'keyup', 'mouseup', 'input', 'select'] as const).forEach(type =>
-        keyContainer.addEventListener(type, captureCaret, { signal })
+    (['focusin', 'keyup', 'mouseup', 'input'] as const).forEach(type =>
+        document.addEventListener(type, captureCaret, { signal })
     );
 
-    document.querySelector('#cmd-insert-figref')?.addEventListener('click', () => {
-        const target = resolveFigureTarget();
-        if (!target) {
-            showToast('Click into a key step description first, then insert a figure reference.', 'error');
-            return;
-        }
-        insertFigureReference(target.el, target.start, target.end);
+    document.querySelector('#cmd-insert-figref')?.addEventListener('click', (e) => {
+        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        openFigureReferencePicker(store, rect.left, rect.bottom + 4, signal);
     }, { signal });
 }

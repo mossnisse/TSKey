@@ -15,8 +15,12 @@ import {
     resolveDestination,
 } from './utils.ts';
 import type { DestinationResolution, LeadFormat, NameDisplayMode } from './utils.ts';
-import { buildFigureLookups } from './figureTokens.ts';
+import { buildFigureLookups, figIdTokenRegex, figRawTokenRegex, resolveRawFigValue } from './figureTokens.ts';
 import type { FigureLookups } from './figureTokens.ts';
+import { tokenize } from './editor/richText/tokenize.ts';
+import type { Atom } from './editor/richText/tokenize.ts';
+import { defaultMarks } from './editor/richText/schema.ts';
+import type { EditorSchema, InlineToken } from './editor/richText/schema.ts';
 
 // ==========================================
 // ALTERNATIVE TEXT SEGMENTS
@@ -43,92 +47,107 @@ export interface BrokenFigSegment {
     label: string;             // "ID 5" for a stored token, or the raw value for a raw one
 }
 
-export type AltSegment = TextSegment | FigSegment | BrokenFigSegment;
+export interface MarkSegment {
+    kind: 'mark';
+    markName: string;
+    children: AltSegment[];
+}
+
+export type AltSegment = TextSegment | FigSegment | BrokenFigSegment | MarkSegment;
 
 /** Per-kind renderers a formatter supplies to turn segments into its output string. */
 export interface AltSegmentRenderer {
     text: (value: string) => string;
     fig: (seg: FigSegment) => string;
     brokenFig: (seg: BrokenFigSegment) => string;
+    mark: (markName: string, inner: string) => string;
 }
 
-/** Renders a resolved alternative to a string using the formatter's per-kind renderers. */
+// defaultMarks flows one way (schema.ts no longer imports back from this module), so
+// this can be read at module-init without a circular-import TDZ.
+const markHtmlTagMap = new Map(defaultMarks.map(m => [m.name, m.tag]));
+
+export function htmlMark(markName: string, inner: string): string {
+    const tag = markHtmlTagMap.get(markName);
+    return tag ? `<${tag}>${inner}</${tag}>` : inner;
+}
+
 export function renderAltSegments(segments: readonly AltSegment[], r: AltSegmentRenderer): string {
     let out = '';
     for (const seg of segments) {
         if (seg.kind === 'text') out += r.text(seg.value);
         else if (seg.kind === 'fig') out += r.fig(seg);
-        else out += r.brokenFig(seg);
+        else if (seg.kind === 'brokenFig') out += r.brokenFig(seg);
+        else out += r.mark(seg.markName, renderAltSegments(seg.children, r));
     }
     return out;
 }
 
-// Matches both token forms in one pass: group 1 = stored id, group 2 = raw value.
-const FIG_TOKEN_REGEX = /\[figID:\s*(\d+)\s*\]|\[fig:\s*([^\]]+?)\s*\]/gi;
-
-/** Resolves a raw [fig: value] token: a 1-based display number or a filename → figure. */
-function resolveRawFigValue(
-    value: string,
-    lookups: FigureLookups,
-    figureCount: number
-): { figId: number; displayNum: number } | null {
-    const { displayNumToFig, filenameToFig, idToDisplayNum } = lookups;
-
-    const asNum = parseInt(value, 10);
-    if (!isNaN(asNum) && String(asNum) === value && asNum >= 1 && asNum <= figureCount) {
-        const fig = displayNumToFig.get(asNum);
-        if (fig) return { figId: fig.id, displayNum: asNum };
-    }
-
-    const fig = filenameToFig.get(value.toLowerCase());
-    if (fig) {
-        const displayNum = idToDisplayNum.get(fig.id);
-        if (displayNum !== undefined) return { figId: fig.id, displayNum };
-    }
-
-    return null;
+// The chip HTML is irrelevant here — the model reads the atom's raw src and resolves
+// it itself — so render() returns an empty shell.
+function modelFigureTokenRule(): InlineToken {
+    const pattern = new RegExp(`${figIdTokenRegex().source}|${figRawTokenRegex().source}`, 'gi');
+    return { name: 'figure', pattern, render: () => ({ html: '', className: '' }) };
 }
 
-/** Splits an alternative's raw text into literal / resolved-figure / broken-figure segments. */
-function tokenizeAlt(rawText: string, lookups: FigureLookups, figureCount: number): AltSegment[] {
-    const segments: AltSegment[] = [];
-    if (!rawText) return segments;
-
-    const re = new RegExp(FIG_TOKEN_REGEX.source, FIG_TOKEN_REGEX.flags);
-    let lastIndex = 0;
-    let match: RegExpExecArray | null;
-
-    while ((match = re.exec(rawText)) !== null) {
-        if (match.index > lastIndex) {
-            segments.push({ kind: 'text', value: rawText.slice(lastIndex, match.index) });
-        }
-        lastIndex = match.index + match[0].length;
-
-        if (match[1] !== undefined) {
-            // Stored [figID: N] — N is an internal figure id.
-            const figId = parseInt(match[1], 10);
-            const displayNum = lookups.idToDisplayNum.get(figId);
-            if (displayNum !== undefined) {
-                segments.push({ kind: 'fig', figId, displayNum });
-            } else {
-                segments.push({ kind: 'brokenFig', label: `ID ${figId}` });
-            }
-        } else {
-            // Raw [fig: value] — a 1-based display number or a filename.
-            const value = (match[2] ?? '').trim();
-            const resolved = resolveRawFigValue(value, lookups, figureCount);
-            if (resolved) {
-                segments.push({ kind: 'fig', figId: resolved.figId, displayNum: resolved.displayNum });
-            } else {
-                segments.push({ kind: 'brokenFig', label: value });
-            }
-        }
+function resolveFigureToken(src: string, lookups: FigureLookups, figureCount: number): AltSegment {
+    const idMatch = /\[figID:\s*(\d+)\s*\]/i.exec(src);
+    if (idMatch) {
+        // Stored [figID: N] — N is an internal figure id.
+        const figId = parseInt(idMatch[1], 10);
+        const displayNum = lookups.idToDisplayNum.get(figId);
+        return displayNum !== undefined
+            ? { kind: 'fig', figId, displayNum }
+            : { kind: 'brokenFig', label: `ID ${figId}` };
     }
+    // Raw [fig: value] — a 1-based display number or a filename.
+    const rawMatch = /\[fig:\s*([^\]]+?)\s*\]/i.exec(src);
+    const value = (rawMatch?.[1] ?? '').trim();
+    const resolved = resolveRawFigValue(value, lookups, figureCount);
+    return resolved
+        ? { kind: 'fig', figId: resolved.figId, displayNum: resolved.displayNum }
+        : { kind: 'brokenFig', label: value };
+}
 
-    if (lastIndex < rawText.length) {
-        segments.push({ kind: 'text', value: rawText.slice(lastIndex) });
+function atomsToSegments(atoms: readonly Atom[], lookups: FigureLookups, figureCount: number): AltSegment[] {
+    const segments: AltSegment[] = [];
+    for (const atom of atoms) {
+        if (atom.kind === 'text') {
+            segments.push({ kind: 'text', value: atom.value });
+        } else if (atom.kind === 'mark') {
+            segments.push({ kind: 'mark', markName: atom.mark.name, children: atomsToSegments(atom.children, lookups, figureCount) });
+        } else {
+            segments.push(resolveFigureToken(atom.src, lookups, figureCount));
+        }
     }
     return segments;
+}
+
+function segmentsFrom(rawText: string, lookups: FigureLookups, figureCount: number, withFigures: boolean): AltSegment[] {
+    if (!rawText) return [];
+    const schema: EditorSchema = { marks: defaultMarks, tokens: withFigures ? [modelFigureTokenRule()] : [] };
+    return atomsToSegments(tokenize(rawText, schema), lookups, figureCount);
+}
+
+// Driven by the same editor tokenizer that renders the live editor, so marks and
+// figure citations can never drift between editing, the live view, and exports.
+export function parseRichText(rawText: string, figures?: readonly Figure[]): AltSegment[] {
+    const withFigures = figures !== undefined;
+    return segmentsFrom(rawText, buildFigureLookups(withFigures ? figures : []), figures?.length ?? 0, withFigures);
+}
+
+export function renderRichText(rawText: string, r: AltSegmentRenderer, figures?: readonly Figure[]): string {
+    return renderAltSegments(parseRichText(rawText, figures), r);
+}
+
+const PLAIN_TEXT_RENDERER: AltSegmentRenderer = {
+    text: value => value,
+    fig: seg => `(Fig. ${seg.displayNum})`,
+    brokenFig: seg => `[Broken Fig: ${seg.label}]`,
+    mark: (_name, inner) => inner,
+};
+export function renderPlainText(rawText: string, figures?: readonly Figure[]): string {
+    return renderRichText(rawText, PLAIN_TEXT_RENDERER, figures);
 }
 
 // ==========================================
@@ -235,8 +254,8 @@ export function buildKeyDocumentModel(store: KeyStore, opts: DocumentModelOption
             displayNum,
             lead1,
             lead2,
-            alt1: tokenizeAlt(c.alt1, lookups, figureCount),
-            alt2: tokenizeAlt(c.alt2, lookups, figureCount),
+            alt1: segmentsFrom(c.alt1, lookups, figureCount, true),
+            alt2: segmentsFrom(c.alt2, lookups, figureCount, true),
             dest1: resolveDestination(c.branch1, idToIndexMap, taxaCtx),
             dest2: resolveDestination(c.branch2, idToIndexMap, taxaCtx),
         };

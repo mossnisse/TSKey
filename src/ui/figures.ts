@@ -5,11 +5,13 @@ import type { KeyStore, Figure } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { workspaceStorage, activeObjectURLs } from '../store';
 import { reconcileCards } from './shared.ts';
+import { mountRichTextField, syncRichTextField, destroyRichTextFieldsIn, markOnlyFieldSchema } from './richTextField.ts';
+import { commitFigureCaption } from '../events/figureEvents.ts';
 
 let pendingFigureRefresh: number | null = null;
 
-/** Static figure-card skeleton; thumbnail, title, and field values are filled in by update. */
-function createFigureCard(fig: Figure): HTMLElement {
+// Caption is mark-only (no figure references); thumbnail/title/values are filled by update.
+function createFigureCard(fig: Figure, store: KeyStore, uiState: UIStateStore, refreshAll: () => void): HTMLElement {
     const block = document.createElement('div');
     block.className = 'figure-card';
     block.setAttribute('data-id', fig.id.toString());
@@ -35,9 +37,19 @@ function createFigureCard(fig: Figure): HTMLElement {
 
         <div class="figure-field-row">
             <label>Caption:</label>
-            <textarea class="input-sync figure-input-caption" data-field="caption" rows="2"></textarea>
+            <div class="rte-host figure-input-caption" data-field="caption"></div>
         </div>
     `;
+
+    const captionHost = block.querySelector('.rte-host[data-field="caption"]') as HTMLElement | null;
+    if (captionHost) {
+        mountRichTextField(captionHost, {
+            schema: markOnlyFieldSchema(),
+            value: fig.caption,
+            placeholder: 'Caption — supports **bold**, *italic*…',
+            onChange: v => commitFigureCaption(store, uiState, refreshAll, fig.id, v),
+        });
+    }
     return block;
 }
 
@@ -53,10 +65,17 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
         container,
         items: figures,
         getId: f => f.id,
-        create: createFigureCard,
+        create: fig => createFigureCard(fig, store, uiState, refreshAll),
+        onRemove: destroyRichTextFieldsIn,
         update: (block, fig, index) => {
+            const figNum = index + 1;
             const labelEl = block.querySelector('.figure-card-title');
-            if (labelEl) labelEl.textContent = `${index + 1}.`;
+            if (labelEl) labelEl.textContent = `${figNum}.`;
+
+            block.querySelector('.btn-trigger-upload')?.setAttribute('aria-label', `Choose image for Figure ${figNum}`);
+            block.querySelector('.btn-remove-image')?.setAttribute('aria-label', `Remove image for Figure ${figNum}`);
+            block.querySelector('.figure-input-filename')?.setAttribute('aria-label', `Figure ${figNum} filename`);
+            block.querySelector('.rte-host[data-field="caption"]')?.setAttribute('aria-label', `Figure ${figNum} caption`);
 
             block.classList.toggle('is-selected', store.getSelectedFigureIds().has(fig.id));
 
@@ -86,6 +105,18 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
                         workspaceStorage.getFigureBinary(uidAtLoad, fig.id).then(blob => {
                             previewImg.removeAttribute('data-loading-state');
                             if (store.getActiveProjectUid() !== uidAtLoad) return;
+
+                            // An upload (or another render) may have cached a URL while this
+                            // read was in flight; don't clobber it — or leak its object URL —
+                            // with the now-stale stored blob. Display the cached one instead.
+                            const cachedNow = activeObjectURLs.get(fig.id);
+                            if (cachedNow) {
+                                if (previewImg.src !== cachedNow) previewImg.src = cachedNow;
+                                previewImg.style.display = 'block';
+                                if (removeBtn) removeBtn.style.display = 'inline-block';
+                                return;
+                            }
+
                             if (blob) {
                                 const newUrl = URL.createObjectURL(blob);
                                 activeObjectURLs.set(fig.id, newUrl);
@@ -113,10 +144,8 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
                 fileInput.value = fig.filename;
             }
 
-            const captionInput = block.querySelector('.figure-input-caption') as HTMLTextAreaElement;
-            if (captionInput && document.activeElement !== captionInput && captionInput.value !== fig.caption) {
-                captionInput.value = fig.caption;
-            }
+            const captionHost = block.querySelector('.rte-host[data-field="caption"]') as HTMLElement | null;
+            if (captionHost) syncRichTextField(captionHost, fig.caption);
         },
     });
 
