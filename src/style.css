@@ -136,6 +136,61 @@ html, body {
     color: var(--color-text);
 }
 
+/* ==========================================
+   COLLAPSIBLE PANELS
+   ========================================== */
+/* The panel header title is a full-width button so the whole heading toggles
+   the column between expanded and collapsed. */
+.panel-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+}
+.panel-toggle:hover { color: var(--color-primary); }
+.panel-caret {
+    flex: none;
+    font-size: 0.7em;
+    transition: transform 0.15s ease;
+}
+
+/* Collapsed: the column shrinks to just its rotated header, freeing horizontal
+   space for the panels that are still open. */
+.editor-column.is-collapsed,
+.figure-column.is-collapsed,
+.taxa-column.is-collapsed,
+.print-column.is-collapsed {
+    flex: 0 0 auto;
+    max-width: none;
+}
+.is-collapsed > :not(.panel-header) {
+    display: none;
+}
+.is-collapsed .panel-header {
+    margin-bottom: 0;
+    height: 100%;
+}
+.is-collapsed .panel-toggle {
+    writing-mode: vertical-rl;
+    height: 100%;
+    width: auto;
+    justify-content: flex-start;
+    white-space: nowrap;
+    overflow: hidden;
+    padding: var(--space-md) 0;
+}
+.is-collapsed .panel-caret {
+    transform: rotate(-90deg);
+}
+
 .hr-print {
     display: none;
 }

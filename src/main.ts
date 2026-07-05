@@ -17,7 +17,7 @@ import {
 import { setupFigurePanel, setupFigureReference } from './events/figureEvents.ts';
 import { setupTaxaPanel } from './events/taxaEvents.ts';
 import { setupDialogs } from './events/dialogs.ts';
-import { setupFileMenu, setupEditMenu, setupMenuBarNavigation } from './events/menuEvents.ts';
+import { setupFileMenu, setupEditMenu, setupMenuBarNavigation, setupPanelCollapse } from './events/menuEvents.ts';
 import { setupNavigationClicks, setupContextMenu } from './events/navigationEvents.ts';
 import { setupKeyboardShortcuts } from './events/keyboardShortcuts.ts';
 import { setupFormatToolbar } from './ui/formatToolbar.ts';
@@ -64,6 +64,7 @@ function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, refreshAll
     setupNavigationClicks(store, uiState, signal);
     setupContextMenu(store, refreshAll, signal);
     setupMenuBarNavigation(signal);
+    setupPanelCollapse(uiState, refreshAll, signal);
 
     return () => {
         controller.abort();

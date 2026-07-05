@@ -2,7 +2,7 @@
 // Menu-bar command bindings: the File menu (new/save/import/export), the Edit/View/
 // Tools menu actions, and menu-bar mouse + keyboard navigation.
 import type { KeyStore } from '../store';
-import type { UIStateStore } from '../uiState.ts';
+import type { UIStateStore, PanelKey } from '../uiState.ts';
 import { batchedRefresh, refreshHubView } from './shared.ts';
 import { executePaste, createNewCoupletWithFocus } from './coupletEvents.ts';
 import { showToast } from '../uiRenderer.ts';
@@ -384,6 +384,29 @@ export function setupEditMenu(store: KeyStore, uiState: UIStateStore, refreshAll
     document.querySelector('#cmd-reorder-figures')?.addEventListener('click', () => {
         store.autoOrderFigures();
         showToast("Figures reordered to match key reference order!", "success");
+        batchedRefresh(refreshAll);
+    }, { signal });
+}
+
+/**
+ * Panel collapsing: clicking a column's header toggles its persisted collapse state,
+ * which shrinks the column to its rotated header (see the collapsible-panel CSS) so it
+ * frees horizontal space for the panels that stay open. The class/aria are applied by
+ * applyPanelVisibility on the ensuing refresh, so the layout survives a reload.
+ */
+export function setupPanelCollapse(uiState: UIStateStore, refreshAll: () => void, signal: AbortSignal) {
+    const layout = document.querySelector('.main-layout') as HTMLElement | null;
+    if (!layout) return;
+
+    layout.addEventListener('click', (e) => {
+        const toggle = (e.target as HTMLElement).closest('.panel-toggle') as HTMLButtonElement | null;
+        if (!toggle) return;
+
+        const column = toggle.closest('[data-panel]') as HTMLElement | null;
+        const panel = column?.dataset.panel as PanelKey | undefined;
+        if (!panel) return;
+
+        uiState.togglePanelCollapse(panel);
         batchedRefresh(refreshAll);
     }, { signal });
 }
