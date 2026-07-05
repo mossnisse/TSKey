@@ -19,7 +19,7 @@ import { createTaxon, resolveDrafts, migrateLegacyTaxa, deleteTaxaAndSever, find
 import { Selection } from './selection.ts';
 
 export const APP_NAME = 'TSKey';
-export const APP_VERSION = '0.0.2';
+export const APP_VERSION = '0.0.3';
 
 /** Stable, rename-proof project identity used to key figure blobs in storage. */
 function newProjectUid(): string {
