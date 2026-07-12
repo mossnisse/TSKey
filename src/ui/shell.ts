@@ -146,6 +146,9 @@ export function initializeShell(appDiv: HTMLDivElement) {
             <button id="cmd-reorder-figures" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>🔄 Order Figures</span>
             </button>
+            <button id="cmd-sort-taxa" class="dropdown-action" role="menuitem" tabindex="-1">
+              <span>🔤 Sort Taxa Alphabetically</span>
+            </button>
           </div>
         </div>
 

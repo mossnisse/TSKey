@@ -15,7 +15,8 @@ import {
     type CutLink,
 } from './coupletOps.ts';
 import { orderFiguresByReference, resolveTextReferences, encodeFigureTokens, decodeTextReferencesForEditor } from './figureOps.ts';
-import { createTaxon, resolveDrafts, migrateLegacyTaxa, deleteTaxaAndSever, findTaxonByAnyName, relinkDraftsToExisting } from './taxonOps.ts';
+import { createTaxon, resolveDrafts, migrateLegacyTaxa, deleteTaxaAndSever, findTaxonByAnyName, relinkDraftsToExisting, sortTaxaByName } from './taxonOps.ts';
+import type { NameDisplayMode } from '../utils.ts';
 import { Selection } from './selection.ts';
 
 export const APP_NAME = 'TSKey';
@@ -921,6 +922,19 @@ export class KeyStore {
         this.state.dichotomousKey = deleteTaxaAndSever(this.state.dichotomousKey, removedIds).key;
 
         this.taxonSelection.clear();
+        this.hasUncommittedChanges = true;
+    }
+
+    /**
+     * Reorders the taxa list alphabetically by the name shown for `mode` (the current
+     * scientific/vernacular display setting). No-ops on 0 or 1 taxa.
+     */
+    public sortTaxaByName(mode: NameDisplayMode): void {
+        const taxa = this.state.taxa || [];
+        if (taxa.length < 2) return;
+
+        this.saveCheckpoint();
+        this.state.taxa = sortTaxaByName(taxa, mode);
         this.hasUncommittedChanges = true;
     }
 

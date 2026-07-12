@@ -92,6 +92,7 @@ export function setupDestinationCombobox(
         listEl = null;
         anchor?.setAttribute('aria-expanded', 'false');
         anchor?.removeAttribute('aria-activedescendant');
+        anchor?.removeAttribute('aria-controls');
         anchor = null;
         suggestions = [];
         activeIndex = -1;
@@ -124,6 +125,7 @@ export function setupDestinationCombobox(
             anchor = input;
             listEl = document.createElement('div');
             listEl.className = 'dest-combobox';
+            listEl.id = 'dest-combobox-listbox';
             listEl.setAttribute('role', 'listbox');
             // mousedown (not click) so we can keep focus in the input: no focusout, no
             // typing-session end, no refresh churn mid-selection.
@@ -135,6 +137,7 @@ export function setupDestinationCombobox(
             document.body.appendChild(listEl);
             input.setAttribute('aria-expanded', 'true');
             input.setAttribute('aria-autocomplete', 'list');
+            input.setAttribute('aria-controls', 'dest-combobox-listbox');
         }
         suggestions = next;
         activeIndex = -1;

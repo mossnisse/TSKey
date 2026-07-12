@@ -55,6 +55,7 @@ export function renderMenu(store: KeyStore, uiState: UIStateStore) {
     // Tools Submenu Action items
     const reorderBtn = getBtn('cmd-reorder-couplets');
     const reorderFiguresBtn = getBtn('cmd-reorder-figures');
+    const sortTaxaBtn = getBtn('cmd-sort-taxa');
 
     if (saveBtn) {
         saveBtn.classList.toggle('has-unsaved-changes', isUnsaved);
@@ -80,6 +81,8 @@ export function renderMenu(store: KeyStore, uiState: UIStateStore) {
     if (reorderBtn) reorderBtn.disabled = !hasKeyElements;
     // Ordering figures needs both a key to scan and figures to order (see autoOrderFigures).
     if (reorderFiguresBtn) reorderFiguresBtn.disabled = !hasKeyElements || store.getFigures().length === 0;
+    // Sorting needs at least two taxa to have any effect.
+    if (sortTaxaBtn) sortTaxaBtn.disabled = store.getTaxa().length < 2;
 
     // View submenus
     const toggleFiguresBtn = getBtn('cmd-toggle-figures');

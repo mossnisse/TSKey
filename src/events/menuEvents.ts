@@ -386,6 +386,13 @@ export function setupEditMenu(store: KeyStore, uiState: UIStateStore, refreshAll
         showToast("Figures reordered to match key reference order!", "success");
         batchedRefresh(refreshAll);
     }, { signal });
+
+    document.querySelector('#cmd-sort-taxa')?.addEventListener('click', () => {
+        const mode = uiState.nameDisplayMode;
+        store.sortTaxaByName(mode);
+        showToast(`Taxa sorted alphabetically by ${mode} name!`, "success");
+        batchedRefresh(refreshAll);
+    }, { signal });
 }
 
 /**

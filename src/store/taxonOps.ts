@@ -7,7 +7,7 @@
 // checkpointing and the hasUncommittedChanges flag.
 
 import type { Branch, Couplet, Taxon } from './keyStore.ts';
-import { EMPTY_BRANCH } from '../utils.ts';
+import { EMPTY_BRANCH, displayTaxonName, type NameDisplayMode } from '../utils.ts';
 import { nextEntityId } from './collectionOps.ts';
 
 /** The find-or-create dedupe key for a scientific name (trim + lowercase). */
@@ -32,6 +32,18 @@ export function findTaxonByAnyName(taxa: readonly Taxon[], name: string): Taxon 
     if (norm === '') return undefined;
     return taxa.find(t => normalizeName(t.scientificName) === norm)
         ?? taxa.find(t => normalizeName(t.vernacularName) === norm);
+}
+
+/**
+ * Returns the taxa sorted alphabetically by the name shown for `mode` (scientific or
+ * vernacular), case-insensitively and locale-aware. `displayTaxonName` falls back to
+ * the other name when the preferred one is blank, so every taxon sorts by a real
+ * label. Ties keep their original relative order (Array.prototype.sort is stable).
+ */
+export function sortTaxaByName(taxa: readonly Taxon[], mode: NameDisplayMode): Taxon[] {
+    return [...taxa].sort((a, b) =>
+        displayTaxonName(a, mode).localeCompare(displayTaxonName(b, mode), undefined, { sensitivity: 'base' })
+    );
 }
 
 /** A blank taxon with the given id and (trimmed) scientific name; all text empty. */
