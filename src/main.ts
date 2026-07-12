@@ -135,4 +135,17 @@ async function bootstrapApp() {
     refreshAll();
 }
 
-bootstrapApp();
+bootstrapApp().catch((error) => {
+    // Without this the app silently stays blank (e.g. IndexedDB blocked by an
+    // older tab) with only an unhandled-rejection entry in the console.
+    console.error('Application bootstrap failed:', error);
+    const app = document.querySelector<HTMLDivElement>('#app');
+    if (app) {
+        const note = document.createElement('p');
+        note.className = 'bootstrap-error';
+        note.textContent = '⚠️ TSKey could not start: '
+            + (error instanceof Error ? error.message : String(error))
+            + ' — close other TSKey tabs and reload.';
+        app.replaceChildren(note);
+    }
+});

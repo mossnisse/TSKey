@@ -257,29 +257,33 @@ export function setupCoupletFocus(keyContainer: HTMLElement, store: KeyStore, ui
 
             // Verify if focus is genuinely leaving the active field session.
             uiState.typing.couplets.end(fieldKey, () => {
-                store.clearActiveCouplet();
-
                 // Encode any [fig: N] tokens that the debounce may not have reached
                 if ((field === 'alt1' || field === 'alt2') && id !== null) {
                     encodeCoupletField(store, id, field);
                 }
-
-                // Evaluate next target context defensively (ensuring target is an Element node)
-                const destination = e.relatedTarget as HTMLElement | null;
-                const movingToCard = destination instanceof Element && destination.closest('.key-card');
-                const isClickingControl = movingToCard || (destination instanceof Element && (
-                    destination.closest('.app-menu-bar') ||
-                    destination.closest('#add-couplet-btn')
-                ));
-
-                // Once focus leaves the cards, forget the last card so re-focusing it
-                // re-asserts its link highlight.
-                if (!movingToCard) lastFocusedCardId = null;
-
-                if (!isClickingControl) {
-                    batchedRefresh(refreshAll);
-                }
             });
+
+            // Highlight/active-step cleanup depends on where focus went, not on
+            // whether the typing session was still alive — a session that already
+            // ended itself via the debounce timeout must not leave the card's
+            // link highlight stuck on.
+            const destination = e.relatedTarget as HTMLElement | null;
+            const movingToCard = destination instanceof Element && destination.closest('.key-card');
+            const isClickingControl = movingToCard || (destination instanceof Element && (
+                destination.closest('.app-menu-bar') ||
+                destination.closest('#add-couplet-btn')
+            ));
+
+            // Once focus leaves the cards, forget the last card so re-focusing it
+            // re-asserts its link highlight, and drop the active-step marker.
+            if (!movingToCard) {
+                lastFocusedCardId = null;
+                store.clearActiveCouplet();
+            }
+
+            if (!isClickingControl) {
+                batchedRefresh(refreshAll);
+            }
         }
     }, { signal });
 }

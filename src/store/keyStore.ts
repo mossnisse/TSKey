@@ -15,7 +15,7 @@ import {
     type CutLink,
 } from './coupletOps.ts';
 import { orderFiguresByReference, resolveTextReferences, encodeFigureTokens, decodeTextReferencesForEditor } from './figureOps.ts';
-import { createTaxon, resolveDrafts, migrateLegacyTaxa, deleteTaxaAndSever, findTaxonByAnyName, relinkDraftsToExisting, sortTaxaByName } from './taxonOps.ts';
+import { createTaxon, resolveDrafts, migrateLegacyTaxa, deleteTaxaAndSever, findTaxonByAnyName, relinkDraftsToExisting, sortTaxaByName, sanitizeTaxa } from './taxonOps.ts';
 import type { NameDisplayMode } from '../utils.ts';
 import { Selection } from './selection.ts';
 
@@ -1036,11 +1036,10 @@ export class KeyStore {
                         importedFigures = payload.figures;
                     }
 
-                    // Taxa are taken as-is; migrateLegacyTaxa below reconciles them
-                    // with the key (and folds any legacy name-string branches).
-                    if (Array.isArray(payload.taxa)) {
-                        importedTaxa = payload.taxa as Taxon[];
-                    }
+                    // Sanitize imported taxa into well-formed records (couplets and
+                    // figures have their own validators above); migrateLegacyTaxa
+                    // below reconciles them with the key.
+                    importedTaxa = sanitizeTaxa(payload.taxa);
                 }
 
                 // Extract project title if declared inside native file format
@@ -1081,18 +1080,23 @@ export class KeyStore {
             const migrated = migrateLegacyTaxa(importedKey, importedTaxa);
             const resolved = resolveDrafts(migrated.key, migrated.taxa);
 
-            this.saveCheckpoint();
             this.state.title = importedTitle;
             this.activeProjectUid = newProjectUid();
-            this.persistedTitle = importedTitle;
+            // Nothing is persisted yet under the fresh uid: an empty persisted
+            // title keeps the follow-up save from running the rename path (which
+            // would delete whatever saved project holds the imported title).
+            this.persistedTitle = '';
             this.state.dichotomousKey = resolved.key;
             this.state.figures = importedFigures;
             this.state.taxa = resolved.taxa;
 
             workspaceStorage.resetActiveImageCache();
 
-            this.clearSelection();
-            this.activeCoupletId = null;
+            // An import is a project-identity change like New/Load, not an edit:
+            // undoing across it would resurrect the old document under the new
+            // uid/title (old figure blobs unreachable, saves landing on the wrong
+            // record), so the undo timeline resets instead of checkpointing.
+            this.resetTrackingContext();
             this.hasUncommittedChanges = true;
 
             return {
@@ -1146,9 +1150,10 @@ export class KeyStore {
             // Legacy records predate projectUid; mint one so figures re-key cleanly.
             this.activeProjectUid = data.projectUid || newProjectUid();
             this.commitPersistedTitle(data.title); // Sync the disk tracking name
-            // Normalize any legacy name-string taxon branches into records, then link
+            // Sanitize stored taxa (heals records saved by older/foreign builds),
+            // normalize any legacy name-string taxon branches into records, then link
             // any persisted draft whose name matches an existing taxon (no creation).
-            const migrated = migrateLegacyTaxa(data.dichotomousKey, data.taxa);
+            const migrated = migrateLegacyTaxa(data.dichotomousKey, sanitizeTaxa(data.taxa));
             const relinked = relinkDraftsToExisting(migrated.key, migrated.taxa);
             this.state.dichotomousKey = relinked.key;
             this.state.taxa = migrated.taxa;
@@ -1188,8 +1193,9 @@ export class KeyStore {
         } catch (error) {
             console.error("Failed to save or rename project workspace:", error);
             if (isRename && oldTitle) {
+                // Roll the title back so the UI matches what's on disk. Staged
+                // figure binaries are deliberately kept so a retry can commit them.
                 this.state.title = oldTitle;
-                workspaceStorage.clearStagedChanges();
             }
             throw error;
         }

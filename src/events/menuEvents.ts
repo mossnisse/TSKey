@@ -6,6 +6,7 @@ import type { UIStateStore, PanelKey } from '../uiState.ts';
 import { batchedRefresh, refreshHubView } from './shared.ts';
 import { executePaste, createNewCoupletWithFocus } from './coupletEvents.ts';
 import { showToast } from '../uiRenderer.ts';
+import { isRecord } from '../utils.ts';
 import { workspaceStorage, activeObjectURLs } from '../store';
 import { exportKeyToHTML } from '../exporters/htmlExporter.ts';
 import { exportKeyToLaTeX } from '../exporters/latexExporter.ts';
@@ -103,11 +104,8 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
             batchedRefresh(refreshAll);
         } catch (error) {
             console.error("Atomic save/rename failed:", error);
-
-            if (oldTitle && oldTitle !== newTitle) {
-                store.setTitle(oldTitle);
-            }
-
+            // saveToStorage already rolls the title back on a failed rename;
+            // staged changes are kept in memory for a retry.
             showToast("⚠️ Save failed. Your changes were kept in memory.", "error");
         }
     }, { signal });
@@ -138,17 +136,25 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
             }
         }
 
-        // Keep track of original title in case we need to roll back on an error
-        const originalTitle = store.getPersistedTitle();
+        // Distinguishes "the file couldn't be imported" from "the imported key
+        // couldn't be saved" so the error message doesn't misdiagnose a full disk
+        // as malformed JSON.
+        let imported = false;
 
         try {
             isImporting = true;
 
-            const fileText = await file.text();
-            const rawData = JSON.parse(fileText);
+            let rawData: unknown;
+            try {
+                rawData = JSON.parse(await file.text());
+            } catch (parseError) {
+                console.error("Import parse error:", parseError);
+                alert("Malformed JSON structure: Unable to parse file stream.");
+                return;
+            }
 
             let targetName = 'Untitled Imported Key';
-            if (rawData && typeof rawData.title === 'string' && rawData.title.trim()) {
+            if (isRecord(rawData) && typeof rawData.title === 'string' && rawData.title.trim()) {
                 targetName = rawData.title.trim();
             } else if (file.name) {
                 targetName = file.name.replace(/\.tskey$/i, '').trim();
@@ -170,6 +176,7 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
                 if (hiddenInput) hiddenInput.value = '';
                 return;
             }
+            imported = true;
 
             store.setTitle(targetName);
 
@@ -216,14 +223,16 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
             batchedRefresh(refreshAll);
         } catch (err) {
             console.error("Import processing error:", err);
-
-            // ROLLBACK: Revert the title state if mutation halfway broke down
-            if (originalTitle) {
-                store.setTitle(originalTitle);
+            const detail = err instanceof Error ? err.message : String(err);
+            if (imported) {
+                // The workspace was replaced in memory but the save failed (e.g.
+                // storage quota). Keep the imported data and staged images so
+                // File → Save can retry, and say what actually happened.
+                alert(`The key was imported into the editor, but saving it to browser storage failed:\n${detail}\n\nUse File → Save to retry.`);
+                batchedRefresh(refreshAll);
+            } else {
+                alert(`Import failed before any data was changed:\n${detail}`);
             }
-            workspaceStorage.clearStagedChanges();
-
-            alert("Malformed JSON structure: Unable to parse file stream.");
         } finally {
             isImporting = false;
             if (hiddenInput) hiddenInput.value = '';

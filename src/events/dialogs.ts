@@ -103,8 +103,13 @@ export function setupDialogs(store: KeyStore, uiState: UIStateStore, refreshAll:
             }
 
             try {
-
-                await store.loadProject(projectName);
+                const loaded = await store.loadProject(projectName);
+                if (!loaded) {
+                    // Stale hub row (e.g. the project was deleted in another tab).
+                    showToast(`⚠️ Project "${projectName}" was not found in the browser database.`, "error");
+                    await refreshHubView(store);
+                    return;
+                }
 
                 modalProjectHub.style.display = 'none';
                 showToast(`📂 Swapped to workspace: "${projectName}"`, "success");

@@ -54,12 +54,23 @@ function createFigureCard(fig: Figure, store: KeyStore, uiState: UIStateStore, r
 }
 
 export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll: () => void) {
+    const figures = store.getFigures();
+
+    // Revoke object URLs for figures that no longer exist — before the hidden-panel
+    // early return, so deletions made while the panel is hidden don't retain image
+    // memory until it is next shown.
+    const currentFigIds = new Set(figures.map(f => f.id));
+    for (const [id, url] of activeObjectURLs.entries()) {
+        if (!currentFigIds.has(id)) {
+            URL.revokeObjectURL(url);
+            activeObjectURLs.delete(id);
+        }
+    }
+
     if (uiState.isFiguresHidden) return;
 
     const container = document.getElementById('figure-container');
     if (!container) return;
-
-    const figures = store.getFigures();
 
     reconcileCards<Figure>({
         container,
@@ -148,13 +159,4 @@ export function renderFigures(store: KeyStore, uiState: UIStateStore, refreshAll
             if (captionHost) syncRichTextField(captionHost, fig.caption);
         },
     });
-
-    // Revoke object URLs for figures that no longer exist.
-    const currentFigIds = new Set(figures.map(f => f.id));
-    for (const [id, url] of activeObjectURLs.entries()) {
-        if (!currentFigIds.has(id)) {
-            URL.revokeObjectURL(url);
-            activeObjectURLs.delete(id);
-        }
-    }
 }

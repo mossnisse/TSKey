@@ -46,6 +46,48 @@ export function sortTaxaByName(taxa: readonly Taxon[], mode: NameDisplayMode): T
     );
 }
 
+/**
+ * Normalizes untrusted taxa (imported .tskey payloads, records saved by older or
+ * foreign builds) into well-formed Taxon records — the taxa counterpart of
+ * isValidCoupletArray / isValidFigureArray, but repairing instead of rejecting so
+ * sparse legacy records still load. Items without a valid unique positive numeric
+ * id are dropped (branches pointing at them then surface as "[missing taxon]");
+ * missing/mistyped fields fall back to the createTaxon defaults.
+ */
+export function sanitizeTaxa(data: unknown): Taxon[] {
+    if (!Array.isArray(data)) return [];
+
+    const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+    const seenIds = new Set<number>();
+    const out: Taxon[] = [];
+
+    for (const item of data) {
+        if (!item || typeof item !== 'object') continue;
+        const raw = item as Record<string, unknown>;
+        const id = raw.id;
+        if (typeof id !== 'number' || !Number.isFinite(id) || id <= 0 || seenIds.has(id)) continue;
+        seenIds.add(id);
+
+        const taxon = createTaxon(id, str(raw.scientificName));
+        taxon.auctor = str(raw.auctor);
+        taxon.vernacularName = str(raw.vernacularName);
+        taxon.description = str(raw.description);
+        taxon.biology = str(raw.biology);
+        taxon.distribution = str(raw.distribution);
+        if (Array.isArray(raw.synonyms)) {
+            taxon.synonyms = raw.synonyms.filter((s): s is string => typeof s === 'string');
+        }
+        if (Array.isArray(raw.confusables)) {
+            taxon.confusables = raw.confusables
+                .filter((c): c is Record<string, unknown> => !!c && typeof c === 'object')
+                .map(c => ({ name: str(c.name), distinction: str(c.distinction) }))
+                .filter(c => c.name !== '' || c.distinction !== '');
+        }
+        out.push(taxon);
+    }
+    return out;
+}
+
 /** A blank taxon with the given id and (trimmed) scientific name; all text empty. */
 export function createTaxon(id: number, scientificName = ''): Taxon {
     return {

@@ -32,18 +32,24 @@ export function scrollIntoViewAndFlash(selector: string): boolean {
     return true;
 }
 
-/** Finds the figure-reference token (raw or stored) under a textarea caret position. */
+/** Finds the figure-reference token under a caret position. `form` says which token
+ *  kind matched: 'raw' [fig: value] carries a display number/filename, 'id'
+ *  [figID: N] carries an internal figure id — the two must not be conflated. */
 function figureTokenAtIndex(
     text: string,
     index: number
-): { start: number; end: number; value: string } | null {
-    for (const re of [figRawTokenRegex(), figIdTokenRegex()]) {
+): { start: number; end: number; value: string; form: 'raw' | 'id' } | null {
+    const patterns: Array<[RegExp, 'raw' | 'id']> = [
+        [figRawTokenRegex(), 'raw'],
+        [figIdTokenRegex(), 'id'],
+    ];
+    for (const [re, form] of patterns) {
         let match: RegExpExecArray | null;
         while ((match = re.exec(text)) !== null) {
             const start = match.index;
             const end = match.index + match[0].length;
             if (index >= start && index <= end) {
-                return { start, end, value: match[1].trim() };
+                return { start, end, value: match[1].trim(), form };
             }
         }
     }
@@ -152,7 +158,18 @@ export function setupNavigationClicks(store: KeyStore, uiState: UIStateStore, si
         const chip = target.closest<HTMLElement>('.rte-host .tsk-chip[data-src]');
         if (chip) {
             const token = figureTokenAtIndex(chip.getAttribute('data-src') ?? '', 0);
-            const figId = token ? resolveEditorFigToken(token.value, store) : null;
+            let figId: number | null = null;
+            if (token) {
+                if (token.form === 'id') {
+                    // Stored [figID: N]: N is an internal id (a broken chip whose
+                    // figure was deleted stays inert rather than jumping to
+                    // whatever figure now holds that display position).
+                    const id = parseInt(token.value, 10);
+                    figId = store.getFigures().some(f => f.id === id) ? id : null;
+                } else {
+                    figId = resolveEditorFigToken(token.value, store);
+                }
+            }
             if (figId !== null) {
                 handled();
                 navigateToFigure(figId, store, uiState, e.clientX, e.clientY, signal);

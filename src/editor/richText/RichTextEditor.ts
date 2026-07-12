@@ -31,6 +31,15 @@ export class RichTextEditor {
     private readonly onKeydown = (e: KeyboardEvent) => this.handleKeydown(e);
     private readonly onPaste = (e: ClipboardEvent) => this.handlePaste(e);
     private readonly onDrop = (e: DragEvent) => this.handleDrop(e);
+    // The source selection of a text drag that started in THIS editor, so a drop
+    // here is a true move (source removed) rather than a duplicating insert.
+    private dragSourceSel: Selection | null = null;
+    private readonly onDragStart = () => {
+        this.dragSourceSel = captureRange(this.host);
+    };
+    private readonly onDragEnd = () => {
+        this.dragSourceSel = null;
+    };
     // Never re-render mid-composition: it would rip the DOM out from under the IME.
     private readonly onCompositionStart = () => {
         this.composing = true;
@@ -66,6 +75,8 @@ export class RichTextEditor {
         host.addEventListener('keydown', this.onKeydown);
         host.addEventListener('paste', this.onPaste);
         host.addEventListener('drop', this.onDrop);
+        host.addEventListener('dragstart', this.onDragStart);
+        host.addEventListener('dragend', this.onDragEnd);
         host.addEventListener('compositionstart', this.onCompositionStart);
         host.addEventListener('compositionend', this.onCompositionEnd);
         host.addEventListener('blur', this.onBlur);
@@ -131,6 +142,8 @@ export class RichTextEditor {
         this.host.removeEventListener('keydown', this.onKeydown);
         this.host.removeEventListener('paste', this.onPaste);
         this.host.removeEventListener('drop', this.onDrop);
+        this.host.removeEventListener('dragstart', this.onDragStart);
+        this.host.removeEventListener('dragend', this.onDragEnd);
         this.host.removeEventListener('compositionstart', this.onCompositionStart);
         this.host.removeEventListener('compositionend', this.onCompositionEnd);
         this.host.removeEventListener('blur', this.onBlur);
@@ -221,6 +234,8 @@ export class RichTextEditor {
     private handleDrop(e: DragEvent): void {
         e.preventDefault();
         const text = e.dataTransfer?.getData('text/plain') ?? '';
+        const source = this.dragSourceSel;
+        this.dragSourceSel = null;
         if (!text) return;
         const range = this.caretRangeAtPoint(e.clientX, e.clientY);
         if (range && this.host.contains(range.startContainer)) {
@@ -229,7 +244,23 @@ export class RichTextEditor {
             sel?.addRange(range);
         }
         this.host.focus();
-        this.applyCommand(sel => insertToken(this.value, sel, text));
+        // A drag that started in this editor is a MOVE: remove the dragged
+        // source text and shift the drop position past the removal. Drags from
+        // outside (another field, another app) just insert.
+        this.applyCommand(sel => {
+            let value = this.value;
+            let at = sel.start;
+            if (source && source.end > source.start) {
+                value = value.slice(0, source.start) + value.slice(source.end);
+                if (at >= source.end) at -= source.end - source.start;
+                else if (at > source.start) at = source.start; // dropped onto itself
+            }
+            const caret = at + text.length;
+            return {
+                value: value.slice(0, at) + text + value.slice(at),
+                selection: { start: caret, end: caret },
+            };
+        });
     }
 
     // Chromium exposes caretRangeFromPoint; Firefox only caretPositionFromPoint.

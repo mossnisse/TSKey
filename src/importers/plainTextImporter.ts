@@ -679,7 +679,9 @@ async function confirmImport(store: KeyStore, uiState: UIStateStore, refreshAll:
         }
     }
 
-    const originalTitle = store.getPersistedTitle();
+    // Distinguishes a failure before the workspace was touched from a failed
+    // save of the already-imported key, so the error message stays truthful.
+    let imported = false;
 
     try {
         const projectList = await workspaceStorage.getProjectList();
@@ -705,6 +707,7 @@ async function confirmImport(store: KeyStore, uiState: UIStateStore, refreshAll:
             alert(`Failed to import parsed key:\n• ${importResult.errors.join('\n• ')}`);
             return;
         }
+        imported = true;
 
         // importJsonData resets the image cache; a plain-text import has no figures to stage.
         store.setTitle(targetName);
@@ -717,12 +720,15 @@ async function confirmImport(store: KeyStore, uiState: UIStateStore, refreshAll:
         refreshAll();
     } catch (err) {
         console.error('Plain text import failed:', err);
-        if (originalTitle) {
-            store.setTitle(originalTitle);
-            uiState.setActiveProjectTitle(originalTitle);
+        if (imported) {
+            // The key was imported in memory but the save failed — keep it and
+            // let the user retry via File → Save instead of a partial rollback.
+            showToast('⚠️ The key was imported but could not be saved to browser storage. Use File → Save to retry.', 'error');
+            closePlainTextImportDialog();
+            refreshAll();
+        } else {
+            showToast('⚠️ The plain text import could not be completed.', 'error');
         }
-        workspaceStorage.clearStagedChanges();
-        showToast('⚠️ The plain text import could not be completed.', 'error');
     }
 }
 
