@@ -353,7 +353,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
             Version ${APP_VERSION} (2026 Engine Core)
           </p>
           <p class="about-description">
-            An interactive editor for writing classical biological dichotomous keys used to identify biological taxonomic units on morphological characters.
+            An interactive editor for writing classical dichotomous keys used to identify taxonomic units on morphological characters.
           </p>
           <div class="menu-divider about-divider"></div>
           <p class="about-credits">
