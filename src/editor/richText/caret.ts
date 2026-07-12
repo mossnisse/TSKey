@@ -128,6 +128,20 @@ function offsetOfPoint(root: Node, node: Node, offset: number): number {
     return total;
 }
 
+/** The source-offset span a single child node (e.g. an atomic chip) occupies within
+ *  `root`. Used to move a chip on drag-drop, where the browser gives no text selection
+ *  to read back from captureRange. */
+export function sourceRangeOfNode(root: HTMLElement, node: Node): { start: number; end: number } | null {
+    const parent = node.parentNode;
+    if (!parent) return null;
+    const idx = Array.prototype.indexOf.call(parent.childNodes, node);
+    if (idx < 0) return null;
+    return {
+        start: offsetOfPoint(root, parent, idx),
+        end: offsetOfPoint(root, parent, idx + 1),
+    };
+}
+
 export function captureRange(root: HTMLElement): { start: number; end: number } | null {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return null;

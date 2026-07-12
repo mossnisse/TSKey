@@ -123,7 +123,11 @@ export function setupCardDragReorder(opts: CardDragReorderOptions): void {
     };
 
     container.addEventListener('dragstart', (e) => {
-        const card = (e.target as HTMLElement).closest(cardSelector) as HTMLElement | null;
+        const origin = e.target instanceof Element ? e.target : null;
+        // A drag that begins inside an editable field is text/chip content being moved
+        // within the editor, not a card reorder — leave it to the editor's own handler.
+        if (origin?.closest('.rte-host, input, textarea')) return;
+        const card = origin?.closest(cardSelector) as HTMLElement | null;
         if (!card) return;
         setDraggedId(Number(card.getAttribute('data-id')));
         requestAnimationFrame(() => { card.style.opacity = '0.4'; });

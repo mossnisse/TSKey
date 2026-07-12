@@ -5,7 +5,7 @@
 import type { EditorSchema, InlineMark } from './schema.ts';
 import { tokenize, maskTokens } from './tokenize.ts';
 import { renderAtoms } from './render.ts';
-import { serialize, captureRange, setSelection } from './caret.ts';
+import { serialize, captureRange, setSelection, sourceRangeOfNode } from './caret.ts';
 import { toggleMark, insertToken } from './commands.ts';
 import type { Selection } from './commands.ts';
 
@@ -17,6 +17,19 @@ export interface RichTextEditorOptions {
 }
 
 type ChangeHandler = (value: string) => void;
+
+// The one in-flight drag, shared across ALL editor instances so a drop in one editor
+// can complete a cross-editor move by removing the dragged span from the editor the
+// drag started in. `text` is the source slice the span held at dragstart; a drop
+// re-verifies it before removing anything, so a record stranded by an interrupted
+// drag (dragend can be lost when a re-render detaches the drag source mid-drag)
+// degrades to a plain insert instead of deleting unrelated content.
+interface ActiveDrag {
+    editor: RichTextEditor;
+    sel: Selection;
+    text: string;
+}
+let activeDrag: ActiveDrag | null = null;
 
 export class RichTextEditor {
     private readonly host: HTMLElement;
@@ -31,14 +44,49 @@ export class RichTextEditor {
     private readonly onKeydown = (e: KeyboardEvent) => this.handleKeydown(e);
     private readonly onPaste = (e: ClipboardEvent) => this.handlePaste(e);
     private readonly onDrop = (e: DragEvent) => this.handleDrop(e);
-    // The source selection of a text drag that started in THIS editor, so a drop
-    // here is a true move (source removed) rather than a duplicating insert.
-    private dragSourceSel: Selection | null = null;
-    private readonly onDragStart = () => {
-        this.dragSourceSel = captureRange(this.host);
+    // Explicitly accept dragenter/dragover for drags that started in one of our
+    // editors. Left to itself, the browser intersects effectAllowed with an operation
+    // it picks for the target, and for element drags (a bare chip) over editable
+    // content Chromium can pick 'copy' — which a 'move'-only drag doesn't satisfy, so
+    // the drop is refused outright (no-drop cursor, drop never fires). External drags
+    // (text from another app) keep the native editable handling.
+    private readonly onDragOver = (e: DragEvent) => {
+        if (!activeDrag) return;
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    };
+    // The browser's default drag payload is the RENDERED text (Selection.toString()
+    // even omits contenteditable=false chips entirely), so an uncorrected drop would
+    // re-insert display text and destroy the dragged tokens. Every drag that starts
+    // here instead carries its SOURCE slice and records what it dragged in activeDrag.
+    private readonly onDragStart = (e: DragEvent) => {
+        const target = e.target instanceof Element ? e.target : null;
+        const chipEl = target?.closest('[data-src]') as HTMLElement | null;
+        const chip = chipEl && chipEl !== this.host && this.host.contains(chipEl) ? chipEl : null;
+        const chipSpan = chip ? sourceRangeOfNode(this.host, chip) : null;
+        const sel = captureRange(this.host);
+
+        // A drag grabbed by a chip that sits INSIDE a marked selection drags the whole
+        // selection (that's what the browser picked up), not just the chip.
+        const selDrag = sel && sel.end > sel.start
+            && (!chipSpan || (chipSpan.start >= sel.start && chipSpan.end <= sel.end));
+        const span = selDrag ? sel : chipSpan;
+        if (!span) {
+            activeDrag = null;
+            return;
+        }
+        const text = selDrag ? this.getValue().slice(span.start, span.end) : (chip!.dataset.src ?? '');
+        if (e.dataTransfer) {
+            e.dataTransfer.setData('text/plain', text);
+            // Keep 'move' (and for selections the browser's own default, also move):
+            // 'copyMove' would flip the spec's default dragover dropEffect to 'copy',
+            // showing a copy cursor over drop targets.
+            if (!selDrag) e.dataTransfer.effectAllowed = 'move';
+        }
+        activeDrag = { editor: this, sel: span, text };
     };
     private readonly onDragEnd = () => {
-        this.dragSourceSel = null;
+        activeDrag = null;
     };
     // Never re-render mid-composition: it would rip the DOM out from under the IME.
     private readonly onCompositionStart = () => {
@@ -75,6 +123,8 @@ export class RichTextEditor {
         host.addEventListener('keydown', this.onKeydown);
         host.addEventListener('paste', this.onPaste);
         host.addEventListener('drop', this.onDrop);
+        host.addEventListener('dragenter', this.onDragOver);
+        host.addEventListener('dragover', this.onDragOver);
         host.addEventListener('dragstart', this.onDragStart);
         host.addEventListener('dragend', this.onDragEnd);
         host.addEventListener('compositionstart', this.onCompositionStart);
@@ -137,11 +187,14 @@ export class RichTextEditor {
     }
 
     destroy(): void {
+        if (activeDrag?.editor === this) activeDrag = null;
         if (this.rafId !== null) cancelAnimationFrame(this.rafId);
         this.host.removeEventListener('input', this.onInput);
         this.host.removeEventListener('keydown', this.onKeydown);
         this.host.removeEventListener('paste', this.onPaste);
         this.host.removeEventListener('drop', this.onDrop);
+        this.host.removeEventListener('dragenter', this.onDragOver);
+        this.host.removeEventListener('dragover', this.onDragOver);
         this.host.removeEventListener('dragstart', this.onDragStart);
         this.host.removeEventListener('dragend', this.onDragEnd);
         this.host.removeEventListener('compositionstart', this.onCompositionStart);
@@ -233,10 +286,20 @@ export class RichTextEditor {
 
     private handleDrop(e: DragEvent): void {
         e.preventDefault();
-        const text = e.dataTransfer?.getData('text/plain') ?? '';
-        const source = this.dragSourceSel;
-        this.dragSourceSel = null;
+        const dt = e.dataTransfer;
+        const drag = activeDrag;
+        activeDrag = null;
+        // Our own record carries the same payload as text/plain — fall back to it in
+        // case a drag store delivers the data blank.
+        const text = (dt?.getData('text/plain') ?? '') || (drag?.text ?? '');
         if (!text) return;
+        // A drag that started in one of our editors is always a MOVE. (Don't read
+        // dt.dropEffect to detect Ctrl-copy: at drop time it merely echoes the
+        // dragover default, which is 'copy' for several effectAllowed values.)
+        const source = drag && drag.sel.end > drag.sel.start ? drag : null;
+        // The move is performed here in source space; reporting 'move' back would ALSO
+        // trigger the browser's own dragend deletion of the dragged selection.
+        if (drag && dt) dt.dropEffect = 'copy';
         const range = this.caretRangeAtPoint(e.clientX, e.clientY);
         if (range && this.host.contains(range.startContainer)) {
             const sel = window.getSelection();
@@ -244,16 +307,20 @@ export class RichTextEditor {
             sel?.addRange(range);
         }
         this.host.focus();
-        // A drag that started in this editor is a MOVE: remove the dragged
-        // source text and shift the drop position past the removal. Drags from
-        // outside (another field, another app) just insert.
+        // A drag from another editor completes as a move by removing the dragged span
+        // there; one from this editor is removed inside the same splice, shifting the
+        // drop position past the removal. Drags from outside the app just insert.
+        if (source && source.editor !== this) {
+            source.editor.removeSpan(source.sel, source.text);
+        }
         this.applyCommand(sel => {
             let value = this.value;
             let at = sel.start;
-            if (source && source.end > source.start) {
-                value = value.slice(0, source.start) + value.slice(source.end);
-                if (at >= source.end) at -= source.end - source.start;
-                else if (at > source.start) at = source.start; // dropped onto itself
+            if (source && source.editor === this
+                && value.slice(source.sel.start, source.sel.end) === source.text) {
+                value = value.slice(0, source.sel.start) + value.slice(source.sel.end);
+                if (at >= source.sel.end) at -= source.sel.end - source.sel.start;
+                else if (at > source.sel.start) at = source.sel.start; // dropped onto itself
             }
             const caret = at + text.length;
             return {
@@ -261,6 +328,17 @@ export class RichTextEditor {
                 selection: { start: caret, end: caret },
             };
         });
+    }
+
+    /** Completes a cross-editor move on the drag's SOURCE editor: removes the dragged
+     *  span without touching focus or the document selection (both belong to the drop
+     *  target). Skips silently unless the span still holds exactly the dragged text. */
+    private removeSpan(sel: Selection, expected: string): void {
+        this.flushPendingRerender();
+        if (this.value.slice(sel.start, sel.end) !== expected) return;
+        this.value = this.value.slice(0, sel.start) + this.value.slice(sel.end);
+        this.render();
+        this.emitChange();
     }
 
     // Chromium exposes caretRangeFromPoint; Firefox only caretPositionFromPoint.

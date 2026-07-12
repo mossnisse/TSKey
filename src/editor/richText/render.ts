@@ -11,7 +11,7 @@ export function renderAtoms(atoms: readonly Atom[]): string {
         if (atom.kind === 'text') {
             html += escapeHTML(atom.value);
         } else if (atom.kind === 'token') {
-            html += `<span class="${escapeHTML(atom.className)}" contenteditable="false" data-src="${escapeHTML(atom.src)}">${atom.html}</span>`;
+            html += `<span class="${escapeHTML(atom.className)}" contenteditable="false" draggable="true" data-src="${escapeHTML(atom.src)}">${atom.html}</span>`;
         } else {
             const { tag, open, close, className } = atom.mark;
             const cls = className ? ` class="${escapeHTML(className)}"` : '';
