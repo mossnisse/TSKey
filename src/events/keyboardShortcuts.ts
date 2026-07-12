@@ -125,13 +125,20 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
                 return;
             }
 
+            // An open menu dropdown or popover owns Escape/Delete: its own handlers
+            // close it, so don't also clear the selection or delete cards beneath it.
+            const floatingUiOpen = () =>
+                document.querySelector('.popover, .menu-trigger[aria-expanded="true"]') !== null;
+
             if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (floatingUiOpen()) return;
                 e.preventDefault();
                 document.querySelector<HTMLButtonElement>('#cmd-delete')?.click();
                 return;
             }
 
             if (e.key === 'Escape') {
+                if (floatingUiOpen()) return;
                 e.preventDefault();
                 document.querySelector<HTMLButtonElement>('#cmd-clear')?.click();
                 return;

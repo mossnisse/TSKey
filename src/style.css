@@ -83,10 +83,16 @@ html, body {
     display: flex;
     gap: var(--space-xl);
     align-items: stretch;
+    /* `safe` keeps the left edge reachable when the panels overflow a narrow
+       window (plain `center` is the fallback for older browsers). */
     justify-content: center;
+    justify-content: safe center;
     user-select: none;
     flex: 1;
     min-height: 0;
+    /* Panels have natural minimum widths; scroll instead of clipping them
+       (html/body lock the window scrollbar). */
+    overflow-x: auto;
 }
 
 .editor-column,
@@ -972,6 +978,38 @@ html, body {
 @keyframes toastFadeOut {
     to { opacity: 0; transform: translateY(-10px); }
 }
+
+/* ==========================================
+   DESTINATION AUTOCOMPLETE (dest1/dest2)
+   ========================================== */
+.dest-combobox {
+    position: fixed;
+    z-index: 2500; /* above modal overlay (2000), same layer as popovers */
+    max-height: 240px;
+    max-width: min(360px, calc(100vw - 24px));
+    overflow-y: auto;
+    padding: var(--space-xs);
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    font-family: sans-serif;
+    font-size: var(--text-base);
+    color: var(--color-text);
+}
+.dest-option {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-sm);
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.dest-option:hover,
+.dest-option.is-active { background: var(--color-bg-muted); }
+.dest-option-primary   { overflow: hidden; text-overflow: ellipsis; }
+.dest-option-secondary { color: var(--color-text-muted); font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; }
 
 /* ==========================================
    POPOVER (context menu / figure preview)

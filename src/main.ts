@@ -14,6 +14,7 @@ import {
     setupCoupletFocus,
     setupCoupletDragAndDrop,
 } from './events/coupletEvents.ts';
+import { setupDestinationCombobox } from './events/destinationCombobox.ts';
 import { setupFigurePanel, setupFigureReference } from './events/figureEvents.ts';
 import { setupTaxaPanel } from './events/taxaEvents.ts';
 import { setupDialogs } from './events/dialogs.ts';
@@ -52,6 +53,7 @@ function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, refreshAll
     setupTitleEditing(store, refreshAll, signal);
     setupCoupletSelection(keyContainer, store, refreshAll, signal);
     setupCoupletInput(keyContainer, store, uiState, refreshAll, signal);
+    setupDestinationCombobox(keyContainer, store, uiState, signal);
     setupCoupletFocus(keyContainer, store, uiState, refreshAll, signal);
     setupCoupletDragAndDrop(keyContainer, store, refreshAll, signal);
     setupFigurePanel(store, uiState, refreshAll, signal);
