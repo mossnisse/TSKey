@@ -93,28 +93,28 @@ export function renderMenu(store: KeyStore, uiState: UIStateStore) {
     if (toggleFiguresBtn) {
         const label = toggleFiguresBtn.querySelector('span');
         if (label) {
-            label.textContent = uiState.isFiguresHidden ? '🖼️ Show Figures Panel' : '🖼️ Hide Figures Panel';
+            label.textContent = uiState.isFiguresHidden ? 'Show Figures Panel' : 'Hide Figures Panel';
         }
     }
 
     if (toggleImagesBtn) {
         const label = toggleImagesBtn.querySelector('span');
         if (label) {
-            label.textContent = uiState.isImagesHidden ? '🖼️ Show Images in Figures Panel' : '🖼️ Hide Images in Figures Panel';
+            label.textContent = uiState.isImagesHidden ? 'Show Images in Figures Panel' : 'Hide Images in Figures Panel';
         }
     }
 
     if (toggleTaxaBtn) {
         const label = toggleTaxaBtn.querySelector('span');
         if (label) {
-            label.textContent = uiState.isTaxaHidden ? '🦋 Show Taxa Panel' : '🦋 Hide Taxa Panel';
+            label.textContent = uiState.isTaxaHidden ? 'Show Taxa Panel' : 'Hide Taxa Panel';
         }
     }
 
     if (togglePrintBtn) {
         const label = togglePrintBtn.querySelector('span');
         if (label) {
-            label.textContent = uiState.isPrintHidden ? '🖨️ Show Print Preview' : '🖨️ Hide Print Preview';
+            label.textContent = uiState.isPrintHidden ? 'Show Print Preview' : 'Hide Print Preview';
         }
     }
 

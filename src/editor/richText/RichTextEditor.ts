@@ -3,7 +3,7 @@
 // routed through source-string splices so the browser never plants foreign DOM structure.
 
 import type { EditorSchema, InlineMark } from './schema.ts';
-import { tokenize, maskTokens } from './tokenize.ts';
+import { tokenize, maskTokens, tokenSpanAt } from './tokenize.ts';
 import { renderAtoms } from './render.ts';
 import { serialize, captureRange, setSelection, sourceRangeOfNode } from './caret.ts';
 import { toggleMark, insertToken } from './commands.ts';
@@ -25,10 +25,13 @@ type ChangeHandler = (value: string) => void;
 // drag (dragend can be lost when a re-render detaches the drag source mid-drag)
 // degrades to a plain insert instead of deleting unrelated content.
 interface ActiveDrag {
+    id: string;
     editor: RichTextEditor;
     sel: Selection;
     text: string;
 }
+const INTERNAL_DRAG_TYPE = 'application/x-tskey-richtext-drag';
+let nextDragId = 0;
 let activeDrag: ActiveDrag | null = null;
 
 export class RichTextEditor {
@@ -38,6 +41,9 @@ export class RichTextEditor {
     private readonly changeHandlers = new Set<ChangeHandler>();
     private rafId: number | null = null;
     private composing = false;
+    // Source span of a token currently kept as editable text because the caret is
+    // inside it; null when no token is being edited. See relockEditingTokenIfExited.
+    private editingSpan: { start: number; end: number } | null = null;
     private readonly onInput = () => {
         if (!this.composing) this.scheduleRerender();
     };
@@ -51,7 +57,7 @@ export class RichTextEditor {
     // the drop is refused outright (no-drop cursor, drop never fires). External drags
     // (text from another app) keep the native editable handling.
     private readonly onDragOver = (e: DragEvent) => {
-        if (!activeDrag) return;
+        if (!activeDrag || !e.dataTransfer?.types.includes(INTERNAL_DRAG_TYPE)) return;
         e.preventDefault();
         if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
     };
@@ -75,15 +81,20 @@ export class RichTextEditor {
             activeDrag = null;
             return;
         }
-        const text = selDrag ? this.getValue().slice(span.start, span.end) : (chip!.dataset.src ?? '');
-        if (e.dataTransfer) {
-            e.dataTransfer.setData('text/plain', text);
-            // Keep 'move' (and for selections the browser's own default, also move):
-            // 'copyMove' would flip the spec's default dragover dropEffect to 'copy',
-            // showing a copy cursor over drop targets.
-            if (!selDrag) e.dataTransfer.effectAllowed = 'move';
+        const dt = e.dataTransfer;
+        if (!dt) {
+            activeDrag = null;
+            return;
         }
-        activeDrag = { editor: this, sel: span, text };
+        const text = selDrag ? this.getValue().slice(span.start, span.end) : (chip!.dataset.src ?? '');
+        const id = String(++nextDragId);
+        dt.setData('text/plain', text);
+        dt.setData(INTERNAL_DRAG_TYPE, id);
+        // Keep 'move' (and for selections the browser's own default, also move):
+        // 'copyMove' would flip the spec's default dragover dropEffect to 'copy',
+        // showing a copy cursor over drop targets.
+        if (!selDrag) dt.effectAllowed = 'move';
+        activeDrag = { id, editor: this, sel: span, text };
     };
     private readonly onDragEnd = () => {
         activeDrag = null;
@@ -102,7 +113,19 @@ export class RichTextEditor {
         if (this.composing) {
             this.composing = false;
             this.scheduleRerender();
+        } else if (this.editingSpan) {
+            // Leaving the field always re-locks an in-progress token into a chip.
+            this.editingSpan = null;
+            this.scheduleRerender();
         }
+    };
+    // contenteditable=false chips are atomic selection units. Chromium does not
+    // consistently paint their own background when a surrounding text range selects
+    // them, so mirror the range intersection into an explicit visual state. Also the
+    // only signal for re-locking a token once the caret arrows/clicks out of it.
+    private readonly onSelectionChange = () => {
+        this.syncSelectedChips();
+        this.relockEditingTokenIfExited();
     };
 
     constructor(host: HTMLElement, opts: RichTextEditorOptions) {
@@ -130,6 +153,7 @@ export class RichTextEditor {
         host.addEventListener('compositionstart', this.onCompositionStart);
         host.addEventListener('compositionend', this.onCompositionEnd);
         host.addEventListener('blur', this.onBlur);
+        document.addEventListener('selectionchange', this.onSelectionChange);
 
         this.render();
     }
@@ -176,7 +200,12 @@ export class RichTextEditor {
             cancelAnimationFrame(this.rafId);
             this.rafId = null;
         }
-        if (next === this.value && !hadPending) return;
+        if (next === this.value && !hadPending) {
+            // Token HTML may depend on live schema state (for example figure lookups),
+            // so an unchanged source value can still require a new projection.
+            this.render();
+            return;
+        }
         this.value = next;
         this.render();
     }
@@ -220,6 +249,8 @@ export class RichTextEditor {
         this.host.removeEventListener('compositionstart', this.onCompositionStart);
         this.host.removeEventListener('compositionend', this.onCompositionEnd);
         this.host.removeEventListener('blur', this.onBlur);
+        document.removeEventListener('selectionchange', this.onSelectionChange);
+        this.host.querySelectorAll('.tsk-chip-selected').forEach(chip => chip.classList.remove('tsk-chip-selected'));
         this.host.removeAttribute('contenteditable');
         this.changeHandlers.clear();
     }
@@ -239,16 +270,36 @@ export class RichTextEditor {
         const next = serialize(this.host);
         const changed = next !== this.value;
         this.value = next;
-        this.host.innerHTML = this.renderHtml();
+        // A collapsed caret keeps the token it sits inside as editable text (so a
+        // second digit can be typed into [fig: 1] -> [fig: 12] rather than the token
+        // chipping and ejecting the caret). tokenSpanAt records it for the re-lock.
+        const editingCaret = caret && caret.start === caret.end ? caret.start : null;
+        this.host.innerHTML = this.renderHtml(editingCaret);
         if (caret) setSelection(this.host, caret.start, caret.end);
+        this.editingSpan = editingCaret !== null ? tokenSpanAt(this.value, this.schema, editingCaret) : null;
+        this.syncSelectedChips();
         this.host.classList.toggle('tsk-rte-empty', this.value.length === 0);
         if (changed) this.emitChange();
     }
 
+    // Re-locks a token being edited into a chip once the caret leaves its span. Arrow
+    // keys and clicks fire no input event, so selectionchange is the only trigger.
+    private relockEditingTokenIfExited(): void {
+        if (!this.editingSpan || this.composing || this.rafId !== null) return;
+        const caret = captureRange(this.host);
+        if (!caret) return; // Focus left the field; onBlur handles the re-lock.
+        const stillInside = caret.start === caret.end
+            && caret.start > this.editingSpan.start
+            && caret.start < this.editingSpan.end;
+        if (stillInside) return;
+        this.editingSpan = null;
+        this.scheduleRerender();
+    }
+
     // Trailing '\n' gets a placeholder <br> so the caret can park on the empty last
     // line; it serializes to '' so it never leaks back into the value.
-    private renderHtml(): string {
-        let html = renderAtoms(tokenize(this.value, this.schema));
+    private renderHtml(editingCaret: number | null = null): string {
+        let html = renderAtoms(tokenize(this.value, this.schema, editingCaret));
         if (this.value.endsWith('\n')) html += '<br>';
         return html;
     }
@@ -266,12 +317,41 @@ export class RichTextEditor {
         this.render();
         this.focus();
         setSelection(this.host, result.selection.start, result.selection.end);
+        this.syncSelectedChips();
         if (changed) this.emitChange();
     }
 
     private render(): void {
+        // A settled programmatic render chips every token; drop any editing span.
+        this.editingSpan = null;
         this.host.innerHTML = this.renderHtml();
         this.host.classList.toggle('tsk-rte-empty', this.value.length === 0);
+    }
+
+    private syncSelectedChips(): void {
+        const chips = this.host.querySelectorAll<HTMLElement>('.tsk-chip');
+        if (chips.length === 0) return;
+
+        const selection = window.getSelection();
+        const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+        const belongsToHost = !!selection
+            && !!selection.anchorNode
+            && !!selection.focusNode
+            && this.host.contains(selection.anchorNode)
+            && this.host.contains(selection.focusNode);
+
+        for (const chip of chips) {
+            let selected = false;
+            if (belongsToHost && range && !range.collapsed) {
+                try {
+                    selected = range.intersectsNode(chip);
+                } catch {
+                    // A selectionchange can race a projection re-render. The next
+                    // event will reconcile the replacement chip.
+                }
+            }
+            chip.classList.toggle('tsk-chip-selected', selected);
+        }
     }
 
     private handleKeydown(e: KeyboardEvent): void {
@@ -304,11 +384,14 @@ export class RichTextEditor {
     private handleDrop(e: DragEvent): void {
         e.preventDefault();
         const dt = e.dataTransfer;
-        const drag = activeDrag;
+        const dragId = dt?.getData(INTERNAL_DRAG_TYPE) ?? '';
+        // A lost dragend can strand activeDrag. Only the matching custom payload proves
+        // that this drop belongs to that in-memory record; every other drop is external.
+        const drag = activeDrag?.id === dragId ? activeDrag : null;
         activeDrag = null;
-        // Our own record carries the same payload as text/plain — fall back to it in
-        // case a drag store delivers the data blank.
-        const text = (dt?.getData('text/plain') ?? '') || (drag?.text ?? '');
+        // A matched internal record is authoritative. External drops use only their
+        // own text/plain payload and can never remove a stale internal span.
+        const text = drag?.text ?? (dt?.getData('text/plain') ?? '');
         if (!text) return;
         // A drag that started in one of our editors is always a MOVE. (Don't read
         // dt.dropEffect to detect Ctrl-copy: at drop time it merely echoes the

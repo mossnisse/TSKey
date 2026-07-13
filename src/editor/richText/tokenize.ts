@@ -80,6 +80,23 @@ function emitText(atoms: Atom[], value: string, hitByStart: Map<number, Hit>, lo
     if (hi > textStart) atoms.push({ kind: 'text', value: value.slice(textStart, hi) });
 }
 
+// When symmetric marks share a delimiter character (`**` and `*`), a run such as
+// `***text***` uses the outer mark at the edges and leaves one character pair for
+// the nested mark. `findClose` finds the first `**`, so shift past that inner close.
+function adjustCloseForSharedRun(text: string, contentStart: number, closeIdx: number, mark: InlineMark, end: number): number {
+    const { open, close } = mark;
+    if (open !== close || open.length < 2 || ![...open].every(ch => ch === open[0])) return closeIdx;
+
+    const char = open[0];
+    let openingExtra = 0;
+    while (contentStart + openingExtra < end && text[contentStart + openingExtra] === char) openingExtra++;
+    if (openingExtra === 0) return closeIdx;
+
+    let closingRunLength = 0;
+    while (closeIdx + closingRunLength < end && text[closeIdx + closingRunLength] === char) closingRunLength++;
+    return closingRunLength >= close.length + openingExtra ? closeIdx + openingExtra : closeIdx;
+}
+
 function parseMarks(
     value: string,
     masked: string,
@@ -100,8 +117,9 @@ function parseMarks(
         for (const mark of ordered) {
             if (i + mark.open.length > hi || !masked.startsWith(mark.open, i)) continue;
             const contentStart = i + mark.open.length;
-            const closeIdx = findClose(masked, contentStart, mark.open, mark.close, hi);
+            let closeIdx = findClose(masked, contentStart, mark.open, mark.close, hi);
             if (closeIdx <= contentStart) continue;
+            closeIdx = adjustCloseForSharedRun(masked, contentStart, closeIdx, mark, hi);
             flush(i);
             const children: Atom[] = [];
             parseMarks(value, masked, ordered, hitByStart, contentStart, closeIdx, children);
@@ -117,8 +135,10 @@ function parseMarks(
 }
 
 // Resolves overlaps greedily by earliest start (ties: longest match) so e.g. a
-// `[figID: 5]` is one atom, never split.
-function collectHits(value: string, schema: EditorSchema): Hit[] {
+// `[figID: 5]` is one atom, never split. `editingCaret` (a collapsed caret offset)
+// suppresses the token whose interior the caret sits in, so it stays as editable
+// source text instead of collapsing into an atomic chip that ejects the caret.
+function collectHits(value: string, schema: EditorSchema, editingCaret?: number | null): Hit[] {
     const rawHits: Hit[] = [];
     for (const token of schema.tokens) {
         const flags = token.pattern.flags.includes('g') ? token.pattern.flags : token.pattern.flags + 'g';
@@ -136,10 +156,23 @@ function collectHits(value: string, schema: EditorSchema): Hit[] {
     let claimed = 0;
     for (const hit of rawHits) {
         if (hit.start < claimed) continue;
+        if (editingCaret != null && hit.start < editingCaret && editingCaret < hit.end) continue;
         hits.push(hit);
         claimed = hit.end;
     }
     return hits;
+}
+
+/**
+ * The source span of a token whose interior strictly contains `caret`, or null.
+ * Lets the editor detect when the caret leaves a token being edited so it can
+ * re-lock into a chip. Boundary positions (caret == start/end) count as outside.
+ */
+export function tokenSpanAt(value: string, schema: EditorSchema, caret: number): { start: number; end: number } | null {
+    for (const hit of collectHits(value, schema)) {
+        if (hit.start < caret && caret < hit.end) return { start: hit.start, end: hit.end };
+    }
+    return null;
 }
 
 // Blanks token spans to spaces (length-preserving) so mark delimiters never match inside one.
@@ -157,10 +190,10 @@ export function maskTokens(value: string, schema: EditorSchema): string {
     return buildMask(value, collectHits(value, schema));
 }
 
-export function tokenize(value: string, schema: EditorSchema): Atom[] {
+export function tokenize(value: string, schema: EditorSchema, editingCaret?: number | null): Atom[] {
     if (!value) return [];
 
-    const hits = collectHits(value, schema);
+    const hits = collectHits(value, schema, editingCaret);
     const masked = buildMask(value, hits);
     const hitByStart = new Map<number, Hit>(hits.map(h => [h.start, h]));
 

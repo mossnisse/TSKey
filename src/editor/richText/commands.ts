@@ -30,12 +30,16 @@ function findSpans(masked: string, mark: InlineMark): MarkSpan[] {
     let i = 0;
     while (i < masked.length) {
         if (singleChar && masked[i] === open) {
-            // Skip longer same-char runs: they belong to another mark (bold's `**`).
+            // Even-length runs belong to another mark (bold's `**`). An odd run has
+            // one trailing character left for this mark, as in `***bold+italic***`.
             let runEnd = i;
             while (runEnd + 1 < masked.length && masked[runEnd + 1] === open) runEnd++;
             if (runEnd > i) {
-                i = runEnd + 1;
-                continue;
+                if ((runEnd - i + 1) % 2 === 0) {
+                    i = runEnd + 1;
+                    continue;
+                }
+                i = runEnd;
             }
         }
         if (masked.startsWith(open, i)) {

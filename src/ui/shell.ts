@@ -21,41 +21,41 @@ export function initializeShell(appDiv: HTMLDivElement) {
 
           <div class="menu-dropdown" role="menu" aria-labelledby="menu-file-trigger">
             <button id="cmd-new" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>📄 New Key</span>
+              <span>New Key</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘⌥N' : 'Ctrl+Alt+N'}</span>
             </button>
             <button id="cmd-open-dialog" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>📂 Open Key Workspace...</span>
+              <span>Open Key Workspace...</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘O' : 'Ctrl+O'}</span>
             </button>
             <div class="menu-divider" role="separator"></div>
             <button id="cmd-save" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>💾 Save</span>
+              <span>Save</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘S' : 'Ctrl+S'}</span>
             </button>
             <button id="cmd-save-as" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>💾 Save As...</span>
+              <span>Save As...</span>
               <span class="menu-shortcut">${IS_MAC ? '⇧⌘S' : 'Ctrl+Shift+S'}</span>
             </button>
             <div class="menu-divider" role="separator"></div>
             <button id="cmd-trigger-import" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>📤 Import Native File (.tskey)...</span>
+              <span>Import Native File (.tskey)...</span>
             </button>
             <button id="cmd-export-json" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>📥 Export Native File (.tskey)</span>
+              <span>Export Native File (.tskey)</span>
             </button>
             <div class="menu-divider"></div>
             <button id="cmd-import-text" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>📋 Import from Plain Text...</span>
+              <span>Import from Plain Text...</span>
             </button>
             <button id="cmd-export-text" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>📄 Export to Plain Text (.txt)</span>
+              <span>Export to Plain Text (.txt)</span>
             </button>
             <button id="cmd-export-html" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>🌐 Export to Web Page (.html)</span>
+              <span>Export to Web Page (.html)</span>
             </button>
             <button id="cmd-export-latex" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>🔏 Export to LaTeX Document (.tex)</span>
+              <span>Export to LaTeX Document (.tex)</span>
             </button>
           </div>
         </div>
@@ -64,54 +64,54 @@ export function initializeShell(appDiv: HTMLDivElement) {
           <button id="menu-edit-trigger" class="menu-trigger" role="menuitem" aria-haspopup="menu" aria-expanded="false">Edit</button>
           <div class="menu-dropdown" role="menu" aria-labelledby="menu-edit-trigger">
             <button id="cmd-undo" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>🔄 Undo</span>
+              <span>Undo</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘Z' : 'Ctrl+Z'}</span>
             </button>
             <button id="cmd-redo" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>🔁 Redo</span>
+              <span>Redo</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘Y / ⌘⇧Z' : 'Ctrl+Y / Ctrl+Shift+Z'}</span>
             </button>
             <div class="menu-divider" role="separator"></div>
             <button id="cmd-cut" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>✂️ Cut Selected Steps</span>
+              <span>Cut Selected Steps</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘X' : 'Ctrl+X'}</span>
             </button>
             <button id="cmd-copy" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>📋 Copy Selected Steps</span>
+              <span>Copy Selected Steps</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘C' : 'Ctrl+C'}</span>
             </button>
             <button id="cmd-paste-below" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>📥 Paste steps below selection</span>
+              <span>Paste steps below selection</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘V' : 'Ctrl+V'}</span>
             </button>
             <button id="cmd-paste-above" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>📥 Paste above selections</span>
+              <span>Paste above selections</span>
               <span class="menu-shortcut">${IS_MAC ? 'Shift+⌘V' : 'Shift+Ctrl+V'}</span>
             </button>
             <button id="cmd-delete" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>🗑️ Delete Selected steps and figures</span>
+              <span>Delete Selected Steps and Figures</span>
               <span class="menu-shortcut">Delete</span>
             </button>
             <button id="cmd-swap" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>🔄 Swap place for Alternatives</span>
+              <span>Swap Alternatives</span>
               <span class="menu-shortcut">${IS_MAC ? 'Option+S' : 'Alt+S'}</span>
             </button>
             <button id="cmd-add" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>➕ Append New Step</span>
+              <span>Append New Step</span>
               <span class="menu-shortcut">Alt+N</span>
             </button>
             <div class="menu-divider" role="separator"></div>
             <button id="cmd-insert-figref" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>🖼️ Insert Figure Reference</span>
+              <span>Insert Figure Reference</span>
               <span class="menu-shortcut">${IS_MAC ? 'Option+F' : 'Alt+F'}</span>
             </button>
             <div class="menu-divider" role="separator"></div>
             <button id="cmd-clear" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>🧼 Clear Selections</span>
+              <span>Clear Selections</span>
               <span class="menu-shortcut">Esc</span>
             </button>
             <button id="cmd-select-all" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>☑️ Select all steps</span>
+              <span>Select All Steps</span>
               <span class="menu-shortcut">${IS_MAC ? '⌘A' : 'Ctrl+A'}</span>
             </button>
           </div>
@@ -121,17 +121,17 @@ export function initializeShell(appDiv: HTMLDivElement) {
           <button id="menu-view-trigger" class="menu-trigger" role="menuitem" aria-haspopup="menu" aria-expanded="false">View</button>
           <div class="menu-dropdown" role="menu" aria-labelledby="menu-view-trigger">
             <button id="cmd-toggle-figures" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>🖼️ Hide Figures Panel</span>
+              <span>Hide Figures Panel</span>
               <span class="menu-shortcut">Ctrl+Shift+F</span>
             </button>
             <button id="cmd-toggle-images" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>🖼️ Hide Images in Figures Panel</span>
+              <span>Hide Images in Figures Panel</span>
             </button>
             <button id="cmd-toggle-taxa" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>🦋 Hide Taxa Panel</span>
+              <span>Hide Taxa Panel</span>
             </button>
             <button id="cmd-toggle-print" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>🖨️ Hide Print Preview</span>
+              <span>Hide Print Preview</span>
               <span class="menu-shortcut">Ctrl+Shift+P</span>
             </button>
           </div>
@@ -141,13 +141,13 @@ export function initializeShell(appDiv: HTMLDivElement) {
           <button id="menu-tools-trigger" class="menu-trigger" role="menuitem" aria-haspopup="menu" aria-expanded="false">Tools</button>
           <div class="menu-dropdown" role="menu" aria-labelledby="menu-tools-trigger">
             <button id="cmd-reorder-couplets" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>🔄 Order Steps</span>
+              <span>Order Steps</span>
             </button>
             <button id="cmd-reorder-figures" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>🔄 Order Figures</span>
+              <span>Order Figures</span>
             </button>
             <button id="cmd-sort-taxa" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>🔤 Sort Taxa Alphabetically</span>
+              <span>Sort Taxa Alphabetically</span>
             </button>
           </div>
         </div>
@@ -156,14 +156,14 @@ export function initializeShell(appDiv: HTMLDivElement) {
           <button id="menu-window-trigger" class="menu-trigger" role="menuitem" aria-haspopup="menu" aria-expanded="false">Window</button>
           <div class="menu-dropdown" role="menu" aria-labelledby="menu-window-trigger">
             <button id="cmd-open-shortcuts" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>⌨️ Keyboard Shortcuts...</span>
+              <span>Keyboard Shortcuts...</span>
             </button>
             <button id="cmd-open-options" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>🔧 Options & Settings...</span>
+              <span>Options &amp; Settings...</span>
             </button>
             <div class="menu-divider" role="separator"></div>
             <button id="cmd-open-about" class="dropdown-action" role="menuitem" tabindex="-1">
-              <span>ℹ️ About ${APP_NAME}...</span>
+              <span>About ${APP_NAME}...</span>
             </button>
           </div>
         </div>
@@ -227,7 +227,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
     <div id="modal-open-project" class="modal-overlay" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="modal-open-project-title">
       <div class="modal-window hub-modal-window">
         <div class="modal-header">
-          <h3 id="modal-open-project-title">📂 Open Key Workspace</h3>
+          <h3 id="modal-open-project-title">Open Key Workspace</h3>
           <button id="modal-project-close" class="modal-close-x">&times;</button>
         </div>
         <div class="modal-body">
@@ -243,7 +243,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
     <div id="modal-shortcuts" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-shortcuts-title">
       <div class="modal-window">
         <div class="modal-header">
-          <h3 id="modal-shortcuts-title">⌨️ Keyboard Shortcuts</h3>
+          <h3 id="modal-shortcuts-title">Keyboard Shortcuts</h3>
           <button id="modal-shortcuts-close" class="modal-close-x">&times;</button>
         </div>
         <div class="modal-body">
@@ -277,7 +277,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
     <div id="modal-options" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-options-title">
       <div class="modal-window">
         <div class="modal-header">
-          <h3 id="modal-options-title">🔧 Options & Settings</h3>
+          <h3 id="modal-options-title">Options &amp; Settings</h3>
           <button id="modal-options-close" class="modal-close-x">&times;</button>
         </div>
         <div class="modal-body">
@@ -344,7 +344,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
     <div id="modal-about" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-about-title">
       <div class="modal-window about-modal-window">
         <div class="modal-header">
-          <h3 id="modal-about-title">ℹ️ About</h3>
+          <h3 id="modal-about-title">About</h3>
           <button id="modal-about-close" class="modal-close-x">&times;</button>
         </div>
         <div class="modal-body about-modal-body">
@@ -365,7 +365,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
 
     <div id="plain-text-import-view" class="fullscreen-view" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="pt-import-title-label" tabindex="-1">
       <div class="fullscreen-view-header">
-        <h3 id="pt-import-title-label">📋 Import Key from Plain Text</h3>
+        <h3 id="pt-import-title-label">Import Key from Plain Text</h3>
         <button id="pt-import-close" class="modal-close-x" aria-label="Close import view">&times;</button>
       </div>
 
@@ -397,7 +397,7 @@ export function initializeShell(appDiv: HTMLDivElement) {
                   <option value="windows-1252">Windows-1252 / Latin-1</option>
                 </select>
               </label>
-              <button id="pt-import-load-file" class="btn btn-secondary">📂 Load .txt File...</button>
+              <button id="pt-import-load-file" class="btn btn-secondary">Load .txt File...</button>
               <button id="pt-import-clear" class="btn btn-outline">Clear</button>
             </div>
           </div>

@@ -7,10 +7,10 @@
     word-break: break-word;
     min-height: 2.4em;
     padding: var(--space-sm, 8px) var(--space-md, 12px);
-    border: 1px solid var(--color-border, #cbd5e1);
-    border-radius: var(--radius-md, 6px);
-    background: var(--color-bg, #fff);
-    color: var(--color-text, #0f172a);
+    border: 1px solid var(--color-border, #c9c9c9);
+    border-radius: var(--radius-md, 8px);
+    background: var(--color-bg, #ffffff);
+    color: var(--color-text, #0b0b0b);
     font-size: var(--text-base, 14px);
     line-height: 1.5;
     outline: none;
@@ -18,14 +18,14 @@
 }
 
 .tsk-rte:focus {
-    border-color: var(--color-primary, #4f46e5);
-    box-shadow: 0 0 0 3px var(--color-primary-light, #eef2ff);
+    border-color: var(--color-accent, #2855ff);
+    box-shadow: none;
 }
 
 /* Placeholder shown only while empty (the class is toggled by the editor). */
 .tsk-rte-empty::before {
     content: attr(data-placeholder);
-    color: var(--color-text-muted, #475569);
+    color: var(--color-text-muted, #606060);
     pointer-events: none;
 }
 
@@ -35,8 +35,8 @@
     padding: 0 6px;
     margin: 0 1px;
     border-radius: var(--radius-sm, 4px);
-    background: var(--color-primary-light, #eef2ff);
-    color: var(--color-primary-hover, #4338ca);
+    background: var(--color-accent-soft, #edf1ff);
+    color: var(--color-accent-hover, #1740df);
     font-size: 0.9em;
     font-weight: 600;
     white-space: nowrap;
@@ -45,10 +45,27 @@
        and suppressing selection would hide the highlight when the chip is selected. */
 }
 
+/* Native selection painting skips atomic contenteditable=false elements in some
+   browsers. RichTextEditor mirrors range intersections to this class so selected
+   chips invert together with the surrounding text. */
+.tsk-rte .tsk-chip.tsk-chip-selected {
+    background: var(--color-accent, #2855ff);
+    color: #ffffff;
+    box-shadow: 0 0 0 1px var(--color-accent, #2855ff);
+}
+
 /* Unresolved / still-being-typed reference. */
 .tsk-rte .tsk-chip-broken {
-    background: var(--color-danger-light, #fee2e2);
-    color: var(--color-danger-hover, #dc2626);
+    background: var(--color-danger-light, #f4e3df);
+    color: var(--color-danger-hover, #7e2f29);
+    text-decoration: underline wavy currentColor;
+    text-underline-offset: 2px;
+}
+
+.tsk-rte .tsk-chip-broken.tsk-chip-selected {
+    background: var(--color-danger, #df3f38);
+    color: #ffffff;
+    box-shadow: 0 0 0 1px var(--color-danger, #df3f38);
 }
 
 .tsk-rte sub,
