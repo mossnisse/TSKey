@@ -382,6 +382,9 @@ export class KeyStore {
     private redoStack: HistoryEntry[] = [];
     private readonly maxHistoryLimit: number;
     private savedDepth: number | null = 0;
+    // Monotonic document generation used to keep an asynchronous save from marking
+    // edits made after its snapshot as persisted.
+    private mutationRevision = 0;
 
     // One selection per id-keyed collection (see Selection for the shared behaviour).
     private readonly coupletSelection = new Selection();
@@ -430,7 +433,7 @@ export class KeyStore {
 
         this.saveCheckpoint();
         this.state.title = trimmed || 'Untitled Key';
-        this.hasUncommittedChanges = true;
+        this.markChanged();
     }
 
     public getKey(): readonly Couplet[] {
@@ -479,6 +482,15 @@ export class KeyStore {
         this.editScope = null;
     }
 
+    private bumpMutationRevision(): void {
+        this.mutationRevision += 1;
+    }
+
+    private markChanged(): void {
+        this.bumpMutationRevision();
+        this.hasUncommittedChanges = true;
+    }
+
     public hasUnsavedChanges(): boolean {
         // Current position is just the undo-stack size; unsaved if it left the saved depth.
         return this.undoStack.length !== this.savedDepth || this.hasUncommittedChanges;
@@ -488,6 +500,7 @@ export class KeyStore {
     * Wipes undo/redo timelines, selections, and drag-and-drop focus profiles 
     */
     private resetTrackingContext(): void {
+        this.bumpMutationRevision();
         this.undoStack = [];
         this.redoStack = [];
         this.savedDepth = 0;
@@ -578,6 +591,7 @@ export class KeyStore {
         const previous = this.undoStack.pop()!;
         this.state = previous.state;
         workspaceStorage.restoreStagingSnapshot(previous.staging);
+        this.bumpMutationRevision();
 
         this.hasUncommittedChanges = false;
         this.editScope = null;
@@ -592,6 +606,7 @@ export class KeyStore {
         const next = this.redoStack.pop()!;
         this.state = next.state;
         workspaceStorage.restoreStagingSnapshot(next.staging);
+        this.bumpMutationRevision();
 
         this.hasUncommittedChanges = false;
         this.editScope = null;
@@ -670,7 +685,7 @@ export class KeyStore {
         if (!newKey) return;
         this.state.dichotomousKey = newKey;
 
-        this.hasUncommittedChanges = true;
+        this.markChanged();
     }
 
     public addCouplet(): number {
@@ -678,7 +693,7 @@ export class KeyStore {
 
         const { key, newId } = addCoupletOp(this.state.dichotomousKey);
         this.state.dichotomousKey = key;
-        this.hasUncommittedChanges = true;
+        this.markChanged();
 
         return newId; // Return the new ID for UI targeting focus
     }
@@ -709,7 +724,7 @@ export class KeyStore {
 
         this.state.dichotomousKey = key;
         this.setSelectionBatch(newIds);
-        this.hasUncommittedChanges = true;
+        this.markChanged();
 
         return true;
     }
@@ -738,7 +753,7 @@ export class KeyStore {
         this.cutIncomingLinksBuffer = severedLinks;
 
         this.coupletSelection.clear();
-        this.hasUncommittedChanges = true;
+        this.markChanged();
     }
 
     public deleteSelectedCouplets() {
@@ -754,7 +769,7 @@ export class KeyStore {
         this.state.dichotomousKey = deleteCoupletsOp(this.state.dichotomousKey, removedIds);
 
         this.coupletSelection.clear();
-        this.hasUncommittedChanges = true;
+        this.markChanged();
     }
 
     /**
@@ -768,7 +783,7 @@ export class KeyStore {
         this.state.dichotomousKey = key;
 
         if (modified) {
-            this.hasUncommittedChanges = true;
+            this.markChanged();
             return true;
         }
 
@@ -782,7 +797,7 @@ export class KeyStore {
 
         this.saveCheckpoint();
         this.state.dichotomousKey = next;
-        this.hasUncommittedChanges = true;
+        this.markChanged();
         return true;
     }
 
@@ -794,7 +809,7 @@ export class KeyStore {
 
         this.saveCheckpoint();
         this.state.dichotomousKey = autoOrderCoupletsOp(this.state.dichotomousKey);
-        this.hasUncommittedChanges = true;
+        this.markChanged();
     }
 
     /* figure mutators */
@@ -842,7 +857,7 @@ export class KeyStore {
 
         // Clear the selection set
         this.figureSelection.clear();
-        this.hasUncommittedChanges = true;
+        this.markChanged();
     }
 
     public addFigure(filename: string, caption: string): number {
@@ -856,7 +871,7 @@ export class KeyStore {
             { id: nextId, filename, caption }
         ];
 
-        this.hasUncommittedChanges = true;
+        this.markChanged();
         return nextId;
     }
 
@@ -870,7 +885,7 @@ export class KeyStore {
         if (!newFigures) return;
         this.state.figures = newFigures;
 
-        this.hasUncommittedChanges = true;
+        this.markChanged();
     }
 
     public reorderFigures(srcIdx: number, targetIdx: number) {
@@ -878,7 +893,7 @@ export class KeyStore {
         this.saveCheckpoint();
 
         this.state.figures = reorderEntity(this.state.figures, srcIdx, targetIdx);
-        this.hasUncommittedChanges = true;
+        this.markChanged();
     }
 
     public autoOrderFigures(): void {
@@ -889,7 +904,7 @@ export class KeyStore {
         this.saveCheckpoint();
 
         this.state.figures = orderFiguresByReference(figures, this.state.dichotomousKey);
-        this.hasUncommittedChanges = true;
+        this.markChanged();
     }
 
     /* taxa mutators */
@@ -922,7 +937,7 @@ export class KeyStore {
         this.state.dichotomousKey = deleteTaxaAndSever(this.state.dichotomousKey, removedIds).key;
 
         this.taxonSelection.clear();
-        this.hasUncommittedChanges = true;
+        this.markChanged();
     }
 
     /**
@@ -935,7 +950,7 @@ export class KeyStore {
 
         this.saveCheckpoint();
         this.state.taxa = sortTaxaByName(taxa, mode);
-        this.hasUncommittedChanges = true;
+        this.markChanged();
     }
 
     public addTaxon(scientificName = ''): number {
@@ -945,7 +960,7 @@ export class KeyStore {
         const nextId = nextEntityId(taxa);
         this.state.taxa = [...taxa, createTaxon(nextId, scientificName)];
 
-        this.hasUncommittedChanges = true;
+        this.markChanged();
         return nextId;
     }
 
@@ -956,7 +971,7 @@ export class KeyStore {
         if (!next) return;
         this.state.taxa = next;
 
-        this.hasUncommittedChanges = true;
+        this.markChanged();
     }
 
     /**
@@ -971,7 +986,7 @@ export class KeyStore {
         const relinked = relinkDraftsToExisting(this.state.dichotomousKey, this.state.taxa);
         if (!relinked.changed) return false;
         this.state.dichotomousKey = relinked.key;
-        this.hasUncommittedChanges = true;
+        this.markChanged();
         return true;
     }
 
@@ -980,7 +995,7 @@ export class KeyStore {
         this.saveCheckpoint();
 
         this.state.taxa = reorderEntity(this.state.taxa, srcIdx, targetIdx);
-        this.hasUncommittedChanges = true;
+        this.markChanged();
     }
 
     /**
@@ -1015,7 +1030,7 @@ export class KeyStore {
             [field]: { kind: 'taxon', taxonId },
         } as Partial<Omit<Couplet, 'id'>>) ?? this.state.dichotomousKey;
 
-        this.hasUncommittedChanges = true;
+        this.markChanged();
         return taxonId;
     }
 
@@ -1097,7 +1112,7 @@ export class KeyStore {
             // uid/title (old figure blobs unreachable, saves landing on the wrong
             // record), so the undo timeline resets instead of checkpointing.
             this.resetTrackingContext();
-            this.hasUncommittedChanges = true;
+            this.markChanged();
 
             return {
                 success: true,
@@ -1176,33 +1191,47 @@ export class KeyStore {
     }
 
     public async saveToStorage(): Promise<void> {
-        const isRename = this.persistedTitle && this.persistedTitle !== this.state.title;
+        // Everything below belongs to this exact document generation. Later edits may
+        // continue while IndexedDB/image writes run, but must remain visibly unsaved.
+        const savedRevision = this.mutationRevision;
+        const savedTitle = this.state.title;
+        const savedProjectUid = this.activeProjectUid;
+        const savedData = this.getProjectData();
+        const isRename = this.persistedTitle && this.persistedTitle !== savedTitle;
         const oldTitle = this.persistedTitle;
 
         try {
-
-            await workspaceStorage.saveProject(this.state.title, this.activeProjectUid, this.getProjectData());
+            await workspaceStorage.saveProject(savedTitle, savedProjectUid, savedData);
 
             if (isRename && oldTitle) {
                 await workspaceStorage.deleteProjectRecord(oldTitle);
             }
 
-            this.commitPersistedTitle(this.state.title);
-            this.markSaved();
+            // A different project may have been loaded while this save was in flight;
+            // never let the old completion rewrite that project's persisted pointer.
+            if (this.activeProjectUid === savedProjectUid) {
+                this.commitPersistedTitle(savedTitle);
+                if (this.mutationRevision === savedRevision && this.state.title === savedTitle) {
+                    this.markSaved();
+                }
+            }
 
         } catch (error) {
             console.error("Failed to save or rename project workspace:", error);
-            if (isRename && oldTitle) {
+            if (isRename && oldTitle
+                && this.activeProjectUid === savedProjectUid
+                && this.state.title === savedTitle) {
                 // Roll the title back so the UI matches what's on disk. Staged
                 // figure binaries are deliberately kept so a retry can commit them.
                 this.state.title = oldTitle;
+                this.markChanged();
             }
             throw error;
         }
     }
 
     public async saveAsProject(newTitle: string): Promise<void> {
-        const oldTitle = this.persistedTitle;
+        const oldStateTitle = this.state.title;
         const oldUid = this.activeProjectUid;
         const newUid = newProjectUid(); // Save As is a true duplicate — new identity
 
@@ -1210,18 +1239,33 @@ export class KeyStore {
             // Copy the source project's persisted blobs to the new identity.
             await workspaceStorage.cloneProjectFigures(oldUid, newUid);
 
+            if (this.activeProjectUid !== oldUid) {
+                throw new Error('The active project changed while Save As was running.');
+            }
+
             this.state.title = newTitle;
             this.activeProjectUid = newUid;
+            this.bumpMutationRevision();
 
-            await workspaceStorage.saveProject(newTitle, newUid, this.getProjectData());
+            const savedRevision = this.mutationRevision;
+            const savedData = this.getProjectData();
 
-            this.commitPersistedTitle(newTitle);
-            this.markSaved();
+            await workspaceStorage.saveProject(newTitle, newUid, savedData);
+
+            if (this.activeProjectUid === newUid) {
+                this.commitPersistedTitle(newTitle);
+                if (this.mutationRevision === savedRevision && this.state.title === newTitle) {
+                    this.markSaved();
+                }
+            }
         } catch (error) {
             console.error("Save As Operation Failed:", error);
             // Rollback identity on failure
-            this.state.title = oldTitle;
-            this.activeProjectUid = oldUid;
+            if (this.activeProjectUid === newUid) {
+                this.state.title = oldStateTitle;
+                this.activeProjectUid = oldUid;
+                this.bumpMutationRevision();
+            }
             throw error;
         }
     }

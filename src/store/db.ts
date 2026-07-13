@@ -32,6 +32,22 @@ export interface StagingSnapshot {
     deletes: Set<number>;
 }
 
+/** Narrow persistence contract used by WorkspaceManager. The default implementation
+ *  is IndexedDB; tests can inject a deterministic engine without changing runtime use. */
+export interface WorkspaceStorageEngine {
+    getProjectList(): Promise<{ name: string; lastModified: number }[]>;
+    saveProject(title: string, projectUid: string, data: ProjectData): Promise<void>;
+    loadProject(title: string): Promise<ProjectRecord | null>;
+    deleteProject(title: string, projectUid: string): Promise<void>;
+    deleteProjectRecordOnly(title: string): Promise<void>;
+    saveFigure(projectUid: string, id: number, blob: Blob): Promise<void>;
+    deleteFigure(projectUid: string, id: number): Promise<void>;
+    cleanupOrphanFigures(projectUid: string, activeIds: Set<number>): Promise<void>;
+    getFigure(projectUid: string, id: number): Promise<Blob | null>;
+    cloneProjectFigures(oldUid: string, newUid: string): Promise<void>;
+    deleteProjectFigures(projectUid: string): Promise<void>;
+}
+
 /**
  * Resolves when a transaction commits; rejects on error or abort.
  * `abortMessage` gives the abort path a contextual error for debugging.
@@ -56,7 +72,7 @@ function reqValue<T>(request: IDBRequest<T>): Promise<T> {
  * PERSISTENT DISK LAYER (IndexedDB Engine)
  * Handles low-level raw browser transactions wrapped cleanly in native Promises.
  */
-class IndexedDBEngine {
+class IndexedDBEngine implements WorkspaceStorageEngine {
     private dbName = 'TSKey_Workspace_DB';
     private projectsStoreName = 'projects';
     private figuresStoreName = 'figures';
@@ -270,16 +286,25 @@ class IndexedDBEngine {
  * VOLATILE MEMORY LAYER & FACADE (Workspace Manager)
  */
 export class WorkspaceManager {
-    private storage = new IndexedDBEngine();
+    private readonly storage: WorkspaceStorageEngine;
     private pendingUploads = new Map<number, Blob>();
     private pendingDeletes = new Set<number>();
     private commitPromise: Promise<void> | null = null;
+
+    constructor(storage: WorkspaceStorageEngine = new IndexedDBEngine()) {
+        this.storage = storage;
+    }
 
     public async getProjectList(): Promise<{ name: string, lastModified: number }[]> {
         return this.storage.getProjectList();
     }
 
     public async saveProject(title: string, projectUid: string, data: ProjectData): Promise<void> {
+        // Bind binary staging to the same point-in-time document snapshot. Uploads or
+        // deletes made while this save is awaiting IndexedDB remain queued for the
+        // next save instead of being committed/cleared against stale metadata.
+        const staging = this.getStagingSnapshot();
+
         // Records are keyed by title, figure blobs by projectUid. If a DIFFERENT project
         // currently occupies this title (Save As / rename / New / import onto an existing
         // name), the put below replaces its record and orphans its blobs. Note the
@@ -290,7 +315,7 @@ export class WorkspaceManager {
             : null;
 
         await this.storage.saveProject(title, projectUid, data);
-        await this.commitStagedChanges(projectUid, data.figures);
+        await this.commitStagedChanges(projectUid, data.figures, staging);
 
         if (displacedUid) {
             // Best-effort: the user's project is already saved, so a cleanup hiccup
@@ -382,10 +407,14 @@ export class WorkspaceManager {
         return this.storage.getFigure(projectUid, id);
     }
 
-    public async commitStagedChanges(projectUid: string, activeFigures: Figure[]): Promise<void> {
+    public async commitStagedChanges(
+        projectUid: string,
+        activeFigures: Figure[],
+        staging: StagingSnapshot = this.getStagingSnapshot(),
+    ): Promise<void> {
         const previous = this.commitPromise ?? Promise.resolve();
-        const uploads = new Map(this.pendingUploads);
-        const deletes = new Set(this.pendingDeletes);
+        const uploads = staging.uploads;
+        const deletes = staging.deletes;
 
         const run = (async () => {
             await previous.catch(() => { });

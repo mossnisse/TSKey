@@ -75,3 +75,10 @@ export function figureFieldSchema(store: KeyStore): EditorSchema {
 export function markOnlyFieldSchema(): EditorSchema {
     return { marks: defaultMarks, tokens: [] };
 }
+
+/** Synchronizes every mounted editor below `root` before the document is persisted. */
+export function flushRichTextFieldsIn(root: ParentNode): void {
+    for (const host of root.querySelectorAll<HTMLElement>('.rte-host')) {
+        (host as RteHost)._rte?.flushPendingEdit();
+    }
+}

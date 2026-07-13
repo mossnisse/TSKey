@@ -146,6 +146,26 @@ export class RichTextEditor {
         return this.rafId !== null;
     }
 
+    /** Commits the live contenteditable DOM into the source value before an external
+     *  operation (notably Save) snapshots the store. During IME composition the DOM
+     *  is deliberately left intact; only its current serializable value is emitted. */
+    flushPendingEdit(): void {
+        if (this.rafId === null && !this.composing) return;
+        if (this.rafId !== null) {
+            cancelAnimationFrame(this.rafId);
+            this.rafId = null;
+        }
+        if (!this.composing) {
+            this.rerenderFromDom();
+            return;
+        }
+
+        const next = serialize(this.host);
+        if (next === this.value) return;
+        this.value = next;
+        this.emitChange();
+    }
+
     setValue(next: string): void {
         // Don't clobber an in-progress edit: skip when this merely echoes back what's
         // already live in the DOM (e.g. a store refresh after onChange).
@@ -234,10 +254,7 @@ export class RichTextEditor {
     }
 
     private flushPendingRerender(): void {
-        if (this.rafId === null) return;
-        cancelAnimationFrame(this.rafId);
-        this.rafId = null;
-        this.rerenderFromDom();
+        this.flushPendingEdit();
     }
 
     private applyCommand(run: (sel: Selection) => { value: string; selection: Selection }): void {
@@ -301,12 +318,15 @@ export class RichTextEditor {
         // trigger the browser's own dragend deletion of the dragged selection.
         if (drag && dt) dt.dropEffect = 'copy';
         const range = this.caretRangeAtPoint(e.clientX, e.clientY);
+        // Focus first: focusing an unfocused contenteditable may reset the browser's
+        // selection, so applying the point-derived range before focus can move every
+        // drop to the beginning of the target field.
+        this.host.focus();
         if (range && this.host.contains(range.startContainer)) {
             const sel = window.getSelection();
             sel?.removeAllRanges();
             sel?.addRange(range);
         }
-        this.host.focus();
         // A drag from another editor completes as a move by removing the dragged span
         // there; one from this editor is removed inside the same splice, shifting the
         // drop position past the removal. Drags from outside the app just insert.

@@ -13,17 +13,23 @@ import { showToast } from '../uiRenderer.ts';
 // The key-card whose field last gained focus — so the link highlight only refreshes
 // when focus moves to a different card, not when tabbing between a card's two fields.
 let lastFocusedCardId: number | null = null;
+let pendingTitleCommit: (() => Promise<void>) | null = null;
+
+/** Waits for the title field's blur validation/commit. Save uses this so its snapshot
+ *  cannot race the asynchronous duplicate-name lookup. */
+export async function commitPendingTitleEdit(): Promise<void> {
+    await pendingTitleCommit?.();
+}
 
 /** Title input: commit a trimmed rename on blur or Enter, reverting to the current name if blank. */
 export function setupTitleEditing(store: KeyStore, refreshAll: () => void, signal: AbortSignal) {
     const titleInput = document.getElementById('key-title-input') as HTMLInputElement | null;
     if (!titleInput) return;
 
-    let committing = false;
-    const commit = async () => {
-        if (committing) return;
-        committing = true;
-        try {
+    let commitPromise: Promise<void> | null = null;
+    const commit = (): Promise<void> => {
+        if (commitPromise) return commitPromise;
+        commitPromise = (async () => {
             store.endTypingSession();
 
             const newTitle = titleInput.value.trim();
@@ -48,10 +54,15 @@ export function setupTitleEditing(store: KeyStore, refreshAll: () => void, signa
 
             store.setTitle(newTitle);
             batchedRefresh(refreshAll);
-        } finally {
-            committing = false;
-        }
+        })().finally(() => {
+            commitPromise = null;
+        });
+        return commitPromise;
     };
+    pendingTitleCommit = commit;
+    signal.addEventListener('abort', () => {
+        if (pendingTitleCommit === commit) pendingTitleCommit = null;
+    }, { once: true });
 
     titleInput.addEventListener('blur', commit, { signal });
 

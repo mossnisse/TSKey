@@ -4,7 +4,7 @@
 import type { KeyStore } from '../store';
 import type { UIStateStore, PanelKey } from '../uiState.ts';
 import { batchedRefresh, refreshHubView } from './shared.ts';
-import { executePaste, createNewCoupletWithFocus } from './coupletEvents.ts';
+import { executePaste, createNewCoupletWithFocus, commitPendingTitleEdit } from './coupletEvents.ts';
 import { showToast } from '../uiRenderer.ts';
 import { isRecord } from '../utils.ts';
 import { workspaceStorage, activeObjectURLs } from '../store';
@@ -13,6 +13,7 @@ import { exportKeyToLaTeX } from '../exporters/latexExporter.ts';
 import { exportKeyToPlainText } from '../exporters/plainTextExporter.ts';
 import { exportKeyToJSON } from '../exporters/jsonExporter.ts';
 import { openPlainTextImportDialog } from '../importers/plainTextImporter.ts';
+import { flushRichTextFieldsIn } from '../ui/richTextField.ts';
 
 /** File menu: new / save / save-as / JSON+text+HTML+LaTeX export / import. */
 export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll: () => void, signal: AbortSignal) {
@@ -50,6 +51,8 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
     }, { signal });
 
     document.querySelector('#cmd-save-as')?.addEventListener('click', async () => {
+        flushRichTextFieldsIn(document);
+        await commitPendingTitleEdit();
         const originalTitle = store.getTitle();
         const titleInput = prompt("Save current configuration under a new title:", originalTitle);
         if (titleInput === null) return;
@@ -79,6 +82,8 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
     }, { signal });
 
     document.querySelector('#cmd-save')?.addEventListener('click', async () => {
+        flushRichTextFieldsIn(document);
+        await commitPendingTitleEdit();
         const oldTitle = store.getPersistedTitle();
         const newTitle = store.getTitle(); // Extracted from memory state
 
