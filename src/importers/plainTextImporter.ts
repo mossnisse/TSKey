@@ -15,10 +15,10 @@
 
 import type { Branch, Couplet, Figure, KeyStore } from '../store';
 import type { UIStateStore } from '../uiState.ts';
-import { APP_NAME, APP_VERSION, diagnoseKey } from '../store';
 import { showToast } from '../uiRenderer.ts';
-import { escapeHTML } from '../utils.ts';
-import { workspaceStorage } from '../store';
+import { commitParsedKey } from './importCommit.ts';
+import { renderImportPreview } from './importPreview.ts';
+import { getKeyDialect, listKeyDialects, registerKeyDialect } from './keyDialect.ts';
 
 const EMPTY_ALT_TOKEN = '___';
 
@@ -129,7 +129,7 @@ export interface PlainTextParseOptions {
     dehyphenate: boolean;
     /** Recognize lettered couplets such as "1a" / "1b". */
     recognizeLetteredCouplets: boolean;
-    /** Recognize a leading dash ( - – — ) as the second alternative of a couplet. */
+    /** Recognize a leading symbol ( - – — + = • ) as the second alternative of a couplet. */
     recognizeDashSecondLead: boolean;
     /** Ignore a parenthesized back-reference after the step number, e.g. "2 (1)". */
     recognizeBackReferences: boolean;
@@ -177,7 +177,7 @@ function stripFiguresAppendix(lines: string[]): string[] {
     return lines.slice(0, figureHeaderIdx).filter(l => !/^=+$/.test(l.trim()));
 }
 
-interface LeadMarker {
+export interface LeadMarker {
     kind: 'first' | 'second';
     /** Couplet number for numbered/lettered leads; null for dash leads (use current). */
     coupletNum: number | null;
@@ -189,28 +189,37 @@ interface LeadMarker {
  * Detects whether a line opens a new lead and, if so, classifies it.
  * Returns null for continuation/plain text lines.
  */
-function parseMarker(line: string, opts: PlainTextParseOptions): LeadMarker | null {
+export function parseLeadMarker(line: string, opts: PlainTextParseOptions): LeadMarker | null {
     // Numbered or lettered lead: "1", "1.", "1)", "12", "1a", "1b.", etc.
-    // The marker must be followed by whitespace then text, which keeps wrapped
-    // continuations like "3F) on inner side" from being mistaken for markers.
-    const letterClass = opts.recognizeLetteredCouplets ? '([a-bA-B])?' : '()?';
+    const alternativeClass = opts.recognizeLetteredCouplets
+        ? "([a-bA-B'’′″])?"
+        : "(['’′″])?";
     // Optional parenthesized back-reference to the parent couplet, e.g. "2 (1)".
     // Non-capturing so numbered[1..3] keep their meaning; digit-led content avoids
     // swallowing in-text parentheticals like "(Fig. 4)".
     const backRef = opts.recognizeBackReferences ? '(?:\\s*\\(\\s*\\d[\\d\\s,.–-]*\\))?' : '';
-    const numbered = line.match(new RegExp(`^\\s*(\\d{1,4})\\s*${letterClass}\\s*[.)]?${backRef}\\s+(\\S.*)$`));
+    // The marker is separated from its text by whitespace, or — when a "." ")" or
+    // ":" is present — by nothing at all, which recovers tightly-set or OCR'd
+    // output like "1.Wings". The letter lookahead in the no-space case keeps a
+    // measurement such as "1.5 mm" from being misread as a step marker.
+    const tail = `[.):]?${backRef}(?:\\s+|(?<=[.):])(?=\\p{L}))`;
+    const numbered = line.match(new RegExp(`^\\s*(\\d{1,4})\\s*${alternativeClass}\\s*${tail}(\\S.*)$`, 'u'));
     if (numbered) {
         const num = parseInt(numbered[1], 10);
-        const letter = (numbered[2] || '').toLowerCase();
+        const alternative = (numbered[2] || '').toLowerCase();
         const rest = numbered[3];
-        if (opts.recognizeLetteredCouplets && letter === 'b') {
+        if (alternative === 'b' || /['’′″]/u.test(alternative)) {
             return { kind: 'second', coupletNum: num, rest };
         }
         return { kind: 'first', coupletNum: num, rest };
     }
 
     if (opts.recognizeDashSecondLead) {
-        const dashed = line.match(/^\s*[-–—]\s+(\S.*)$/);
+        // Second-alternative markers vary across published keys and OCR output:
+        // hyphen/minus, en/em/figure dashes (sometimes doubled), plus (common in
+        // botanical Floras), and equals (a frequent mis-scan of a long dash). A
+        // missing space is tolerated only before a letter, as with numbered leads.
+        const dashed = line.match(/^\s*(?:[-–—−‒―]{1,2}|[+=])(?:\s+|(?=\p{L}))(\S.*)$/u);
         if (dashed) {
             return { kind: 'second', coupletNum: null, rest: dashed[1] };
         }
@@ -227,6 +236,33 @@ function joinContinuation(body: string, line: string, opts: PlainTextParseOption
         return left.slice(0, -1) + right;
     }
     return `${left} ${right}`;
+}
+
+// Characters OCR most often confuses with a digit. Kept deliberately small and
+// high-precision; the guard in ocrNumericToken does the rest of the work.
+const OCR_DIGIT_SUBSTITUTIONS: Readonly<Record<string, string>> = {
+    l: '1', I: '1', '|': '1', '!': '1',
+    O: '0', o: '0',
+    S: '5', Z: '2', B: '8',
+};
+
+/**
+ * Corrects a token that OCR mangled into a near-number back to its digits — e.g.
+ * a destination link scanned as "l0" becomes "10" so it resolves instead of
+ * being dropped as an unknown taxon. Returns null unless the token already
+ * contains a real digit and every other character is a known digit look-alike,
+ * which keeps genuine short taxon codes from being rewritten into links.
+ */
+export function ocrNumericToken(token: string): string | null {
+    const trimmed = token.trim().replace(/\.$/u, '');
+    if (!trimmed || trimmed.length > 4 || !/\d/u.test(trimmed)) return null;
+    let digits = '';
+    for (const char of trimmed) {
+        if (/\d/u.test(char)) digits += char;
+        else if (char in OCR_DIGIT_SUBSTITUTIONS) digits += OCR_DIGIT_SUBSTITUTIONS[char];
+        else return null;
+    }
+    return /^\d{1,4}$/u.test(digits) ? digits : null;
 }
 
 /** Returns the last match of a global regex in a string, or null if none. */
@@ -264,10 +300,14 @@ function splitBody(body: string, opts: PlainTextParseOptions): { text: string; d
         }
     }
 
-    // 4. A bare trailing number (e.g. "... inner side 6").
-    const trailing = body.match(/^(.*\S)\s+(\d{1,4})\.?\s*$/);
+    // 4. A trailing destination cue: an arrow or "go to" phrase, a bare step
+    //    number, or an OCR-mangled one such as "l0" (e.g. "... inner side → 6").
+    const trailing = body.match(/^(.*\S)\s+(?:→\s*|➔\s*|=>\s*|go\s+to\s+|couplet\s+)?([0-9A-Za-z|!]{1,4})\.?\s*$/iu);
     if (trailing) {
-        return { text: trailing[1], dest: trailing[2] };
+        const dest = ocrNumericToken(trailing[2]) ?? (/^\d{1,4}$/u.test(trailing[2]) ? trailing[2] : '');
+        // A greedy description can keep a trailing arrow that sat before the
+        // number ("… side → 6"); drop it so the cue never leaks into the text.
+        if (dest) return { text: trailing[1].replace(/\s*(?:→|➔|=>)\s*$/u, '').trim(), dest };
     }
 
     return { text: body, dest: '' };
@@ -283,6 +323,10 @@ function classifyDest(dest: string): { linkNum: number; taxa: string } {
     const numMatch = trimmed.match(/^(\d{1,4})\.?$/);
     if (numMatch) {
         return { linkNum: parseInt(numMatch[1], 10), taxa: '' };
+    }
+    const corrected = ocrNumericToken(trimmed);
+    if (corrected) {
+        return { linkNum: parseInt(corrected, 10), taxa: '' };
     }
     return { linkNum: 0, taxa: trimmed };
 }
@@ -347,7 +391,7 @@ export function parsePlainTextKey(
     for (const line of lines) {
         if (line.trim() === '') continue;
 
-        const marker = parseMarker(line, opts);
+        const marker = parseLeadMarker(line, opts);
         if (marker) {
             finalize();
             if (marker.kind === 'first') {
@@ -424,6 +468,9 @@ export function parsePlainTextKey(
             acc.link1 = linkNum;
             acc.taxa1 = taxa;
         } else {
+            if (acc.alt2 || acc.taxa2 || acc.link2) {
+                warnings.push(`Couplet ${lead.num} has more than one second alternative; the later one overwrote the earlier.`);
+            }
             acc.alt2 = cleanAltText(text);
             acc.link2 = linkNum;
             acc.taxa2 = taxa;
@@ -461,6 +508,12 @@ export function parsePlainTextKey(
 
     return { couplets, figures: [], warnings, errors, stepCount: couplets.length };
 }
+
+registerKeyDialect({
+    id: 'linear',
+    label: 'Linear / bracketed key',
+    parse: parsePlainTextKey,
+});
 
 // ==========================================
 // DIALOG CONTROLLER (DOM wiring)
@@ -549,7 +602,10 @@ function refreshPreview(): void {
         return;
     }
 
-    const result = parsePlainTextKey(source, gatherOptions());
+    const dialectId = getEl<HTMLSelectElement>('pt-import-dialect')?.value || 'linear';
+    const dialect = getKeyDialect(dialectId);
+    const result = (dialect ?? getKeyDialect('linear'))?.parse(source, gatherOptions())
+        ?? parsePlainTextKey(source, gatherOptions());
     latestResult = result;
 
     const canImport = result.couplets.length > 0 && result.errors.length === 0;
@@ -565,101 +621,7 @@ function refreshPreview(): void {
         }
     }
 
-    preview.innerHTML = renderPreviewHtml(result);
-}
-
-/** Builds the preview pane markup for a parse result. */
-function renderPreviewHtml(result: PlainTextParseResult): string {
-    let html = '';
-
-    if (result.errors.length > 0) {
-        html += `<div class="import-messages">`;
-        result.errors.forEach(err => {
-            html += `<div class="import-msg import-msg-error">⛔ ${escapeHTML(err)}</div>`;
-        });
-        html += `</div>`;
-        return html;
-    }
-
-    if (result.warnings.length > 0) {
-        html += `<div class="import-messages">`;
-        result.warnings.forEach(warn => {
-            html += `<div class="import-msg import-msg-warning">⚠️ ${escapeHTML(warn)}</div>`;
-        });
-        html += `</div>`;
-    }
-
-    // Run the editor's diagnostics so key problems surface before the import is committed.
-    const diagnostics = diagnoseKey(result.couplets, result.figures);
-    let errorCount = 0;
-    let warningCount = 0;
-    diagnostics.forEach(issues => issues.forEach(i => {
-        if (i.severity === 'error') errorCount++; else warningCount++;
-    }));
-
-    if (errorCount > 0 || warningCount > 0) {
-        const parts: string[] = [];
-        if (errorCount > 0) parts.push(`${errorCount} error${errorCount === 1 ? '' : 's'}`);
-        if (warningCount > 0) parts.push(`${warningCount} warning${warningCount === 1 ? '' : 's'}`);
-        html += `<div class="import-diagnostics-summary">🩺 Key check: ${parts.join(', ')}. Fixable after import in the editor.</div>`;
-    }
-
-    const idToStep = new Map<number, number>();
-    result.couplets.forEach((c, i) => idToStep.set(c.id, i + 1));
-
-    const destLabel = (branch: Branch): string => {
-        switch (branch.kind) {
-            case 'linked': {
-                const step = idToStep.get(branch.targetId);
-                return step !== undefined ? `→ ${step}` : '→ ?';
-            }
-            case 'unresolved':
-                return `→ ${branch.couplet}`;
-            // The parser only produces draft taxon branches; `taxon` (by id) can't
-            // appear here, but the switch stays exhaustive over the Branch union.
-            case 'taxonDraft':
-                return escapeHTML(branch.name);
-            case 'taxon':
-                return '→ taxon';
-            case 'empty':
-                return '<span class="import-preview-muted">(empty)</span>';
-        }
-    };
-
-    const diagnosticsHtml = (id: number): string => {
-        const issues = diagnostics.get(id);
-        if (!issues || issues.length === 0) return '';
-        const rows = issues.map(issue => {
-            const cls = issue.severity === 'error' ? 'error-text' : 'warning-text';
-            const icon = issue.severity === 'error' ? '⛔' : '⚠️';
-            return `<div class="${cls}">${icon} ${escapeHTML(issue.message)}</div>`;
-        }).join('');
-        return `<div class="import-preview-diagnostics warning-block">${rows}</div>`;
-    };
-
-    html += `<ol class="import-preview-list">`;
-    result.couplets.forEach((c, index) => {
-        const hasIssues = diagnostics.has(c.id);
-        html += `
-            <li class="import-preview-step${hasIssues ? ' has-issues' : ''}">
-                <div class="import-preview-rows">
-                    <div class="import-preview-row">
-                        <span class="import-preview-lead">${index + 1}.</span>
-                        <span class="import-preview-text">${escapeHTML(c.alt1) || '<span class="import-preview-muted">(blank)</span>'}</span>
-                        <span class="import-preview-dest">${destLabel(c.branch1)}</span>
-                    </div>
-                    <div class="import-preview-row">
-                        <span class="import-preview-lead">-</span>
-                        <span class="import-preview-text">${escapeHTML(c.alt2) || '<span class="import-preview-muted">(blank)</span>'}</span>
-                        <span class="import-preview-dest">${destLabel(c.branch2)}</span>
-                    </div>
-                    ${diagnosticsHtml(c.id)}
-                </div>
-            </li>`;
-    });
-    html += `</ol>`;
-
-    return html;
+    preview.innerHTML = renderImportPreview(result);
 }
 
 /** Commits the most recent parse result into the workspace as a new project. */
@@ -672,63 +634,16 @@ async function confirmImport(store: KeyStore, uiState: UIStateStore, refreshAll:
     const titleInput = getEl<HTMLInputElement>('pt-import-title');
     const targetName = (titleInput?.value.trim()) || 'Imported Key';
 
-    // Importing replaces the open key — guard unsaved work like Load/New do.
-    if (store.hasUnsavedChanges()) {
-        if (!confirm("You have unsaved changes in the current key. Importing will discard them. Continue?")) {
-            return;
-        }
-    }
-
-    // Distinguishes a failure before the workspace was touched from a failed
-    // save of the already-imported key, so the error message stays truthful.
-    let imported = false;
-
-    try {
-        const projectList = await workspaceStorage.getProjectList();
-        const exists = projectList.some(p => p.name.toLowerCase() === targetName.toLowerCase());
-        if (exists) {
-            const overwrite = confirm(`A local project named "${targetName}" already exists. Overwrite it with this import?`);
-            if (!overwrite) return;
-        }
-
-        const rawData = {
-            type: APP_NAME,
-            version: APP_VERSION,
-            title: targetName,
-            data: {
-                title: targetName,
-                key: latestResult.couplets,
-                figures: latestResult.figures,
-            },
-        };
-
-        const importResult = store.importJsonData(rawData);
-        if (!importResult.success) {
-            alert(`Failed to import parsed key:\n• ${importResult.errors.join('\n• ')}`);
-            return;
-        }
-        imported = true;
-
-        // importJsonData resets the image cache; a plain-text import has no figures to stage.
-        store.setTitle(targetName);
-        uiState.setActiveProjectTitle(targetName);
-
-        await store.saveToStorage();
-
-        showToast(`📥 Imported "${targetName}" from plain text (${latestResult.stepCount} step(s)).`, 'success');
+    const outcome = await commitParsedKey({
+        store,
+        uiState,
+        refreshAll,
+        result: latestResult,
+        title: targetName,
+        sourceLabel: 'plain text',
+    });
+    if (outcome === 'saved' || outcome === 'imported-unsaved') {
         closePlainTextImportDialog();
-        refreshAll();
-    } catch (err) {
-        console.error('Plain text import failed:', err);
-        if (imported) {
-            // The key was imported in memory but the save failed — keep it and
-            // let the user retry via File → Save instead of a partial rollback.
-            showToast('⚠️ The key was imported but could not be saved to browser storage. Use File → Save to retry.', 'error');
-            closePlainTextImportDialog();
-            refreshAll();
-        } else {
-            showToast('⚠️ The plain text import could not be completed.', 'error');
-        }
     }
 }
 
@@ -746,6 +661,17 @@ export function setupPlainTextImporter(
     const textarea = getEl<HTMLTextAreaElement>('pt-import-source');
     const fileInput = getEl<HTMLInputElement>('pt-import-file-hidden');
 
+    const dialectSelect = getEl<HTMLSelectElement>('pt-import-dialect');
+    if (dialectSelect) {
+        dialectSelect.replaceChildren(...listKeyDialects().map(dialect => {
+            const option = document.createElement('option');
+            option.value = dialect.id;
+            option.textContent = dialect.label;
+            return option;
+        }));
+        dialectSelect.value = 'linear';
+    }
+
     textarea?.addEventListener('input', () => {
         // Manual edits detach from the loaded file; stop re-decoding it.
         lastLoadedBuffer = null;
@@ -755,12 +681,14 @@ export function setupPlainTextImporter(
     // Re-parse whenever any parsing option changes so the user can tune live.
     const optionIds = [
         'pt-opt-min-dots', 'pt-opt-ws', 'pt-opt-join', 'pt-opt-dehyphen',
-        'pt-opt-lettered', 'pt-opt-dash', 'pt-opt-backref', 'pt-opt-fill',
+        'pt-opt-lettered', 'pt-opt-dash', 'pt-opt-backref', 'pt-opt-fill', 'pt-import-dialect',
     ];
     optionIds.forEach(id => {
         const el = getEl(id);
-        el?.addEventListener('change', () => refreshPreview(), { signal });
-        el?.addEventListener('input', () => refreshPreview(), { signal });
+        // Checkboxes and selects fire both 'input' and 'change'; listen to one
+        // per control so each toggle re-parses once. Text entry stays live.
+        const isTextEntry = el instanceof HTMLInputElement && el.type !== 'checkbox';
+        el?.addEventListener(isTextEntry ? 'input' : 'change', () => refreshPreview(), { signal });
     });
 
     getEl('pt-import-load-file')?.addEventListener('click', () => {
@@ -784,7 +712,7 @@ export function setupPlainTextImporter(
             // Pre-fill the title from the filename if the user hasn't set one.
             const titleInput = getEl<HTMLInputElement>('pt-import-title');
             if (titleInput && !titleInput.value.trim()) {
-                titleInput.value = file.name.replace(/\.txt$/i, '').trim();
+                titleInput.value = file.name.replace(/\.te?xt$/i, '').trim();
             }
         } catch (err) {
             console.error('Failed to read plain text file:', err);

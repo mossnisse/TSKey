@@ -48,6 +48,9 @@ export function initializeShell(appDiv: HTMLDivElement) {
             <button id="cmd-import-text" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>Import from Plain Text...</span>
             </button>
+            <button id="cmd-import-pdf" class="dropdown-action" role="menuitem" tabindex="-1">
+              <span>Import from PDF...</span>
+            </button>
             <button id="cmd-export-text" class="dropdown-action" role="menuitem" tabindex="-1">
               <span>Export to Plain Text (.txt)</span>
             </button>
@@ -371,6 +374,9 @@ export function initializeShell(appDiv: HTMLDivElement) {
 
       <div class="import-options-bar" role="group" aria-label="Parsing options">
         <span class="import-options-title">Parsing options</span>
+        <label class="import-encoding-field" for="pt-import-dialect">Key style
+          <select id="pt-import-dialect"><option value="linear">Linear / bracketed key</option></select>
+        </label>
         <label class="import-option"><input type="checkbox" id="pt-opt-join" checked /> Join wrapped lines</label>
         <label class="import-option"><input type="checkbox" id="pt-opt-dehyphen" checked /> De-hyphenate breaks</label>
         <label class="import-option"><input type="checkbox" id="pt-opt-ws" checked /> Spaces/Tab separator</label>
@@ -431,6 +437,87 @@ export function initializeShell(appDiv: HTMLDivElement) {
         <div class="import-footer-actions">
           <button id="pt-import-cancel" class="btn btn-secondary">Cancel</button>
           <button id="pt-import-confirm" class="btn btn-primary" disabled>Import into Workspace</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="pdf-import-view" class="fullscreen-view" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="pdf-import-title-label" tabindex="-1">
+      <div class="fullscreen-view-header">
+        <h3 id="pdf-import-title-label">Import Key from PDF</h3>
+        <button id="pdf-import-close" class="modal-close-x" aria-label="Close PDF import view">&times;</button>
+      </div>
+
+      <div class="pdf-import-file-bar">
+        <button id="pdf-import-load-file" class="btn btn-secondary">Choose PDF...</button>
+        <input type="file" id="pdf-import-file-hidden" accept=".pdf,application/pdf" style="display: none;" />
+        <label class="pdf-range-field" for="pdf-import-range">Pages
+          <input id="pdf-import-range" type="text" placeholder="1-5,8,10-12" />
+        </label>
+        <span id="pdf-import-range-error" class="pdf-range-error" role="alert"></span>
+        <label class="import-encoding-field" for="pdf-import-language">OCR language
+          <select id="pdf-import-language"><option value="eng">English (bundled)</option></select>
+        </label>
+        <button id="pdf-import-load-language" class="btn btn-outline">Load language file...</button>
+        <input type="file" id="pdf-import-language-hidden" accept=".traineddata,.gz" style="display: none;" />
+        <label class="import-option"><input type="checkbox" id="pdf-import-force" /> Force OCR</label>
+        <label class="import-option"><input type="checkbox" id="pdf-import-furniture" checked /> Remove page furniture</label>
+        <button id="pdf-import-process" class="btn btn-primary">Process pages</button>
+      </div>
+
+      <div class="import-options-bar pdf-parser-options" role="group" aria-label="PDF key parsing options">
+        <span class="import-options-title">Key parsing</span>
+        <label class="import-encoding-field" for="pdf-import-dialect">Key style
+          <select id="pdf-import-dialect"><option value="linear">Linear / bracketed key</option></select>
+        </label>
+        <label class="import-option"><input type="checkbox" id="pdf-opt-join" checked /> Join wrapped lines</label>
+        <label class="import-option"><input type="checkbox" id="pdf-opt-dehyphen" checked /> De-hyphenate</label>
+        <label class="import-option"><input type="checkbox" id="pdf-opt-ws" checked /> Spaces/Tab separator</label>
+        <label class="import-option"><input type="checkbox" id="pdf-opt-lettered" checked /> Lettered (1a/1b)</label>
+        <label class="import-option"><input type="checkbox" id="pdf-opt-dash" checked /> Dash second line</label>
+        <label class="import-option"><input type="checkbox" id="pdf-opt-backref" checked /> Back-refs</label>
+        <label class="import-option"><input type="checkbox" id="pdf-opt-fill" checked /> Fill missing steps</label>
+        <label class="import-option import-option-num">Min leader dots
+          <input type="number" id="pdf-opt-min-dots" min="2" max="10" step="1" value="3" />
+        </label>
+      </div>
+
+      <div id="pdf-import-progress-wrap" class="pdf-import-progress-wrap" aria-live="polite">
+        <progress id="pdf-import-progress" max="1" value="0"></progress>
+        <span id="pdf-import-progress-label"></span>
+      </div>
+
+      <div class="fullscreen-view-body pdf-import-body">
+        <aside id="pdf-import-pages" class="pdf-page-list" aria-label="PDF pages">
+          <div class="pdf-pages-empty">Load a PDF to inspect its pages.</div>
+        </aside>
+        <section class="pdf-page-editor-pane">
+          <div class="import-pane-toolbar">
+            <span id="pdf-import-page-label" class="import-pane-label">Extracted page text</span>
+          </div>
+          <textarea id="pdf-import-page-text" class="import-source-textarea" spellcheck="false" disabled
+            placeholder="Select a page to review its text."></textarea>
+          <p class="import-hint">Page edits are kept while cleanup options change. Re-OCR asks before replacing edited text.</p>
+        </section>
+        <section class="import-preview-pane pdf-preview-pane">
+          <div class="import-pane-toolbar">
+            <label class="import-encoding-field" for="pdf-import-region">Preview
+              <select id="pdf-import-region"><option value="full">Full selected pages</option></select>
+            </label>
+            <span id="pdf-import-status" class="import-status"></span>
+          </div>
+          <div id="pdf-import-preview" class="import-preview-content">
+            <div class="import-preview-empty">Process pages to see a parsed key preview.</div>
+          </div>
+        </section>
+      </div>
+
+      <div class="fullscreen-view-footer">
+        <label class="import-title-field">Import as:
+          <input type="text" id="pdf-import-title" placeholder="Imported Key" />
+        </label>
+        <div class="import-footer-actions">
+          <button id="pdf-import-cancel" class="btn btn-secondary">Cancel</button>
+          <button id="pdf-import-confirm" class="btn btn-primary" disabled>Import into Workspace</button>
         </div>
       </div>
     </div>

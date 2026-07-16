@@ -20,7 +20,7 @@ import type { NameDisplayMode } from '../utils.ts';
 import { Selection } from './selection.ts';
 
 export const APP_NAME = 'TSKey';
-export const APP_VERSION = '0.0.3';
+export const APP_VERSION = '0.0.4';
 
 /** Stable, rename-proof project identity used to key figure blobs in storage. */
 function newProjectUid(): string {

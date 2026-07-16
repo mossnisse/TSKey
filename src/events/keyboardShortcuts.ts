@@ -13,8 +13,9 @@ import { executePaste } from './coupletEvents.ts';
 export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) {
     const controller = new AbortController();
     const handleKeyDown = (e: KeyboardEvent) => {
-        const importView = document.getElementById('plain-text-import-view') as HTMLElement | null;
-        if (importView && importView.style.display === 'flex') return;
+        const importView = Array.from(document.querySelectorAll<HTMLElement>('.fullscreen-view'))
+            .find(view => view.style.display === 'flex');
+        if (importView) return;
 
         const modals = document.querySelectorAll('.modal-overlay');
         const activeModal = Array.from(modals).find(

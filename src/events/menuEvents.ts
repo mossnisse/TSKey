@@ -13,6 +13,7 @@ import { exportKeyToLaTeX } from '../exporters/latexExporter.ts';
 import { exportKeyToPlainText } from '../exporters/plainTextExporter.ts';
 import { exportKeyToJSON } from '../exporters/jsonExporter.ts';
 import { openPlainTextImportDialog } from '../importers/plainTextImporter.ts';
+import { openPdfImportDialog } from '../importers/pdf/pdfImporter.ts';
 import { flushRichTextFieldsIn } from '../ui/richTextField.ts';
 
 /** File menu: new / save / save-as / JSON+text+HTML+LaTeX export / import. */
@@ -258,6 +259,14 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
             return;
         }
         openPlainTextImportDialog();
+    }, { signal });
+
+    document.querySelector('#cmd-import-pdf')?.addEventListener('click', () => {
+        if (isImporting) {
+            showToast("⚠️ An import is currently in progress. Please wait.", "error");
+            return;
+        }
+        openPdfImportDialog();
     }, { signal });
 
     document.querySelector('#cmd-export-text')?.addEventListener('click', () => exportKeyToPlainText(store, uiState.leadFormat, uiState.showBackReference, uiState.nameDisplayMode), { signal });

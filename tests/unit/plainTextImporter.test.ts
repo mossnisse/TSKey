@@ -62,6 +62,52 @@ describe('plain-text key parsing', () => {
         expect(result.couplets[1].branch2).toEqual({ kind: 'taxonDraft', name: 'Diptera' });
     });
 
+    it('recognizes a prime-marked second alternative used by printed keys', () => {
+        const result = parsePlainTextKey('1. First ..... Species one\n1′ Second ..... Species two');
+        expect(result.errors).toEqual([]);
+        expect(result.couplets[0].alt1).toBe('First');
+        expect(result.couplets[0].alt2).toBe('Second');
+    });
+
+    it('recognizes a plus-sign second alternative used by botanical Floras', () => {
+        const result = parsePlainTextKey('1. Leaves opposite ..... 2\n+ Leaves alternate ..... Salix');
+        expect(result.errors).toEqual([]);
+        expect(result.couplets[0].alt1).toBe('Leaves opposite');
+        expect(result.couplets[0].alt2).toBe('Leaves alternate');
+        expect(result.couplets[0].branch2).toEqual({ kind: 'taxonDraft', name: 'Salix' });
+    });
+
+    it('recognizes markers with no space after the period or dash', () => {
+        const result = parsePlainTextKey('1.Has wings ..... 2\n—Lacks wings ..... Apteryx');
+        expect(result.couplets[0].alt1).toBe('Has wings');
+        expect(result.couplets[0].alt2).toBe('Lacks wings');
+        expect(result.couplets[0].branch1).toEqual({ kind: 'linked', targetId: 2 });
+        expect(result.couplets[0].branch2).toEqual({ kind: 'taxonDraft', name: 'Apteryx' });
+    });
+
+    it('does not mistake a leading measurement for a step marker', () => {
+        const result = parsePlainTextKey('1. Wings\n1.5 mm long ..... Species one\n— Small ..... Species two');
+        expect(result.stepCount).toBe(1);
+        expect(result.couplets[0].alt1).toContain('1.5 mm long');
+        expect(result.couplets[0].branch1).toEqual({ kind: 'taxonDraft', name: 'Species one' });
+    });
+
+    it('recovers an OCR-mangled numeric destination so its link resolves', () => {
+        const result = parsePlainTextKey(`
+1. Continue ..... l0
+— Stop ..... Species one
+10. End A ..... Species two
+— End B ..... Species three
+`);
+        expect(result.couplets[0].branch1).toEqual({ kind: 'linked', targetId: 10 });
+    });
+
+    it('strips a trailing arrow cue from a destination', () => {
+        const result = parsePlainTextKey('1. Inner side → 6\n— Outer side ..... Species one\n6. End ..... Species two\n— End2 ..... Species three');
+        expect(result.couplets[0].alt1).toBe('Inner side');
+        expect(result.couplets[0].branch1).toEqual({ kind: 'linked', targetId: 6 });
+    });
+
     it('joins wrapped lines and dehyphenates split words', () => {
         const result = parsePlainTextKey(`
 1. Long diag-
@@ -151,6 +197,12 @@ describe('plain-text parser warnings and safety limits', () => {
         const result = parsePlainTextKey('1. A ..... Species one\n1. Duplicate ..... Species two\n— B ..... Species three');
         expect(result.couplets[0].alt1).toBe('Duplicate');
         expect(result.warnings.join(' ')).toMatch(/more than one first alternative/i);
+    });
+
+    it('warns when a couplet has a duplicate second alternative', () => {
+        const result = parsePlainTextKey('1. A ..... Species one\n— B ..... Species two\n— Overwrite ..... Species three');
+        expect(result.couplets[0].alt2).toBe('Overwrite');
+        expect(result.warnings.join(' ')).toMatch(/more than one second alternative/i);
     });
 
     it('ignores a second alternative that appears before any numbered step', () => {

@@ -7,6 +7,7 @@ import type { Couplet } from './store';
 import { UIStateStore } from './uiState.ts';
 import { initializeShell, applyPanelVisibility, renderEditorCards, renderPrintView, renderMenu, renderFigures, renderTaxa } from './uiRenderer.ts';
 import { setupPlainTextImporter } from './importers/plainTextImporter.ts';
+import { setupPdfImporter } from './importers/pdf/pdfImporter.ts';
 import {
     setupTitleEditing,
     setupCoupletSelection,
@@ -50,6 +51,7 @@ function setupGlobalListeners(store: KeyStore, uiState: UIStateStore, refreshAll
     const { signal } = controller;
 
     setupPlainTextImporter(store, uiState, refreshAll, signal);
+    setupPdfImporter(store, uiState, refreshAll, signal);
     setupTitleEditing(store, refreshAll, signal);
     setupCoupletSelection(keyContainer, store, refreshAll, signal);
     setupCoupletInput(keyContainer, store, uiState, refreshAll, signal);

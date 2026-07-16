@@ -1,7 +1,7 @@
 {
   "name": "TSKey",
   "private": true,
-  "version": "0.0.3",
+  "version": "0.0.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,6 +15,7 @@
     "deploy": "gh-pages -d dist"
   },
   "devDependencies": {
+    "@tesseract.js-data/eng": "1.0.0",
     "@vitest/coverage-v8": "^4.1.10",
     "fake-indexeddb": "^6.2.5",
     "gh-pages": "^6.3.0",
@@ -22,5 +23,9 @@
     "typescript": "~6.0.2",
     "vite": "^8.0.12",
     "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "pdfjs-dist": "6.1.200",
+    "tesseract.js": "7.0.0"
   }
 }
