@@ -103,6 +103,23 @@ describe('PDF key-region detection', () => {
         expect(parsed.couplets[0].branch2).toEqual({ kind: 'taxonDraft', name: 'Species two' });
     });
 
+    it('infers a missing second-lead dash from alignment and a second destination', () => {
+        const page = reconstructPage([
+            positioned('1.', 0.08, 0.2, 0.025),
+            positioned('First description', 0.14, 0.2, 0.2),
+            positioned('.....', 0.62, 0.2, 0.08),
+            positioned('Species one', 0.75, 0.2, 0.12),
+            positioned('Second description', 0.14, 0.24, 0.2),
+            positioned('.....', 0.62, 0.24, 0.08),
+            positioned('Species two', 0.75, 0.24, 0.12),
+        ], { pageNum: 1, removeFurniture: false });
+        const regions = detectKeyRegions([{ pageNum: 1, text: page.text, lines: page.positionedLines }]);
+        expect(regions[0]?.leads).toHaveLength(2);
+        const parsed = parsePlainTextKey(regions[0].text);
+        expect(parsed.couplets[0].alt2).toBe('Second description');
+        expect(parsed.couplets[0].branch2).toEqual({ kind: 'taxonDraft', name: 'Species two' });
+    });
+
     it('prefers a substantially larger region when confidence is effectively tied', () => {
         const small = { id: 'small', confidence: 0.99, leads: [{}, {}] } as KeyRegion;
         const substantial = {
@@ -111,6 +128,10 @@ describe('PDF key-region detection', () => {
             leads: Array.from({ length: 20 }, () => ({})),
         } as KeyRegion;
         expect(selectPreferredKeyRegion([small, substantial])).toBe(substantial);
+        expect(selectPreferredKeyRegion([
+            small,
+            { ...substantial, confidence: 0.95 },
+        ])).toMatchObject({ id: 'large' });
         expect(selectPreferredKeyRegion([
             { ...substantial, confidence: 0.9 },
             small,

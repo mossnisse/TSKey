@@ -14,10 +14,12 @@ import {
     createTaxon,
     deleteTaxaAndSever,
     findTaxonByAnyName,
+    referencedTaxonIds,
     relinkDraftsToExisting,
     resolveDrafts,
     sanitizeTaxa,
     sortTaxaByName,
+    taxonMatchesQuery,
 } from '../../src/store/taxonOps.ts';
 import {
     decodeTextReferencesForEditor,
@@ -132,6 +134,26 @@ describe('taxa and figure transforms', () => {
         expect(sortTaxaByName(taxa, 'scientific').map(item => item.id)).toEqual([2, 1]);
         expect(sortTaxaByName(taxa, 'vernacular').map(item => item.id)).toEqual([1, 2]);
         expect(createTaxon(3, '  Species 3  ').scientificName).toBe('Species 3');
+    });
+
+    it('flags taxa no lead points at, and filters by either name or a synonym', () => {
+        const key = [
+            couplet(1, { branch1: { kind: 'taxon', taxonId: 1 }, branch2: { kind: 'taxonDraft', name: 'Species 2' } }),
+        ];
+        // A draft is a typed name with no record yet, so it must not count as a reference.
+        expect(referencedTaxonIds(key)).toEqual(new Set([1]));
+
+        const newt = taxon(3, {
+            scientificName: 'Lissotriton vulgaris',
+            vernacularName: 'Smooth newt',
+            synonyms: ['Triturus vulgaris'],
+        });
+        expect(taxonMatchesQuery(newt, 'lissotriton')).toBe(true);
+        expect(taxonMatchesQuery(newt, 'SMOOTH')).toBe(true);
+        // Looking a species up by the name it used to carry is the point of synonyms.
+        expect(taxonMatchesQuery(newt, 'triturus')).toBe(true);
+        expect(taxonMatchesQuery(newt, 'bufo')).toBe(false);
+        expect(taxonMatchesQuery(newt, '   ')).toBe(true);
     });
 
     it('encodes, decodes, resolves, and orders stable figure references', () => {

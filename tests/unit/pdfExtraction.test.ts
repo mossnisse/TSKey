@@ -89,6 +89,18 @@ describe('positioned PDF page reconstruction', () => {
         expect(result.text.indexOf('Left column line 2')).toBeLessThan(result.text.indexOf('Right column line 0'));
     });
 
+    it('detects an illustrated sidebar from a stable left edge despite staggered captions', () => {
+        const filler = Array.from({ length: 40 }, (_, index) =>
+            span(`Left-only body line ${index}`, 0.05, 0.1 + index * 0.018, 0.42));
+        const paired = [0.52, 0.58, 0.64, 0.7].flatMap((rightX, index) => [
+            span(`Left key line ${index} with enough text`, 0.05, 0.82 + index * 0.025, 0.42),
+            span(`Figure caption ${index} with enough text`, rightX, 0.82 + index * 0.025, 0.22),
+        ]);
+        const result = reconstructPage([...filler, ...paired], { removeFurniture: false });
+        expect(result.columnCount).toBe(2);
+        expect(result.text.indexOf('Left key line 3')).toBeLessThan(result.text.indexOf('Figure caption 0'));
+    });
+
     it('retains baseline, font, source, and physical gap evidence on reconstructed lines', () => {
         const result = reconstructPage([{
             ...span('Diagnostic text', 0.1, 0.3, 0.15),
@@ -108,6 +120,16 @@ describe('positioned PDF page reconstruction', () => {
             source: 'text',
             hasEol: true,
         });
+    });
+
+    it('keeps a shifted, smaller subscript on its surrounding text line', () => {
+        const result = reconstructPage([
+            { ...span('Vein R', 0.1, 0.3, 0.06, 0.02), baseline: 0.318 },
+            { ...span('1', 0.158, 0.312, 0.008, 0.011), baseline: 0.324 },
+            { ...span('setose', 0.17, 0.3, 0.06, 0.02), baseline: 0.318 },
+        ], { removeFurniture: false });
+        expect(result.positionedLines).toHaveLength(1);
+        expect(result.text).toMatch(/^Vein R\s?1 setose$/u);
     });
 
     it('keeps OCR word coordinates, confidence, baseline, and line endings', () => {

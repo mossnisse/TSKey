@@ -3,7 +3,7 @@ import { escapeHTML, triggerFileDownload, sanitizeFilename } from '../utils.ts';
 import type { DestinationResolution, LeadFormat, NameDisplayMode } from '../utils.ts';
 import { buildKeyDocumentModel, renderAltSegments, renderRichText, htmlMark, buildTaxonExportNames } from '../keyDocumentModel.ts';
 import type { AltSegmentRenderer, TaxonNameLine } from '../keyDocumentModel.ts';
-import { showToast } from '../uiRenderer.ts';
+import type { ExportWarnings } from './exportResult.ts';
 import { workspaceStorage, blobToBase64 } from '../store';
 import { LIGHTBOX_CSS, LIGHTBOX_RUNTIME_JS } from './htmlLightboxAssets.ts';
 
@@ -47,133 +47,128 @@ function destinationToHtml(dest: DestinationResolution): string {
 /**
  * Compiles the current KeyStore state into a single standalone static HTML document.
  */
-export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, showBackReference: boolean, nameMode: NameDisplayMode): Promise<void> {
-    try {
-        const projectUid = store.getActiveProjectUid();
-        const model = buildKeyDocumentModel(store, { leadFormat, showBackReference, nameMode });
-        const { title, taxa, figures } = model;
+export async function exportKeyToHTML(store: KeyStore, leadFormat: LeadFormat, showBackReference: boolean, nameMode: NameDisplayMode): Promise<ExportWarnings> {
+    const projectUid = store.getActiveProjectUid();
+    const model = buildKeyDocumentModel(store, { leadFormat, showBackReference, nameMode });
+    const { title, taxa, figures } = model;
 
-        // COMPILE GLOBAL FIGURES PANEL SIDEBAR (CONCURRENT PIPELINE)
-        const figureCards = await Promise.all(
-            figures.map(async (fig, index) => {
-                const displayNum = index + 1;
-                let imgTag = '';
+    // COMPILE GLOBAL FIGURES PANEL SIDEBAR (CONCURRENT PIPELINE)
+    const figureCards = await Promise.all(
+        figures.map(async (fig, index) => {
+            const displayNum = index + 1;
+            let imgTag = '';
 
-                try {
-                    const blob = await workspaceStorage.getFigureBinary(projectUid, fig.id);
-                    if (blob) {
-                        const base64Data = await blobToBase64(blob);
-                        // The lightbox shows data-caption as plain text, so strip mark
-                        // markers here rather than emitting HTML tags into an attribute.
-                        const captionPlain = renderRichText(fig.caption, CAPTION_PLAIN);
-                        const captionLabel = escapeHTML(`Fig. ${displayNum}${captionPlain ? `: ${captionPlain}` : ''}`);
-                        imgTag = `<img class="print-fig-img" src="${base64Data}" alt="Figure ${displayNum}" data-caption="${captionLabel}" />`;
-                    }
-                } catch (blobError) {
-                    console.warn(`Could not resolve binary payload stream for figure ID ${fig.id}:`, blobError);
+            try {
+                const blob = await workspaceStorage.getFigureBinary(projectUid, fig.id);
+                if (blob) {
+                    const base64Data = await blobToBase64(blob);
+                    // The lightbox shows data-caption as plain text, so strip mark
+                    // markers here rather than emitting HTML tags into an attribute.
+                    const captionPlain = renderRichText(fig.caption, CAPTION_PLAIN);
+                    const captionLabel = escapeHTML(`Fig. ${displayNum}${captionPlain ? `: ${captionPlain}` : ''}`);
+                    imgTag = `<img class="print-fig-img" src="${base64Data}" alt="Figure ${displayNum}" data-caption="${captionLabel}" />`;
                 }
+            } catch (blobError) {
+                console.warn(`Could not resolve binary payload stream for figure ID ${fig.id}:`, blobError);
+            }
 
-                const captionText = fig.caption
-                    ? renderRichText(fig.caption, HTML_FIELD)
-                    : escapeHTML(fig.filename || 'Untitled Asset');
-                return `
-                    <div class="print-fig-card">
-                        ${imgTag}
-                        <div class="print-fig-caption">
-                            <strong>Fig. ${displayNum}:</strong> ${captionText}
-                        </div>
+            const captionText = fig.caption
+                ? renderRichText(fig.caption, HTML_FIELD)
+                : escapeHTML(fig.filename || 'Untitled Asset');
+            return `
+                <div class="print-fig-card">
+                    ${imgTag}
+                    <div class="print-fig-caption">
+                        <strong>Fig. ${displayNum}:</strong> ${captionText}
                     </div>
-                `;
-            })
-        );
-        const figuresColumnMarkup = figureCards.join('');
-
-        // COMPILE DICHOTOMOUS KEY COUPLERS
-        let keyColumnMarkup = '';
-        // Widest lead across every couplet, so the lead column is one fixed width
-        // and all rows align regardless of back-references / step-number length.
-        let maxLeadLen = 0;
-        if (model.isEmpty) {
-            keyColumnMarkup = `<p class="print-empty-notice">[The identification key is currently empty. Add couplets in the editor to populate this document.]</p>`;
-        }
-        for (const c of model.couplets) {
-            const end1 = destinationToHtml(c.dest1);
-            const end2 = destinationToHtml(c.dest2);
-
-            // Figure tokens are already resolved to escaped "(Fig. N)" text by the
-            // renderer, so the alt strings must NOT be escaped again here.
-            const alt1 = renderAltSegments(c.alt1, HTML_ALT) || '___';
-            const alt2 = renderAltSegments(c.alt2, HTML_ALT) || '___';
-
-            const { lead1, lead2 } = c;
-            maxLeadLen = Math.max(maxLeadLen, lead1.length, lead2.length);
-
-            keyColumnMarkup += `
-            <div class="print-couplet" role="group" aria-label="Couplet ${c.displayNum}">
-                <div class="print-step-num">${escapeHTML(lead1)}</div>
-                <div class="print-row">
-                  <span class="print-text">${alt1}</span>
-                  <span class="print-dest">${end1}</span>
                 </div>
-                <div class="print-dash">${escapeHTML(lead2)}</div>
-                <div class="print-row">
-                  <span class="print-text">${alt2}</span>
-                  <span class="print-dest">${end2}</span>
-                </div>
-            </div>
             `;
-        }
+        })
+    );
+    const figuresColumnMarkup = figureCards.join('');
 
-        // COMPILE TAXA CHAPTERS — one block per taxon, in panel order; empty fields omitted.
-        let taxaMarkup = '';
-        if (taxa.length > 0) {
-            const nl2br = (s: string) => escapeHTML(s).replace(/\n/g, '<br>');
-            const field = (label: string, valueHtml: string) =>
-                `<p class="print-taxon-field"><strong>${label}:</strong> ${valueHtml}</p>`;
-
-            // A name line: the scientific name is italicised, and its auctor (if any)
-            // follows in the small auctor style; the vernacular name renders plain.
-            const renderName = (line: TaxonNameLine) => {
-                const name = line.isScientific ? `<em>${escapeHTML(line.name)}</em>` : escapeHTML(line.name);
-                const auctor = line.auctor ? ` <span class="print-taxon-auctor">${escapeHTML(line.auctor)}</span>` : '';
-                return name + auctor;
-            };
-
-            const entries = taxa.map(taxon => {
-                const names = buildTaxonExportNames(taxon, nameMode);
-                let block = `<div class="print-taxon"><h3 class="print-taxon-name">${renderName(names.heading)}</h3>`;
-
-                if (names.secondary) block += `<p class="print-taxon-field">${renderName(names.secondary)}</p>`;
-                if (taxon.synonyms.length > 0) block += field('Synonyms', taxon.synonyms.map(s => `<em>${escapeHTML(s)}</em>`).join('; '));
-                if (taxon.description) block += field('Description', renderRichText(taxon.description, HTML_FIELD, figures));
-                if (taxon.biology) block += field('Biology', nl2br(taxon.biology));
-                if (taxon.distribution) block += field('Distribution', nl2br(taxon.distribution));
-                if (taxon.confusables.length > 0) {
-                    const items = taxon.confusables
-                        .map(c => `<li><em>${escapeHTML(c.name)}</em>${c.distinction ? ` — ${escapeHTML(c.distinction)}` : ''}</li>`)
-                        .join('');
-                    block += `<div class="print-taxon-field"><strong>Confusable species:</strong><ul class="print-confusables">${items}</ul></div>`;
-                }
-
-                return block + `</div>`;
-            }).join('');
-
-            taxaMarkup = `<h2 class="print-taxa-heading">Taxa</h2>${entries}`;
-        }
-
-        // GENERATE TARGET DOCUMENT STRUCTURE
-        const hasFiguresClass = figures.length > 0 ? ' layout-has-figures' : '';
-        // `ch` slightly over-estimates for punctuation-heavy leads, which is fine — a
-        // touch of slack never clips. Floor keeps a sane column for short/empty keys.
-        const leadColWidth = `${Math.max(maxLeadLen, 3)}ch`;
-        const htmlDocument = buildHTMLBoilerplate(title, keyColumnMarkup, taxaMarkup, figuresColumnMarkup, hasFiguresClass, leadFormat, leadColWidth);
-
-        triggerFileDownload(htmlDocument, sanitizeFilename(title, '.html'), 'text/html;charset=utf-8;');
-
-    } catch (error) {
-        console.error('HTML Export layout compilation system failure:', error);
-        showToast('❌ An unexpected error disrupted the HTML file compilation pipeline.', 'error');
+    // COMPILE DICHOTOMOUS KEY COUPLERS
+    let keyColumnMarkup = '';
+    // Widest lead across every couplet, so the lead column is one fixed width
+    // and all rows align regardless of back-references / step-number length.
+    let maxLeadLen = 0;
+    if (model.isEmpty) {
+        keyColumnMarkup = `<p class="print-empty-notice">[The identification key is currently empty. Add couplets in the editor to populate this document.]</p>`;
     }
+    for (const c of model.couplets) {
+        const end1 = destinationToHtml(c.dest1);
+        const end2 = destinationToHtml(c.dest2);
+
+        // Figure tokens are already resolved to escaped "(Fig. N)" text by the
+        // renderer, so the alt strings must NOT be escaped again here.
+        const alt1 = renderAltSegments(c.alt1, HTML_ALT) || '___';
+        const alt2 = renderAltSegments(c.alt2, HTML_ALT) || '___';
+
+        const { lead1, lead2 } = c;
+        maxLeadLen = Math.max(maxLeadLen, lead1.length, lead2.length);
+
+        keyColumnMarkup += `
+        <div class="print-couplet" role="group" aria-label="Couplet ${c.displayNum}">
+            <div class="print-step-num">${escapeHTML(lead1)}</div>
+            <div class="print-row">
+              <span class="print-text">${alt1}</span>
+              <span class="print-dest">${end1}</span>
+            </div>
+            <div class="print-dash">${escapeHTML(lead2)}</div>
+            <div class="print-row">
+              <span class="print-text">${alt2}</span>
+              <span class="print-dest">${end2}</span>
+            </div>
+        </div>
+        `;
+    }
+
+    // COMPILE TAXA CHAPTERS — one block per taxon, in panel order; empty fields omitted.
+    let taxaMarkup = '';
+    if (taxa.length > 0) {
+        const nl2br = (s: string) => escapeHTML(s).replace(/\n/g, '<br>');
+        const field = (label: string, valueHtml: string) =>
+            `<p class="print-taxon-field"><strong>${label}:</strong> ${valueHtml}</p>`;
+
+        // A name line: the scientific name is italicised, and its auctor (if any)
+        // follows in the small auctor style; the vernacular name renders plain.
+        const renderName = (line: TaxonNameLine) => {
+            const name = line.isScientific ? `<em>${escapeHTML(line.name)}</em>` : escapeHTML(line.name);
+            const auctor = line.auctor ? ` <span class="print-taxon-auctor">${escapeHTML(line.auctor)}</span>` : '';
+            return name + auctor;
+        };
+
+        const entries = taxa.map(taxon => {
+            const names = buildTaxonExportNames(taxon, nameMode);
+            let block = `<div class="print-taxon"><h3 class="print-taxon-name">${renderName(names.heading)}</h3>`;
+
+            if (names.secondary) block += `<p class="print-taxon-field">${renderName(names.secondary)}</p>`;
+            if (taxon.synonyms.length > 0) block += field('Synonyms', taxon.synonyms.map(s => `<em>${escapeHTML(s)}</em>`).join('; '));
+            if (taxon.description) block += field('Description', renderRichText(taxon.description, HTML_FIELD, figures));
+            if (taxon.biology) block += field('Biology', nl2br(taxon.biology));
+            if (taxon.distribution) block += field('Distribution', nl2br(taxon.distribution));
+            if (taxon.confusables.length > 0) {
+                const items = taxon.confusables
+                    .map(c => `<li><em>${escapeHTML(c.name)}</em>${c.distinction ? ` — ${escapeHTML(c.distinction)}` : ''}</li>`)
+                    .join('');
+                block += `<div class="print-taxon-field"><strong>Confusable species:</strong><ul class="print-confusables">${items}</ul></div>`;
+            }
+
+            return block + `</div>`;
+        }).join('');
+
+        taxaMarkup = `<h2 class="print-taxa-heading">Taxa</h2>${entries}`;
+    }
+
+    // GENERATE TARGET DOCUMENT STRUCTURE
+    const hasFiguresClass = figures.length > 0 ? ' layout-has-figures' : '';
+    // `ch` slightly over-estimates for punctuation-heavy leads, which is fine — a
+    // touch of slack never clips. Floor keeps a sane column for short/empty keys.
+    const leadColWidth = `${Math.max(maxLeadLen, 3)}ch`;
+    const htmlDocument = buildHTMLBoilerplate(title, keyColumnMarkup, taxaMarkup, figuresColumnMarkup, hasFiguresClass, leadFormat, leadColWidth);
+
+    triggerFileDownload(htmlDocument, sanitizeFilename(title, '.html'), 'text/html;charset=utf-8;');
+    return [];
 }
 
 /**

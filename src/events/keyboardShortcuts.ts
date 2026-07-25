@@ -10,7 +10,7 @@ import { executePaste } from './coupletEvents.ts';
 /**
  * Desktop Command Shortcut Interceptor Engine.
  */
-export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) {
+export function setupKeyboardShortcuts(store: KeyStore) {
     const controller = new AbortController();
     const handleKeyDown = (e: KeyboardEvent) => {
         const importView = Array.from(document.querySelectorAll<HTMLElement>('.fullscreen-view'))
@@ -165,7 +165,7 @@ export function setupKeyboardShortcuts(store: KeyStore, refreshAll: () => void) 
                 if (!store.hasClipboardData()) return; // nothing internal to paste; allow native
                 e.preventDefault();
                 const position = e.shiftKey ? 'above' : 'below';
-                executePaste(store, refreshAll, position);
+                executePaste(store, position);
                 return;
             }
         }

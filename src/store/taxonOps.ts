@@ -23,6 +23,35 @@ export function findTaxonByName(taxa: readonly Taxon[], name: string): Taxon | u
 }
 
 /**
+ * The ids of every taxon a lead actually points at. A record missing from this set
+ * is dead weight in the document — the taxon-side counterpart of diagnoseKey's
+ * "orphaned step", and what the Taxa panel flags as unused. Only committed `taxon`
+ * branches count; a `taxonDraft` is a typed name that has no record yet.
+ */
+export function referencedTaxonIds(key: readonly Couplet[]): Set<number> {
+    const ids = new Set<number>();
+    for (const couplet of key) {
+        for (const branch of [couplet.branch1, couplet.branch2]) {
+            if (branch.kind === 'taxon') ids.add(branch.taxonId);
+        }
+    }
+    return ids;
+}
+
+/**
+ * Whether a taxon matches a filter query, tested against both names and its synonyms
+ * (a synonym is exactly what you search by when the name in hand is the outdated one).
+ * An empty query matches everything.
+ */
+export function taxonMatchesQuery(taxon: Taxon, query: string): boolean {
+    const q = query.trim().toLowerCase();
+    if (q === '') return true;
+    return taxon.scientificName.toLowerCase().includes(q)
+        || taxon.vernacularName.toLowerCase().includes(q)
+        || taxon.synonyms.some(s => s.toLowerCase().includes(q));
+}
+
+/**
  * The taxon whose scientific OR vernacular name matches `name` (case-insensitive),
  * or undefined. A scientific-name match wins over a vernacular one. Used to link a
  * lead's typed destination to an existing taxon by either of its names.

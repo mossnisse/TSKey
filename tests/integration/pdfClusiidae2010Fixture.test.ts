@@ -4,18 +4,17 @@ import { existsSync, readFileSync } from 'node:fs';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parsePlainTextKey } from '../../src/importers/plainTextImporter.ts';
-import { findRepeatedFurniture, reconstructPage } from '../../src/importers/pdf/layout.ts';
+import { findRepeatedFurniture, reconstructPage, type PositionedPage } from '../../src/importers/pdf/layout.ts';
 import { textItemToPositionedSpan } from '../../src/importers/pdf/pdfTextLayer.ts';
 import { detectKeyRegions, selectPreferredKeyRegion } from '../../src/importers/pdf/segment.ts';
-import type { PositionedPage } from '../../src/importers/pdf/layout.ts';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 
 // The fixture is a published article, so it is gitignored rather than committed.
 // The suite runs for whoever has the PDF locally and skips itself everywhere else
 // (a fresh clone, CI) instead of failing the whole run on a missing file.
-const FIXTURE_PDF = 'test_document/Lonsdale & Marshall 2007 Clusiodes.pdf';
+const FIXTURE_PDF = 'test_document/Lonsdale at al 2010 Phylogenetic analysis of the druid flies (Diptera Schizophora Clusiidae) based on mophological and molecular data.pdf';
 
-describe.skipIf(!existsSync(FIXTURE_PDF))('PDF importer real-document regression', () => {
+describe.skipIf(!existsSync(FIXTURE_PDF))('PDF importer OCR-damaged text-layer regression', () => {
     let document: PDFDocumentProxy;
     let loadingTask: PDFDocumentLoadingTask;
 
@@ -30,7 +29,7 @@ describe.skipIf(!existsSync(FIXTURE_PDF))('PDF importer real-document regression
         await loadingTask?.destroy();
     });
 
-    it('finds and parses the 14-couplet key inside the complete 43-page article', async () => {
+    it('finds the complete 12-couplet key despite damaged dash glyphs and irregular baselines', async () => {
         const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
         const physicalPages: PositionedPage[] = [];
         for (let pageNum = 1; pageNum <= document.numPages; pageNum++) {
@@ -54,7 +53,6 @@ describe.skipIf(!existsSync(FIXTURE_PDF))('PDF importer real-document regression
             }
         }
 
-        expect(document.numPages).toBe(43);
         const furniture = findRepeatedFurniture(physicalPages);
         const pages = physicalPages.map(page => {
             const reconstructed = reconstructPage(page.spans, {
@@ -64,23 +62,26 @@ describe.skipIf(!existsSync(FIXTURE_PDF))('PDF importer real-document regression
             return { pageNum: page.pageNum, text: reconstructed.text, lines: reconstructed.positionedLines };
         });
         const regions = detectKeyRegions(pages);
-        const genusRegion = regions.find(candidate => candidate.startPage === 2 && candidate.endPage === 3);
-        const region = regions.find(candidate => candidate.startPage === 9 && candidate.endPage === 11);
+        const region = regions.find(candidate => candidate.startPage === 35 && candidate.endPage === 39);
 
-        expect(genusRegion, regions.map(candidate => candidate.label).join('\n')).toBeDefined();
-        expect(parsePlainTextKey(genusRegion!.text).couplets[0].branch2)
-            .toEqual({ kind: 'taxonDraft', name: 'Clusiodes COQUILLETT' });
-        expect(region, regions.map(candidate => candidate.label).join('\n')).toBeDefined();
+        expect(region).toBeDefined();
+        expect(region?.leads).toHaveLength(24);
         expect(selectPreferredKeyRegion(regions)).toBe(region);
-        expect(region?.leads).toHaveLength(28);
         const parsed = parsePlainTextKey(region!.text);
         expect(parsed.errors).toEqual([]);
-        expect(parsed.stepCount).toBe(14);
+        expect(parsed.stepCount).toBe(12);
         expect(parsed.couplets.every(couplet => couplet.alt1 && couplet.alt2)).toBe(true);
         expect(parsed.couplets[0].branch1).toEqual({ kind: 'linked', targetId: 2 });
-        expect(parsed.couplets[0].branch2).toEqual({ kind: 'linked', targetId: 8 });
-        expect(parsed.couplets[2].branch1).toEqual({ kind: 'taxonDraft', name: 'C. verticalis (COLLIN)' });
-        expect(parsed.couplets[13].branch1).toEqual({ kind: 'taxonDraft', name: 'C. apicalis (ZETTERSTEDT)' });
-        expect(parsed.couplets[13].branch2).toEqual({ kind: 'taxonDraft', name: 'C. pictipes (ZETTERSTEDT)' });
+        expect(parsed.couplets[0].branch2).toEqual({ kind: 'linked', targetId: 5 });
+        expect(parsed.couplets[6].branch1).toEqual({ kind: 'linked', targetId: 8 });
+        expect(parsed.couplets[7].branch2).toEqual({ kind: 'linked', targetId: 9 });
+        expect(parsed.couplets[8].alt1).toContain('Neotropical, Nearctic');
+        expect(parsed.couplets[8].branch1).toEqual({ kind: 'taxonDraft', name: 'Sobarocephala Czerny' });
+        expect(parsed.couplets[8].branch2).toEqual({ kind: 'taxonDraft', name: 'Procerosoma Lonsdale & Marshall' });
+
+        const page38Lines = pages[37].lines ?? [];
+        expect(page38Lines.some(line => /M1\+2 ratio/u.test(line.text))).toBe(true);
+        expect(page38Lines.some(line => /R1 (?:setose|bare)/u.test(line.text))).toBe(true);
+        expect(page38Lines.some(line => /^(?:1|1\+2)$/u.test(line.text))).toBe(false);
     }, 30_000);
 });

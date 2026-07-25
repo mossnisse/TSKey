@@ -77,6 +77,13 @@ describe('plain-text key parsing', () => {
         expect(result.couplets[0].branch2).toEqual({ kind: 'taxonDraft', name: 'Salix' });
     });
 
+    it('recovers a second-lead dash lost as a PDF replacement glyph', () => {
+        const result = parsePlainTextKey('1. Has wings ..... Species one\n\uFFFD Lacks wings ..... Species two');
+        expect(result.errors).toEqual([]);
+        expect(result.couplets[0].alt2).toBe('Lacks wings');
+        expect(result.couplets[0].branch2).toEqual({ kind: 'taxonDraft', name: 'Species two' });
+    });
+
     it('recognizes markers with no space after the period or dash', () => {
         const result = parsePlainTextKey('1.Has wings ..... 2\n—Lacks wings ..... Apteryx');
         expect(result.couplets[0].alt1).toBe('Has wings');

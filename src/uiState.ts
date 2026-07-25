@@ -4,6 +4,8 @@
 
 import { DEFAULT_LEAD_FORMAT, isLeadFormat, DEFAULT_NAME_DISPLAY_MODE, isNameDisplayMode } from './utils.ts';
 import type { LeadFormat, NameDisplayMode } from './utils.ts';
+import { ChangeEmitter } from './changeEmitter.ts';
+import type { ChangeListener } from './changeEmitter.ts';
 
 export const UI_STATE_STORAGE_KEY = 'dichotomous_key_ui';
 
@@ -123,8 +125,25 @@ export class UIStateStore {
     // Centralized access point for typing flows passed implicitly into event structures
     public readonly typing = new TypingSessionManager();
 
+    // Taxa-panel view state. Deliberately NOT part of UIPanelState, so it is never
+    // persisted: the roster is meant to open compact and unfiltered every session.
+    // A restored filter would look like missing taxa, and restored expansions would
+    // defeat the collapsed default. Stale ids left by deleted taxa are harmless:
+    // nothing looks them up once the record is gone, and ids are issued as max+1, so
+    // the one id that can come back (delete the newest, then add) lands on a card the
+    // add flow expands anyway.
+    private expandedTaxonIds = new Set<number>();
+    private taxaFilter = '';
+
+    private readonly changes = new ChangeEmitter();
+
     constructor() {
         this.state = this.loadFromStorage();
+    }
+
+    /** Subscribes to preference/view-state changes; the returned function unsubscribes. */
+    public subscribe(listener: ChangeListener): () => void {
+        return this.changes.subscribe(listener);
     }
 
     // ==========================================
@@ -163,6 +182,14 @@ export class UIStateStore {
         return this.state.leadFormat;
     }
 
+    get taxaFilterQuery(): string {
+        return this.taxaFilter;
+    }
+
+    public isTaxonExpanded(id: number): boolean {
+        return this.expandedTaxonIds.has(id);
+    }
+
     get showBackReference(): boolean {
         return this.state.showBackReference;
     }
@@ -173,27 +200,27 @@ export class UIStateStore {
 
     public setActiveProjectTitle(title: string): void {
         this.state = { ...this.state, activeProjectTitle: title.trim() };
-        this.persist();
+        this.commit();
     }
 
     public toggleFigures(): void {
         this.state = { ...this.state, isFiguresHidden: !this.state.isFiguresHidden };
-        this.persist();
+        this.commit();
     }
 
     public togglePrint(): void {
         this.state = { ...this.state, isPrintHidden: !this.state.isPrintHidden };
-        this.persist();
+        this.commit();
     }
 
     public toggleImages(): void {
         this.state = { ...this.state, isImagesHidden: !this.state.isImagesHidden };
-        this.persist();
+        this.commit();
     }
 
     public toggleTaxa(): void {
         this.state = { ...this.state, isTaxaHidden: !this.state.isTaxaHidden };
-        this.persist();
+        this.commit();
     }
 
     public togglePanelCollapse(panel: PanelKey): void {
@@ -202,25 +229,43 @@ export class UIStateStore {
             ...this.state,
             collapsedPanels: { ...this.state.collapsedPanels, [panel]: collapsed },
         };
-        this.persist();
+        this.commit();
     }
 
     public setNameDisplayMode(mode: NameDisplayMode): void {
         if (!isNameDisplayMode(mode) || this.state.nameDisplayMode === mode) return;
         this.state = { ...this.state, nameDisplayMode: mode };
-        this.persist();
+        this.commit();
     }
 
     public setLeadFormat(format: LeadFormat): void {
         if (!isLeadFormat(format) || this.state.leadFormat === format) return;
         this.state = { ...this.state, leadFormat: format };
-        this.persist();
+        this.commit();
+    }
+
+    /** Sets the taxa roster filter. Not persisted (see expandedTaxonIds), but still
+     *  announced — the roster has to re-render to apply it. */
+    public setTaxaFilter(query: string): void {
+        if (this.taxaFilter === query) return;
+        this.taxaFilter = query;
+        this.changes.emit('structural');
+    }
+
+    public setTaxonExpanded(id: number, expanded: boolean): void {
+        if (expanded) this.expandedTaxonIds.add(id);
+        else this.expandedTaxonIds.delete(id);
+        this.changes.emit('structural');
+    }
+
+    public toggleTaxonExpanded(id: number): void {
+        this.setTaxonExpanded(id, !this.expandedTaxonIds.has(id));
     }
 
     public setShowBackReference(value: boolean): void {
         if (this.state.showBackReference === value) return;
         this.state = { ...this.state, showBackReference: value };
-        this.persist();
+        this.commit();
     }
 
     // ==========================================
@@ -245,7 +290,10 @@ export class UIStateStore {
         }
     }
 
-    private persist(): void {
+    /** Writes the preferences to localStorage and announces the change, so every
+     *  mutator that ends here refreshes the UI without its caller arranging it. */
+    private commit(): void {
+        this.changes.emit('structural');
         try {
             localStorage.setItem(UI_STATE_STORAGE_KEY, JSON.stringify(this.state));
         } catch (error) {

@@ -4,7 +4,6 @@
 import type { KeyStore, Couplet } from '../store';
 import { computePathFromRoot } from '../store';
 import type { UIStateStore } from '../uiState.ts';
-import { batchedRefresh } from './shared.ts';
 import { openPopover } from '../popover.ts';
 import type { PopoverItem } from '../popover.ts';
 import { branchTarget, buildIdToIndexMap, escapeHTML } from '../utils.ts';
@@ -183,7 +182,7 @@ export function setupNavigationClicks(store: KeyStore, uiState: UIStateStore, si
  * the path of alternatives from the root, each row labelled with the chosen
  * alternative's text, plus jump actions.
  */
-export function setupContextMenu(store: KeyStore, refreshAll: () => void, signal: AbortSignal) {
+export function setupContextMenu(store: KeyStore, signal: AbortSignal) {
     document.addEventListener('contextmenu', (e) => {
         const target = e.target as HTMLElement;
         // Keep the native context menu inside editable fields, incl. rich-text hosts.
@@ -230,7 +229,6 @@ export function setupContextMenu(store: KeyStore, refreshAll: () => void, signal
                 label: 'Select whole path',
                 onSelect: () => {
                     store.setSelectionBatch(path.steps.map(s => s.id));
-                    batchedRefresh(refreshAll);
                 },
             });
         }

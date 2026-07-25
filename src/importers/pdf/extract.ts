@@ -1,6 +1,6 @@
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
-import { findRepeatedFurniture, reconstructPage } from './layout.ts';
+import { findRepeatedFurniture, findSharedColumnGutter, reconstructPage } from './layout.ts';
 import { disposeOcrWorker, recognizeCanvas } from './ocr.ts';
 import { textItemToPositionedSpan } from './pdfTextLayer.ts';
 import { assessTextQuality } from './textQuality.ts';
@@ -42,6 +42,7 @@ function applyLayout(session: PdfSession, pageNumbers: readonly number[], remove
         .filter((page): page is PdfPageState => !!page)
         .map(page => ({ pageNum: page.pageNum, spans: page.sourceSpans }));
     const furniture = removeFurniture ? findRepeatedFurniture(selected) : new Set<string>();
+    const sharedColumnGutter = findSharedColumnGutter(selected);
     for (const pageNum of pageNumbers) {
         const page = session.pages[pageNum - 1];
         if (!page || page.status === 'failed' || page.editedText !== undefined || !page.sourceSpans.length) continue;
@@ -49,6 +50,7 @@ function applyLayout(session: PdfSession, pageNumbers: readonly number[], remove
             pageNum,
             removeFurniture,
             repeatedFurniture: furniture,
+            columnGutter: sharedColumnGutter ?? undefined,
         });
         page.generatedText = reconstructed.text;
         page.positionedLines = reconstructed.positionedLines;

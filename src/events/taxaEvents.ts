@@ -74,6 +74,13 @@ export function setupTaxaPanel(store: KeyStore, uiState: UIStateStore, refreshAl
     const container = document.getElementById('taxa-container');
     if (!container) return;
 
+    // Roster filter. The input lives outside the reconciled container, so a refresh
+    // never rebuilds it and focus survives every keystroke.
+    const filterInput = document.getElementById('taxa-filter') as HTMLInputElement | null;
+    filterInput?.addEventListener('input', () => {
+        uiState.setTaxaFilter(filterInput.value);
+    }, { signal });
+
     setupEntityPanel({
         container,
         cardSelector: '.taxon-card',
@@ -82,7 +89,12 @@ export function setupTaxaPanel(store: KeyStore, uiState: UIStateStore, refreshAl
         typing: uiState.typing.taxa,
         signal,
         refreshAll,
-        onAdd: () => store.addTaxon(''),
+        onAdd: () => {
+            // A new taxon is blank, so it would match no active filter and appear to
+            // do nothing. Clear the filter, then open the card ready to be typed into.
+            uiState.setTaxaFilter('');
+            uiState.setTaxonExpanded(store.addTaxon(''), true);
+        },
         endTypingSession: () => store.endTypingSession(),
         buildUpdate: buildFieldUpdate,
         applyUpdate: (id, update) => store.updateTaxon(id, update as Partial<Omit<Taxon, 'id'>>),
@@ -90,6 +102,17 @@ export function setupTaxaPanel(store: KeyStore, uiState: UIStateStore, refreshAl
         clearSelection: () => store.clearTaxonSelection(),
         getItems: () => store.getTaxa(),
         reorder: (src, tgt) => store.reorderTaxa(src, tgt),
+        // Only the caret toggles expansion — clicking the row still selects it, so
+        // delete and reorder keep working exactly as before. Expansion is deliberately
+        // independent of selection: writing a `confusables` line needs two taxa open
+        // at once, which a selection-driven accordion would make impossible.
+        extraClick: (target) => {
+            if (!target.closest('.taxon-disclosure')) return false;
+            const card = target.closest('.taxon-card');
+            if (!card) return false;
+            uiState.toggleTaxonExpanded(Number(card.getAttribute('data-id')));
+            return true;
+        },
         // A settled name edit may make a lead's draft match this taxon — link it.
         onSettle: () => store.relinkTaxonDrafts(),
         // Blur cancels the debounced encode, so encode figure tokens here too.

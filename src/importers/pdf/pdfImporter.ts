@@ -1,6 +1,6 @@
 import type { KeyStore } from '../../store';
 import type { UIStateStore } from '../../uiState.ts';
-import { showToast } from '../../uiRenderer.ts';
+import { showToast } from '../../ui/toast.ts';
 import { escapeHTML } from '../../utils.ts';
 import { commitParsedKey } from '../importCommit.ts';
 import { renderImportPreview } from '../importPreview.ts';

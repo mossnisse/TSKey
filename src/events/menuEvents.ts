@@ -3,21 +3,37 @@
 // Tools menu actions, and menu-bar mouse + keyboard navigation.
 import type { KeyStore } from '../store';
 import type { UIStateStore, PanelKey } from '../uiState.ts';
-import { batchedRefresh, refreshHubView } from './shared.ts';
+import { refreshHubView } from './shared.ts';
 import { executePaste, createNewCoupletWithFocus, commitPendingTitleEdit } from './coupletEvents.ts';
-import { showToast } from '../uiRenderer.ts';
+import { showToast } from '../ui/toast.ts';
 import { isRecord } from '../utils.ts';
 import { workspaceStorage, activeObjectURLs } from '../store';
 import { exportKeyToHTML } from '../exporters/htmlExporter.ts';
 import { exportKeyToLaTeX } from '../exporters/latexExporter.ts';
 import { exportKeyToPlainText } from '../exporters/plainTextExporter.ts';
 import { exportKeyToJSON } from '../exporters/jsonExporter.ts';
+import type { ExportWarnings } from '../exporters/exportResult.ts';
 import { openPlainTextImportDialog } from '../importers/plainTextImporter.ts';
 import { openPdfImportDialog } from '../importers/pdf/pdfImporter.ts';
 import { flushRichTextFieldsIn } from '../ui/richTextField.ts';
 
+/**
+ * Runs an export and owns everything user-facing about it. Exporters are pure
+ * formatters: they emit the file, return whatever was imperfect about it, and throw
+ * on failure — the menu that triggered the command decides what the user sees.
+ * `pipelineLabel` names the stage in the failure message ("HTML file compilation").
+ */
+async function runExport(pipelineLabel: string, run: () => ExportWarnings | Promise<ExportWarnings>): Promise<void> {
+    try {
+        for (const warning of await run()) showToast(warning, 'error');
+    } catch (error) {
+        console.error(`${pipelineLabel} failure:`, error);
+        showToast(`❌ An unexpected error disrupted the ${pipelineLabel} pipeline.`, 'error');
+    }
+}
+
 /** File menu: new / save / save-as / JSON+text+HTML+LaTeX export / import. */
-export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll: () => void, signal: AbortSignal) {
+export function setupFileMenu(store: KeyStore, uiState: UIStateStore, signal: AbortSignal) {
     const modalProjectHub = document.getElementById('modal-open-project') as HTMLElement;
 
     // --- NEW TRADITIONAL WORKFLOW FILE ACTIONS ---
@@ -44,7 +60,6 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
             await store.createNewProject(chosenTitle); // persists the fresh workspace itself
 
             showToast(`📄 New workspace "${chosenTitle}" initiated!`, "success");
-            batchedRefresh(refreshAll);
         } catch (error) {
             console.error("Failed to initialize a new project workspace safely: ", error);
             showToast("⚠️ Could not initialize database workspace entries.", "error");
@@ -76,7 +91,6 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
             await store.saveAsProject(chosenTitle);
 
             showToast(`💾 Saved workspace as "${chosenTitle}"`, "success");
-            batchedRefresh(refreshAll);
         } catch (error) {
             showToast("⚠️ Save As operation failed.", "error");
         }
@@ -107,7 +121,6 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
                 showToast("💾 Changes saved successfully!", "success");
             }
 
-            batchedRefresh(refreshAll);
         } catch (error) {
             console.error("Atomic save/rename failed:", error);
             // saveToStorage already rolls the title back on a failed rename;
@@ -117,7 +130,7 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
     }, { signal });
 
     document.querySelector('#cmd-export-json')?.addEventListener('click', () => {
-        exportKeyToJSON(store);
+        runExport('.tskey file export', () => exportKeyToJSON(store));
     }, { signal });
 
     const hiddenInput = document.querySelector('#file-import-hidden') as HTMLInputElement;
@@ -226,7 +239,6 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
                 await refreshHubView(store);
             }
 
-            batchedRefresh(refreshAll);
         } catch (err) {
             console.error("Import processing error:", err);
             const detail = err instanceof Error ? err.message : String(err);
@@ -235,7 +247,6 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
                 // storage quota). Keep the imported data and staged images so
                 // File → Save can retry, and say what actually happened.
                 alert(`The key was imported into the editor, but saving it to browser storage failed:\n${detail}\n\nUse File → Save to retry.`);
-                batchedRefresh(refreshAll);
             } else {
                 alert(`Import failed before any data was changed:\n${detail}`);
             }
@@ -269,9 +280,13 @@ export function setupFileMenu(store: KeyStore, uiState: UIStateStore, refreshAll
         openPdfImportDialog();
     }, { signal });
 
-    document.querySelector('#cmd-export-text')?.addEventListener('click', () => exportKeyToPlainText(store, uiState.leadFormat, uiState.showBackReference, uiState.nameDisplayMode), { signal });
-    document.querySelector('#cmd-export-html')?.addEventListener('click', () => exportKeyToHTML(store, uiState.leadFormat, uiState.showBackReference, uiState.nameDisplayMode), { signal });
-    document.querySelector('#cmd-export-latex')?.addEventListener('click', () => exportKeyToLaTeX(store, uiState.leadFormat, uiState.showBackReference, uiState.nameDisplayMode), { signal });
+    const exportOptions = () => [uiState.leadFormat, uiState.showBackReference, uiState.nameDisplayMode] as const;
+    document.querySelector('#cmd-export-text')?.addEventListener('click', () =>
+        runExport('plain text document generation', () => exportKeyToPlainText(store, ...exportOptions())), { signal });
+    document.querySelector('#cmd-export-html')?.addEventListener('click', () =>
+        runExport('HTML file compilation', () => exportKeyToHTML(store, ...exportOptions())), { signal });
+    document.querySelector('#cmd-export-latex')?.addEventListener('click', () =>
+        runExport('LaTeX document generation', () => exportKeyToLaTeX(store, ...exportOptions())), { signal });
 }
 
 /** Edit, View, and Tools menu command bindings (undo/redo, clipboard, toggles, auto-order). */
@@ -279,12 +294,12 @@ export function setupEditMenu(store: KeyStore, uiState: UIStateStore, refreshAll
     // --- EDIT MENU ACTION BINDINGS ---
     document.querySelector('#cmd-undo')?.addEventListener('click', () => {
         uiState.typing.clearAll();
-        if (store.undo()) batchedRefresh(refreshAll);
+        store.undo();
     }, { signal });
 
     document.querySelector('#cmd-redo')?.addEventListener('click', () => {
         uiState.typing.clearAll();
-        if (store.redo()) batchedRefresh(refreshAll);
+        store.redo();
     }, { signal });
 
     document.querySelector('#cmd-cut')?.addEventListener('click', () => {
@@ -293,7 +308,6 @@ export function setupEditMenu(store: KeyStore, uiState: UIStateStore, refreshAll
             if (confirm(`Confirm cutting ${selectedCount} highlighted step(s) to clipboard?`)) {
                 store.cutSelectedCouplets();
                 showToast(`Cut ${selectedCount} step(s) to clipboard.`, 'success');
-                batchedRefresh(refreshAll);
             }
         }
     }, { signal });
@@ -303,16 +317,15 @@ export function setupEditMenu(store: KeyStore, uiState: UIStateStore, refreshAll
         if (selectedCount > 0) {
             store.copySelectedCouplets();
             showToast(`Copied ${selectedCount} step(s) to clipboard.`, 'success');
-            batchedRefresh(refreshAll);
         }
     }, { signal });
 
     document.querySelector('#cmd-paste-above')?.addEventListener('click', () => {
-        executePaste(store, refreshAll, 'above');
+        executePaste(store, 'above');
     }, { signal });
 
     document.querySelector('#cmd-paste-below')?.addEventListener('click', () => {
-        executePaste(store, refreshAll, 'below');
+        executePaste(store, 'below');
     }, { signal });
 
     document.querySelector('#cmd-delete')?.addEventListener('click', () => {
@@ -323,14 +336,12 @@ export function setupEditMenu(store: KeyStore, uiState: UIStateStore, refreshAll
             if (confirm("Confirm removing highlighted taxa? Any key leads pointing at them will be cleared.")) {
                 store.deleteSelectedTaxa();
                 showToast(`Deleted ${selectedTaxonCount} taxon(a).`, 'success');
-                batchedRefresh(refreshAll);
             }
         }
         if (selectedKeyCount > 0) {
             if (confirm("Confirm removing highlighted key steps?")) {
                 store.deleteSelectedCouplets();
                 showToast(`Deleted ${selectedKeyCount} step(s).`, 'success');
-                batchedRefresh(refreshAll);
             }
         }
         if (selectedFigCount > 0) {
@@ -346,7 +357,6 @@ export function setupEditMenu(store: KeyStore, uiState: UIStateStore, refreshAll
                     activeObjectURLs.delete(id);
                 });
                 showToast(`Deleted ${selectedFigCount} figure(s).`, 'success');
-                batchedRefresh(refreshAll);
             }
         }
     }, { signal });
@@ -355,7 +365,6 @@ export function setupEditMenu(store: KeyStore, uiState: UIStateStore, refreshAll
         if (store.getSelectedCoupletIds().size > 0) {
             if (store.swapSelectedCouplets()) {
                 showToast("Swapped choice configurations.", "success");
-                batchedRefresh(refreshAll);
             }
         }
     }, { signal });
@@ -368,53 +377,44 @@ export function setupEditMenu(store: KeyStore, uiState: UIStateStore, refreshAll
         store.clearSelection();
         store.clearFigureSelection();
         store.clearTaxonSelection();
-        batchedRefresh(refreshAll);
     }, { signal });
 
     document.querySelector('#cmd-select-all')?.addEventListener('click', () => {
         store.selectAll();
-        batchedRefresh(refreshAll);
     }, { signal });
 
     // --- View Menu action bindings ---
     document.querySelector('#cmd-toggle-figures')?.addEventListener('click', () => {
         uiState.toggleFigures();
-        batchedRefresh(refreshAll);
     }, { signal });
 
     document.querySelector('#cmd-toggle-images')?.addEventListener('click', () => {
         uiState.toggleImages();
-        batchedRefresh(refreshAll);
     }, { signal });
 
     document.querySelector('#cmd-toggle-taxa')?.addEventListener('click', () => {
         uiState.toggleTaxa();
-        batchedRefresh(refreshAll);
     }, { signal });
 
     document.querySelector('#cmd-toggle-print')?.addEventListener('click', () => {
         uiState.togglePrint();
-        batchedRefresh(refreshAll);
     }, { signal });
 
     // --- TOOLS MENU ACTION BINDINGS ---
     document.querySelector('#cmd-reorder-couplets')?.addEventListener('click', () => {
         store.autoOrderCouplets();
         showToast("Key steps reordered with shorter branches first!", "success");
-        batchedRefresh(refreshAll);
     }, { signal });
 
     document.querySelector('#cmd-reorder-figures')?.addEventListener('click', () => {
         store.autoOrderFigures();
         showToast("Figures reordered to match key reference order!", "success");
-        batchedRefresh(refreshAll);
     }, { signal });
 
     document.querySelector('#cmd-sort-taxa')?.addEventListener('click', () => {
         const mode = uiState.nameDisplayMode;
         store.sortTaxaByName(mode);
         showToast(`Taxa sorted alphabetically by ${mode} name!`, "success");
-        batchedRefresh(refreshAll);
     }, { signal });
 }
 
@@ -424,7 +424,7 @@ export function setupEditMenu(store: KeyStore, uiState: UIStateStore, refreshAll
  * frees horizontal space for the panels that stay open. The class/aria are applied by
  * applyPanelVisibility on the ensuing refresh, so the layout survives a reload.
  */
-export function setupPanelCollapse(uiState: UIStateStore, refreshAll: () => void, signal: AbortSignal) {
+export function setupPanelCollapse(uiState: UIStateStore, signal: AbortSignal) {
     const layout = document.querySelector('.main-layout') as HTMLElement | null;
     if (!layout) return;
 
@@ -437,7 +437,6 @@ export function setupPanelCollapse(uiState: UIStateStore, refreshAll: () => void
         if (!panel) return;
 
         uiState.togglePanelCollapse(panel);
-        batchedRefresh(refreshAll);
     }, { signal });
 }
 

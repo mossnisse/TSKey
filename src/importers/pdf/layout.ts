@@ -13,6 +13,8 @@ export interface LayoutOptions {
     pageNum?: number;
     removeFurniture?: boolean;
     repeatedFurniture?: ReadonlySet<string>;
+    /** A document-level gutter inferred from neighboring pages. */
+    columnGutter?: number | null;
 }
 
 export interface ReconstructedPage {
@@ -30,7 +32,8 @@ interface LineBucket {
 }
 
 interface GutterCandidate {
-    midpoint: number;
+    leftEdge: number;
+    rightEdge: number;
     leftChars: number;
     rightChars: number;
     leftWidth: number;
@@ -48,6 +51,14 @@ function median(values: readonly number[]): number {
     const sorted = [...values].sort((a, b) => a - b);
     const middle = Math.floor(sorted.length / 2);
     return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+/** The value at `fraction` through the sorted values — a min/max that tolerates outliers. */
+function quantile(values: readonly number[], fraction: number): number {
+    if (!values.length) return 0;
+    const sorted = [...values].sort((a, b) => a - b);
+    const index = Math.round(fraction * (sorted.length - 1));
+    return sorted[Math.min(sorted.length - 1, Math.max(0, index))];
 }
 
 function spanBaseline(span: PositionedSpan): number {
@@ -176,7 +187,25 @@ function buildLine(
     };
 }
 
+/**
+ * Clustering is the expensive half of layout, and an import runs it over the same
+ * spans up to three times (the furniture scan, the shared-gutter scan, then each
+ * page's own rebuild). The result is cached by span-array reference — a page's
+ * `sourceSpans` is always replaced wholesale, never mutated in place, so an
+ * unchanged reference means the clustering is still valid. Callers treat the lines
+ * as read-only: every consumer copies (`{...line}`) before changing anything.
+ */
+const clusteredLineCache = new WeakMap<readonly PositionedSpan[], { pageNum: number; lines: PositionedLine[] }>();
+
 function clusterRawLines(spans: readonly PositionedSpan[], pageNum: number): PositionedLine[] {
+    const cached = clusteredLineCache.get(spans);
+    if (cached && cached.pageNum === pageNum) return cached.lines;
+    const lines = clusterLines(spans, pageNum);
+    clusteredLineCache.set(spans, { pageNum, lines });
+    return lines;
+}
+
+function clusterLines(spans: readonly PositionedSpan[], pageNum: number): PositionedLine[] {
     const sorted = spans
         .filter(span => span.text.trim())
         .map(normalizeSpan)
@@ -189,7 +218,11 @@ function clusterRawLines(spans: readonly PositionedSpan[], pageNum: number): Pos
         for (let index = Math.max(0, buckets.length - 8); index < buckets.length; index++) {
             const candidate = buckets[index];
             const distance = Math.abs(candidate.baseline - baseline);
-            const tolerance = Math.max(0.0025, Math.max(candidate.height, span.fontHeight, span.height) * 0.32);
+            // Superscripts and subscripts often use a smaller font and a shifted
+            // baseline while still belonging to the surrounding physical line.
+            // 0.45 of the larger glyph height keeps those scripts inline without
+            // approaching ordinary body-text line spacing (normally >= 1.1em).
+            const tolerance = Math.max(0.0025, Math.max(candidate.height, span.fontHeight, span.height) * 0.45);
             if (distance <= tolerance && distance < bestDistance) {
                 best = candidate;
                 bestDistance = distance;
@@ -209,7 +242,15 @@ function clusterRawLines(spans: readonly PositionedSpan[], pageNum: number): Pos
 }
 
 function normalizedFurnitureText(text: string): string {
-    return text.toLowerCase().replace(/\d+/gu, '#').replace(/\s+/gu, ' ').trim();
+    // Running heads commonly put the page number on the outside edge: before
+    // the title on even pages and after a wide/tab gap on odd pages. Remove only
+    // those edge forms before comparing headers, leaving title years intact.
+    // Roman numerals must be all-lower or all-upper: a case-insensitive match also
+    // eats ordinary title words spelled from those letters ("Civil", "Mid", "Mix").
+    const withoutPageNumber = text
+        .replace(/^\s*(?:\d{1,5}|[ivxlcdm]{1,8}|[IVXLCDM]{1,8})\s+(?=\D)/u, '')
+        .replace(/\t\s*(?:\d{1,5}|[ivxlcdm]{1,8}|[IVXLCDM]{1,8})\s*$/u, '');
+    return withoutPageNumber.toLowerCase().replace(/\d+/gu, '#').replace(/\s+/gu, ' ').trim();
 }
 
 function isMarginLine(line: PositionedLine): boolean {
@@ -241,17 +282,25 @@ function inferColumnGutter(lines: readonly PositionedLine[]): number | null {
     const groups = new Map<number, GutterCandidate[]>();
     for (const line of lines) {
         for (const gap of line.gaps) {
-            if (gap.width < 0.07) continue;
+            // Low enough to catch the narrow gutters of an illustrated page. Safe only
+            // because candidates are binned by their *left* edge below: a key page's
+            // right-aligned destination column also leaves wide gaps, but they start
+            // wherever each description happens to end, so they never form a group.
+            if (gap.width < 0.03) continue;
             const leftSpans = line.spans.slice(0, gap.afterSpan + 1);
             const rightSpans = line.spans.slice(gap.afterSpan + 1);
             const candidate: GutterCandidate = {
-                midpoint: gap.x + gap.width / 2,
+                leftEdge: gap.x,
+                rightEdge: gap.rightX,
                 leftChars: [...gap.leftText].length,
                 rightChars: [...gap.rightText].length,
                 leftWidth: Math.max(...leftSpans.map(span => span.x + span.width)) - Math.min(...leftSpans.map(span => span.x)),
                 rightWidth: Math.max(...rightSpans.map(span => span.x + span.width)) - Math.min(...rightSpans.map(span => span.x)),
             };
-            const bin = Math.round(candidate.midpoint / 0.035);
+            // The end of the left text block stays stable on illustrated pages,
+            // while captions can begin at many different x positions. Cluster
+            // that stable edge rather than the varying center of each gap.
+            const bin = Math.round(candidate.leftEdge / 0.025);
             const group = groups.get(bin) ?? [];
             group.push(candidate);
             groups.set(bin, group);
@@ -261,7 +310,24 @@ function inferColumnGutter(lines: readonly PositionedLine[]): number | null {
     if (!best || best.length < Math.max(3, Math.ceil(lines.length * 0.08))) return null;
     if (median(best.map(item => item.leftChars)) < 10 || median(best.map(item => item.rightChars)) < 10) return null;
     if (median(best.map(item => item.leftWidth)) < 0.12 || median(best.map(item => item.rightWidth)) < 0.12) return null;
-    return median(best.map(item => item.midpoint));
+    // The gutter has to fall inside every gap in the group, so the boundaries are a
+    // max/min — but taken as quantiles, since one anomalously narrow gap would
+    // otherwise collapse the interval and drop the whole page back to one column.
+    const leftBoundary = quantile(best.map(item => item.leftEdge), 0.9);
+    const rightBoundary = quantile(best.map(item => item.rightEdge), 0.1);
+    return rightBoundary > leftBoundary ? (leftBoundary + rightBoundary) / 2 : null;
+}
+
+/** Uses confidently split pages to propagate a stable gutter across an illustrated document. */
+export function findSharedColumnGutter(pages: readonly PositionedPage[]): number | null {
+    const gutters = pages
+        .map(page => inferColumnGutter(clusterRawLines(page.spans, page.pageNum)))
+        .filter((gutter): gutter is number => gutter !== null);
+    const required = Math.max(2, Math.ceil(pages.length * 0.3));
+    if (gutters.length < required) return null;
+    const center = median(gutters);
+    const consistent = gutters.filter(gutter => Math.abs(gutter - center) <= 0.06);
+    return consistent.length >= required ? median(consistent) : null;
 }
 
 function splitLineAtGutter(line: PositionedLine, gutter: number): PositionedLine[] {
@@ -311,7 +377,9 @@ export function reconstructPage(spans: readonly PositionedSpan[], options: Layou
     }
 
     const warnings: string[] = [];
-    const gutter = inferColumnGutter(positionedLines);
+    const gutter = options.columnGutter === undefined
+        ? inferColumnGutter(positionedLines)
+        : options.columnGutter;
     if (gutter !== null) {
         positionedLines = orderColumnLines(positionedLines, gutter);
         warnings.push('Detected and reordered a likely two-column page. Review the extracted reading order.');

@@ -3,13 +3,13 @@
 // hub row actions (load / delete).
 import type { KeyStore } from '../store';
 import type { UIStateStore } from '../uiState.ts';
-import { batchedRefresh, refreshHubView } from './shared.ts';
-import { showToast } from '../uiRenderer.ts';
+import { refreshHubView } from './shared.ts';
+import { showToast } from '../ui/toast.ts';
 import { isLeadFormat, isNameDisplayMode } from '../utils.ts';
 import { workspaceStorage } from '../store';
 
 /** Modal open/close triggers and the project workspace hub row actions (load / delete). */
-export function setupDialogs(store: KeyStore, uiState: UIStateStore, refreshAll: () => void, signal: AbortSignal) {
+export function setupDialogs(store: KeyStore, uiState: UIStateStore, signal: AbortSignal) {
     const modalShortcuts = document.getElementById('modal-shortcuts') as HTMLElement;
     const modalOptions = document.getElementById('modal-options') as HTMLElement;
     const modalAbout = document.getElementById('modal-about') as HTMLElement;
@@ -32,17 +32,14 @@ export function setupDialogs(store: KeyStore, uiState: UIStateStore, refreshAll:
         const target = e.target as HTMLInputElement;
         if (target.name !== 'lead-format' || !isLeadFormat(target.value)) return;
         uiState.setLeadFormat(target.value);
-        batchedRefresh(refreshAll);
     }, { signal });
     backRefCheckbox?.addEventListener('change', () => {
         uiState.setShowBackReference(backRefCheckbox.checked);
-        batchedRefresh(refreshAll);
     }, { signal });
     nameDisplayGroup?.addEventListener('change', (e) => {
         const target = e.target as HTMLInputElement;
         if (target.name !== 'name-display' || !isNameDisplayMode(target.value)) return;
         uiState.setNameDisplayMode(target.value);
-        batchedRefresh(refreshAll);
     }, { signal });
 
     // Show a modal and move focus into it for keyboard users (Tab is then trapped
@@ -113,7 +110,6 @@ export function setupDialogs(store: KeyStore, uiState: UIStateStore, refreshAll:
 
                 modalProjectHub.style.display = 'none';
                 showToast(`📂 Swapped to workspace: "${projectName}"`, "success");
-                batchedRefresh(refreshAll);
             } catch (error) {
                 console.error("Failed to load workspace safely:", error);
                 showToast("⚠️ Could not open selected project database entries.", "error");
@@ -149,7 +145,6 @@ export function setupDialogs(store: KeyStore, uiState: UIStateStore, refreshAll:
                     }
 
                     await refreshHubView(store);
-                    batchedRefresh(refreshAll);
                 } catch (error) {
                     console.error("Failed to execute database deletion sequence:", error);
                     showToast("⚠️ Failed to delete workspace from database.", "error");

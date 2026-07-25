@@ -69,7 +69,6 @@ export function setupEntityPanel(config: EntityPanelConfig): void {
 
     addButton?.addEventListener('click', () => {
         onAdd();
-        batchedRefresh(refreshAll);
     }, { signal });
 
     // --- Field editing (immediate store sync, debounced structural refresh) ---
@@ -102,7 +101,6 @@ export function setupEntityPanel(config: EntityPanelConfig): void {
         // Clicking the panel background clears the selection.
         if (target === container) {
             clearSelection();
-            batchedRefresh(refreshAll);
             return;
         }
 
@@ -117,13 +115,11 @@ export function setupEntityPanel(config: EntityPanelConfig): void {
         if (target.closest('input, textarea, .rte-host')) {
             if (!card.classList.contains('is-selected')) {
                 toggleSelection(id, multiSelect);
-                batchedRefresh(refreshAll);
             }
             return;
         }
 
         toggleSelection(id, multiSelect);
-        batchedRefresh(refreshAll);
     }, { signal });
 
     // Disable card dragging while a field has focus, so mouse text-selection inside it
@@ -179,7 +175,6 @@ export function setupEntityPanel(config: EntityPanelConfig): void {
             const destIdx = resolveDropIndex(srcIdx, targetIdx, position);
             if (srcIdx !== destIdx) {
                 reorder(srcIdx, destIdx);
-                batchedRefresh(refreshAll);
             }
         },
     });

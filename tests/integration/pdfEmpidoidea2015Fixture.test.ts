@@ -3,19 +3,23 @@
 import { existsSync, readFileSync } from 'node:fs';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import { parsePlainTextKey } from '../../src/importers/plainTextImporter.ts';
-import { findRepeatedFurniture, reconstructPage } from '../../src/importers/pdf/layout.ts';
+import {
+    findRepeatedFurniture,
+    findSharedColumnGutter,
+    reconstructPage,
+    type PositionedPage,
+} from '../../src/importers/pdf/layout.ts';
 import { textItemToPositionedSpan } from '../../src/importers/pdf/pdfTextLayer.ts';
 import { detectKeyRegions, selectPreferredKeyRegion } from '../../src/importers/pdf/segment.ts';
-import type { PositionedPage } from '../../src/importers/pdf/layout.ts';
-import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 
 // The fixture is a published article, so it is gitignored rather than committed.
 // The suite runs for whoever has the PDF locally and skips itself everywhere else
 // (a fresh clone, CI) instead of failing the whole run on a missing file.
-const FIXTURE_PDF = 'test_document/Lonsdale & Marshall 2007 Clusiodes.pdf';
+const FIXTURE_PDF = 'test_document/Ericson & Hellqvist 2015.pdf';
 
-describe.skipIf(!existsSync(FIXTURE_PDF))('PDF importer real-document regression', () => {
+describe.skipIf(!existsSync(FIXTURE_PDF))('PDF importer illustrated-key regression', () => {
     let document: PDFDocumentProxy;
     let loadingTask: PDFDocumentLoadingTask;
 
@@ -30,7 +34,7 @@ describe.skipIf(!existsSync(FIXTURE_PDF))('PDF importer real-document regression
         await loadingTask?.destroy();
     });
 
-    it('finds and parses the 14-couplet key inside the complete 43-page article', async () => {
+    it('keeps the 47-couplet key continuous while excluding figure captions', async () => {
         const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
         const physicalPages: PositionedPage[] = [];
         for (let pageNum = 1; pageNum <= document.numPages; pageNum++) {
@@ -54,33 +58,33 @@ describe.skipIf(!existsSync(FIXTURE_PDF))('PDF importer real-document regression
             }
         }
 
-        expect(document.numPages).toBe(43);
         const furniture = findRepeatedFurniture(physicalPages);
+        const sharedColumnGutter = findSharedColumnGutter(physicalPages);
         const pages = physicalPages.map(page => {
             const reconstructed = reconstructPage(page.spans, {
                 pageNum: page.pageNum,
                 repeatedFurniture: furniture,
+                columnGutter: sharedColumnGutter ?? undefined,
             });
             return { pageNum: page.pageNum, text: reconstructed.text, lines: reconstructed.positionedLines };
         });
         const regions = detectKeyRegions(pages);
-        const genusRegion = regions.find(candidate => candidate.startPage === 2 && candidate.endPage === 3);
-        const region = regions.find(candidate => candidate.startPage === 9 && candidate.endPage === 11);
+        const region = regions.find(candidate => candidate.startPage === 2 && candidate.endPage === 8);
 
-        expect(genusRegion, regions.map(candidate => candidate.label).join('\n')).toBeDefined();
-        expect(parsePlainTextKey(genusRegion!.text).couplets[0].branch2)
-            .toEqual({ kind: 'taxonDraft', name: 'Clusiodes COQUILLETT' });
-        expect(region, regions.map(candidate => candidate.label).join('\n')).toBeDefined();
+        expect(region).toBeDefined();
+        expect(region?.leads).toHaveLength(94);
         expect(selectPreferredKeyRegion(regions)).toBe(region);
-        expect(region?.leads).toHaveLength(28);
+        expect(region?.text).not.toMatch(/\bFigur\s+\d+\./u);
         const parsed = parsePlainTextKey(region!.text);
         expect(parsed.errors).toEqual([]);
-        expect(parsed.stepCount).toBe(14);
+        expect(parsed.stepCount).toBe(47);
         expect(parsed.couplets.every(couplet => couplet.alt1 && couplet.alt2)).toBe(true);
         expect(parsed.couplets[0].branch1).toEqual({ kind: 'linked', targetId: 2 });
-        expect(parsed.couplets[0].branch2).toEqual({ kind: 'linked', targetId: 8 });
-        expect(parsed.couplets[2].branch1).toEqual({ kind: 'taxonDraft', name: 'C. verticalis (COLLIN)' });
-        expect(parsed.couplets[13].branch1).toEqual({ kind: 'taxonDraft', name: 'C. apicalis (ZETTERSTEDT)' });
-        expect(parsed.couplets[13].branch2).toEqual({ kind: 'taxonDraft', name: 'C. pictipes (ZETTERSTEDT)' });
+        expect(parsed.couplets[0].branch2).toEqual({ kind: 'linked', targetId: 33 });
+        expect(parsed.couplets[22].branch1).toEqual({ kind: 'linked', targetId: 24 });
+        expect(parsed.couplets[22].branch2).toEqual({ kind: 'linked', targetId: 25 });
+        expect(parsed.couplets[30].branch2).toEqual({ kind: 'linked', targetId: 32 });
+        expect(parsed.couplets[46].branch1).toEqual({ kind: 'taxonDraft', name: 'Elaphropeza (Hyb.)' });
+        expect(parsed.couplets[46].branch2).toEqual({ kind: 'taxonDraft', name: 'Drapetis (Hyb.)' });
     }, 30_000);
 });

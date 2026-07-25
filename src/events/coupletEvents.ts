@@ -8,7 +8,7 @@ import { batchedRefresh, commitRichField, DEBOUNCE_TYPING_MS, setupCardDragReord
 import { resolveDestination, parseDestinationInput, buildIdToIndexMap, buildTaxaContext } from '../utils.ts';
 import { findTaxonByAnyName, workspaceStorage } from '../store';
 import { scrollIntoViewAndFlash } from './navigationEvents.ts';
-import { showToast } from '../uiRenderer.ts';
+import { showToast } from '../ui/toast.ts';
 
 // The key-card whose field last gained focus — so the link highlight only refreshes
 // when focus moves to a different card, not when tabbing between a card's two fields.
@@ -22,7 +22,7 @@ export async function commitPendingTitleEdit(): Promise<void> {
 }
 
 /** Title input: commit a trimmed rename on blur or Enter, reverting to the current name if blank. */
-export function setupTitleEditing(store: KeyStore, refreshAll: () => void, signal: AbortSignal) {
+export function setupTitleEditing(store: KeyStore, signal: AbortSignal) {
     const titleInput = document.getElementById('key-title-input') as HTMLInputElement | null;
     if (!titleInput) return;
 
@@ -53,7 +53,6 @@ export function setupTitleEditing(store: KeyStore, refreshAll: () => void, signa
             }
 
             store.setTitle(newTitle);
-            batchedRefresh(refreshAll);
         })().finally(() => {
             commitPromise = null;
         });
@@ -144,7 +143,6 @@ export function setupCoupletSelection(keyContainer: HTMLElement, store: KeyStore
         // If the user clicked the editor background layout area itself, drop focus
         if (target.id === 'editor-container') {
             store.clearSelection();
-            batchedRefresh(refreshAll);
             return;
         }
 
@@ -160,7 +158,6 @@ export function setupCoupletSelection(keyContainer: HTMLElement, store: KeyStore
         const multiSelect = e.ctrlKey || e.metaKey || e.shiftKey;
 
         store.toggleSelection(id, multiSelect);
-        batchedRefresh(refreshAll);
     }, { signal });
 }
 
@@ -300,7 +297,7 @@ export function setupCoupletFocus(keyContainer: HTMLElement, store: KeyStore, ui
 }
 
 /** HTML5 drag-and-drop reordering for couplet cards, with edge auto-scroll. */
-export function setupCoupletDragAndDrop(keyContainer: HTMLElement, store: KeyStore, refreshAll: () => void, signal: AbortSignal) {
+export function setupCoupletDragAndDrop(keyContainer: HTMLElement, store: KeyStore, signal: AbortSignal) {
     setupCardDragReorder({
         container: keyContainer,
         cardSelector: '.key-card',
@@ -309,7 +306,6 @@ export function setupCoupletDragAndDrop(keyContainer: HTMLElement, store: KeySto
         signal,
         onDrop: (draggedId, targetId, position) => {
             store.reorderCouplets(draggedId, targetId, position);
-            batchedRefresh(refreshAll);
         },
     });
 }
@@ -325,7 +321,7 @@ export function createNewCoupletWithFocus(store: KeyStore, refreshAll: () => voi
 }
 
 /** Pastes clipboard steps relative to the current selection (or the key ends). */
-export function executePaste(store: KeyStore, refreshAll: () => void, position: 'above' | 'below') {
+export function executePaste(store: KeyStore, position: 'above' | 'below') {
     let targetId: number | undefined = undefined;
     const selectedIds = store.getSelectedCoupletIds();
     const key = store.getKey();
@@ -348,6 +344,5 @@ export function executePaste(store: KeyStore, refreshAll: () => void, position: 
             : (position === 'above' ? 'at the beginning' : 'at the end');
 
         showToast(`Pasted steps ${locationText}.`, "success");
-        batchedRefresh(refreshAll);
     }
 }

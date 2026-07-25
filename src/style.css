@@ -226,7 +226,10 @@ html, body {
         opacity 140ms ease 65ms,
         visibility 0s linear 0s;
 }
-.is-collapsed > :not(.panel-header) {
+/* Every collapsed-panel rule is scoped to `[data-panel]`: `is-collapsed` also marks
+   cards *inside* a panel (a collapsed taxon card), and an unscoped selector reaches
+   into them — which is how the taxa roster ended up rendering as blank rows. */
+[data-panel].is-collapsed > :not(.panel-header) {
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
@@ -234,11 +237,11 @@ html, body {
         opacity 110ms ease,
         visibility 0s linear 110ms;
 }
-.is-collapsed .panel-header {
+[data-panel].is-collapsed .panel-header {
     margin-bottom: 0;
     height: 100%;
 }
-.is-collapsed .panel-toggle {
+[data-panel].is-collapsed .panel-toggle {
     writing-mode: vertical-rl;
     height: 100%;
     width: auto;
@@ -247,7 +250,7 @@ html, body {
     overflow: hidden;
     padding: var(--space-md) 0;
 }
-.is-collapsed .panel-caret {
+[data-panel].is-collapsed .panel-caret {
     transform: rotate(-90deg);
 }
 
@@ -704,8 +707,90 @@ html, body {
 .taxon-card:hover { background-color: var(--color-bg-muted); }
 .taxon-card.is-selected { border-left-color: var(--color-primary); background: var(--color-primary-light); }
 
-.taxon-card-header { display: flex; justify-content: space-between; align-items: center; user-select: none; }
+/* Collapsed is the default: the panel reads as a scannable roster of names, and a
+   card only pays for its fields (and its description editor) once opened. */
+.taxon-card.is-collapsed { padding: var(--space-xs) var(--space-md); gap: 0; }
+.taxon-card.is-collapsed .taxon-card-body { display: none; }
+
+.taxon-card-header { display: flex; align-items: center; gap: var(--space-sm); user-select: none; }
 .taxon-card-title  { margin: 0; color: var(--color-primary); font-weight: 700; font-size: var(--text-lg); font-family: monospace; }
+.taxon-card-body   { display: flex; flex-direction: column; gap: var(--space-sm); }
+
+.taxon-disclosure {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--color-text-muted);
+    cursor: pointer;
+}
+.taxon-disclosure:hover { background: var(--color-bg-subtle); color: var(--color-text); }
+.taxon-disclosure:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.taxon-caret { font-size: 0.7em; transition: transform 0.15s ease; }
+.taxon-card.is-collapsed .taxon-caret { transform: rotate(-90deg); }
+
+/* The name pair truncates rather than wrapping — a roster row stays one line tall. */
+.taxon-roster-name {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-sm);
+    overflow: hidden;
+}
+.taxon-roster-primary,
+.taxon-roster-secondary {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.taxon-roster-primary { font-weight: 600; }
+.taxon-roster-secondary { flex: none; font-size: var(--text-sm); color: var(--color-text-muted); }
+.taxon-roster-primary.is-scientific,
+.taxon-roster-secondary.is-scientific { font-style: italic; }
+.taxon-roster-primary.is-unnamed { font-weight: 400; font-style: italic; color: var(--color-text-muted); }
+
+/* Only gaps are flagged, so a clean roster shows no dots at all. */
+.taxon-flags { flex: none; display: flex; align-items: center; gap: var(--space-xs); }
+.taxon-flag { width: 8px; height: 8px; border-radius: 50%; }
+.taxon-flag.is-unused { background: var(--color-warning); }
+.taxon-flag.is-undescribed { border: 1.5px solid var(--color-border); }
+
+/* --- Roster filter --- */
+.taxa-filter-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    border-bottom: 1px solid var(--color-border-light);
+}
+.taxa-filter-input {
+    flex: 1;
+    min-width: 0;
+    height: var(--control-height);
+    padding: var(--space-xs) var(--space-sm);
+    font-family: inherit;
+    font-size: var(--text-base);
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    transition: var(--transition-base);
+}
+.taxa-filter-input:focus { outline: none; border-color: var(--color-accent); box-shadow: var(--focus-ring); }
+.taxa-filter-count { flex: none; font-size: var(--text-sm); color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+.taxa-empty-notice {
+    margin: 0;
+    padding: var(--space-lg) var(--space-md);
+    text-align: center;
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+}
 
 .taxon-field-row { display: flex; flex-direction: column; gap: 2px; }
 .taxon-field-row > label { font-size: var(--text-sm); color: var(--color-text-muted); font-weight: 500; cursor: pointer; }
@@ -1690,18 +1775,18 @@ select:focus-visible,
     background: var(--color-accent);
     border-color: var(--color-accent);
 }
-.is-collapsed .panel-header {
+[data-panel].is-collapsed .panel-header {
     padding: 0;
     border: 0;
     border-radius: 0;
     background: var(--color-bg);
     box-shadow: none;
 }
-.is-collapsed .panel-toggle {
+[data-panel].is-collapsed .panel-toggle {
     min-height: 0;
     padding: var(--space-md) var(--space-xs);
 }
-.is-collapsed .panel-caret {
+[data-panel].is-collapsed .panel-caret {
     flex: 0 0 24px;
     margin-left: 0;
     margin-top: 0;

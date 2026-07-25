@@ -7,7 +7,7 @@ import type { KeyStore, Figure } from '../store';
 import type { UIStateStore } from '../uiState.ts';
 import { batchedRefresh, commitRichField } from './shared.ts';
 import { setupEntityPanel } from './entityPanel.ts';
-import { showToast } from '../uiRenderer.ts';
+import { showToast } from '../ui/toast.ts';
 import { workspaceStorage, activeObjectURLs } from '../store';
 import { openImageLightbox } from '../ui/imageLightbox.ts';
 import { openPopover } from '../popover.ts';

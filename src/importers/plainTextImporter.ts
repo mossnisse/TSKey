@@ -15,7 +15,7 @@
 
 import type { Branch, Couplet, Figure, KeyStore } from '../store';
 import type { UIStateStore } from '../uiState.ts';
-import { showToast } from '../uiRenderer.ts';
+import { showToast } from '../ui/toast.ts';
 import { commitParsedKey } from './importCommit.ts';
 import { renderImportPreview } from './importPreview.ts';
 import { getKeyDialect, listKeyDialects, registerKeyDialect } from './keyDialect.ts';
@@ -217,9 +217,10 @@ export function parseLeadMarker(line: string, opts: PlainTextParseOptions): Lead
     if (opts.recognizeDashSecondLead) {
         // Second-alternative markers vary across published keys and OCR output:
         // hyphen/minus, en/em/figure dashes (sometimes doubled), plus (common in
-        // botanical Floras), and equals (a frequent mis-scan of a long dash). A
+        // botanical Floras), equals (a frequent mis-scan of a long dash), and a
+        // replacement glyph when a PDF text layer lost the original dash. A
         // missing space is tolerated only before a letter, as with numbered leads.
-        const dashed = line.match(/^\s*(?:[-–—−‒―]{1,2}|[+=])(?:\s+|(?=\p{L}))(\S.*)$/u);
+        const dashed = line.match(/^\s*(?:[-–—−‒―]{1,2}|[+=\uFFFD])(?:\s+|(?=\p{L}))(\S.*)$/u);
         if (dashed) {
             return { kind: 'second', coupletNum: null, rest: dashed[1] };
         }

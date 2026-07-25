@@ -26,4 +26,5 @@ coverage
 TSKey.txt
 src/.claude/worktrees/happy-allen-d8e12b/
 /.claude
-test_document/Lonsdale & Marshall 2007 Clusiodes.pdf
+# Published articles used as PDF-import fixtures; those test suites skip when absent.
+/test_document

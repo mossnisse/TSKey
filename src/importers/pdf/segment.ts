@@ -154,6 +154,9 @@ function shouldContinueLead(draft: LeadDraft, next: LineRef): boolean {
             && !splitLeadBody(accumulatedBody).destination;
         if (!crossesPage) return false;
     } else {
+        if (previous.line.columnIndex >= 0
+            && next.line.columnIndex >= 0
+            && previous.line.columnIndex !== next.line.columnIndex) return false;
         const verticalGap = next.line.y - (previous.line.y + previous.line.height);
         if (verticalGap > Math.max(0.022, previous.line.fontHeight * 1.8)) return false;
     }
@@ -188,8 +191,16 @@ function joinPhysicalSegments(segments: readonly string[]): string {
     return result.trim();
 }
 
+// Some PDF text layers encode a printed dot leader as repeated ellipsis glyphs
+// rather than individual full stops. Either form is strong layout evidence for the
+// description/destination boundary, so `lastLeader` (which splits there) and
+// `cleanDescription` (which strips what is left over) must recognize the same set.
+const LEADER_SOURCE = String.raw`\.(?:\s?\.){2,}|\u2026(?:\s?[.\u2026])+`;
+// A two-dot stub is only a leader when a destination-shaped token closes the line.
+const SHORT_LEADER_SOURCE = String.raw`(?:\.{2}|\u2026)(?=\s*(?:go\s+to\s+|couplet\s+)?[0-9A-Za-z|!]{1,4}\.?\s*$)`;
+
 function lastLeader(text: string): RegExpExecArray | null {
-    const expression = /\.(?:\s?\.){2,}/gu;
+    const expression = new RegExp(`${LEADER_SOURCE}|${SHORT_LEADER_SOURCE}`, 'giu');
     let last: RegExpExecArray | null = null;
     let match: RegExpExecArray | null;
     while ((match = expression.exec(text)) !== null) last = match;
@@ -198,7 +209,7 @@ function lastLeader(text: string): RegExpExecArray | null {
 
 function cleanDescription(text: string): string {
     return text
-        .replace(/\.(?:\s?\.){2,}/gu, ' ')
+        .replace(new RegExp(LEADER_SOURCE, 'gu'), ' ')
         .replace(/\s*(?:→|➔|=>)\s*$/u, '')
         .replace(/\s+/gu, ' ')
         .trim();
@@ -227,7 +238,7 @@ function splitLeadBody(body: string): { description: string; destination: string
     }
     return {
         description: cleanDescription(description),
-        destination: destination.replace(/^[.\s]+|[.\s]+$/gu, '').replace(/\s+/gu, ' ').trim(),
+        destination: destination.replace(/^[.\u2026\s]+|[.\u2026\s]+$/gu, '').replace(/\s+/gu, ' ').trim(),
     };
 }
 
@@ -259,6 +270,31 @@ function leadFromDraft(draft: LeadDraft): LogicalKeyLead {
     };
 }
 
+function startsMarkerlessSecondLead(draft: LeadDraft, next: LineRef): boolean {
+    if (draft.kind !== 'first') return false;
+    const previous = draft.refs.at(-1)!;
+    if (previous.pageNum !== next.pageNum) return false;
+    if (previous.line.columnIndex >= 0
+        && next.line.columnIndex >= 0
+        && previous.line.columnIndex !== next.line.columnIndex) return false;
+    const verticalGap = next.line.y - (previous.line.y + previous.line.height);
+    if (verticalGap < -0.005 || verticalGap > Math.max(0.025, previous.line.fontHeight * 2)) return false;
+    if (Math.abs(next.line.x - draft.bodyX) > 0.035) return false;
+
+    const accumulated = splitLeadBody(joinPhysicalSegments([
+        draft.marker.rest,
+        ...draft.refs.slice(1).map(ref => ref.line.text),
+    ]));
+    const candidate = splitLeadBody(next.line.text);
+    const balancedGrouping = (text: string): boolean =>
+        ([['(', ')'], ['[', ']']] as const).every(([open, close]) =>
+            [...text].filter(char => char === open).length === [...text].filter(char => char === close).length);
+    return accumulated.destination.length > 0
+        && balancedGrouping(accumulated.destination)
+        && candidate.destination.length > 0
+        && candidate.description.length >= 4;
+}
+
 /** Converts positioned page lines into logical alternatives without flattening their evidence first. */
 export function reconstructLogicalLeads(pages: readonly TextPage[]): LogicalKeyLead[] {
     const refs = flattenPositioned(pages);
@@ -281,7 +317,18 @@ export function reconstructLogicalLeads(pages: readonly TextPage[]): LogicalKeyL
     for (const ref of refs) {
         const marker = parseLeadMarker(ref.line.text, DEFAULT_PARSE_OPTIONS);
         if (!marker) {
-            if (active && shouldContinueLead(active, ref)) active.refs.push(ref);
+            if (active && startsMarkerlessSecondLead(active, ref)) {
+                const coupletNum: number = active.coupletNum;
+                finalize();
+                active = {
+                    marker: { kind: 'second', coupletNum, rest: ref.line.text },
+                    markerText: '—',
+                    coupletNum,
+                    kind: 'second',
+                    bodyX: ref.line.x,
+                    refs: [ref],
+                };
+            } else if (active && shouldContinueLead(active, ref)) active.refs.push(ref);
             else if (active && isSkippablePageHeader(active, ref)) continue;
             else finalize();
             continue;
@@ -319,11 +366,24 @@ function splitLeadGroups(leads: readonly LogicalKeyLead[]): LogicalKeyLead[][] {
         const numberingRestart = lead.kind === 'first'
             && previousFirstNumber !== null
             && lead.coupletNum <= previousFirstNumber;
+        // A distant number after a run of otherwise sequential couplets is much
+        // more likely to be a page/reference/table number than part of the key.
+        // Split it into its own (normally rejected) candidate instead of letting
+        // it extend an otherwise complete region. The gap of 5 is tuned against the
+        // fixture PDFs: a key that numbers couplets non-contiguously (per page, or
+        // per genus) will fragment here, and the fixtures are what would catch it.
+        const numberingJump = lead.kind === 'first'
+            && previousFirstNumber !== null
+            && lead.coupletNum > previousFirstNumber + 5;
         const pageGap = previous ? lead.startPage - previous.endPage > 1 : false;
         const spatialGap = previous && lead.startPage === previous.endPage
             ? lead.y - (previous.lines.at(-1)!.y + previous.lines.at(-1)!.height) > 0.075
             : false;
-        if (!current || numberingRestart || pageGap || spatialGap) {
+        const sequentialNumbering = lead.kind === 'first'
+            && previousFirstNumber !== null
+            && lead.coupletNum === previousFirstNumber + 1;
+        const separatingSpatialGap = spatialGap && !sequentialNumbering;
+        if (!current || numberingRestart || numberingJump || pageGap || separatingSpatialGap) {
             groups.push([lead]);
             previousFirstNumber = lead.kind === 'first' ? lead.coupletNum : null;
         } else {
@@ -384,12 +444,23 @@ export function detectKeyRegions(pages: readonly TextPage[]): KeyRegion[] {
         }));
 }
 
-/** Prefers confidence first, then the more complete key when scores are effectively tied. */
+/**
+ * Prefers confidence unless a much larger candidate is nearly as credible.
+ * This prevents a perfect-looking two-row table from outranking a complete key.
+ */
 export function selectPreferredKeyRegion(keyRegions: readonly KeyRegion[]): KeyRegion | undefined {
     return keyRegions.reduce<KeyRegion | undefined>((best, region) => {
-        if (!best || region.confidence > best.confidence + 0.02) return region;
-        const similarlyConfident = Math.abs(region.confidence - best.confidence) <= 0.02;
-        if (similarlyConfident && (region.leads?.length ?? 0) > (best.leads?.length ?? 0)) return region;
-        return best;
+        if (!best) return region;
+        const confidenceGap = region.confidence - best.confidence;
+        if (Math.abs(confidenceGap) > 0.06) return confidenceGap > 0 ? region : best;
+
+        const regionSize = region.leads?.length ?? 0;
+        const bestSize = best.leads?.length ?? 0;
+        const regionIsSubstantiallyLarger = regionSize >= 6 && regionSize >= bestSize * 2;
+        const bestIsSubstantiallyLarger = bestSize >= 6 && bestSize >= regionSize * 2;
+        if (regionIsSubstantiallyLarger) return region;
+        if (bestIsSubstantiallyLarger) return best;
+        if (confidenceGap !== 0) return confidenceGap > 0 ? region : best;
+        return regionSize > bestSize ? region : best;
     }, undefined);
 }

@@ -209,7 +209,13 @@ export function initializeShell(appDiv: HTMLDivElement) {
               <span class="panel-title">Taxa</span>
             </button>
           </h2>
+          <div class="taxa-filter-row">
+            <input type="search" id="taxa-filter" class="taxa-filter-input"
+                   placeholder="Filter taxa..." aria-label="Filter taxa by name or synonym" />
+            <span id="taxa-filter-count" class="taxa-filter-count" aria-live="polite"></span>
+          </div>
           <div id="taxa-container"></div>
+          <p id="taxa-empty-notice" class="taxa-empty-notice is-hidden">No taxa match this filter.</p>
           <button id="add-taxon-btn" class="btn-add-block">+ Add New Taxon</button>
         </div>
 

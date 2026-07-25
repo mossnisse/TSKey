@@ -1,7 +1,7 @@
 import type { KeyStore } from '../store';
 import { APP_NAME, APP_VERSION, workspaceStorage } from '../store';
 import type { UIStateStore } from '../uiState.ts';
-import { showToast } from '../uiRenderer.ts';
+import { showToast } from '../ui/toast.ts';
 import type { PlainTextParseResult } from './plainTextImporter.ts';
 
 export type ImportCommitOutcome = 'cancelled' | 'saved' | 'imported-unsaved' | 'failed';

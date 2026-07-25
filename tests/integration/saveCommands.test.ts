@@ -29,8 +29,8 @@ describe('save command synchronization', () => {
         vi.spyOn(workspaceStorage, 'getProjectList').mockReturnValue(gate.promise);
         const saveSpy = vi.spyOn(store, 'saveToStorage').mockResolvedValue();
         const controller = new AbortController();
-        setupTitleEditing(store, vi.fn(), controller.signal);
-        setupFileMenu(store, uiState, vi.fn(), controller.signal);
+        setupTitleEditing(store, controller.signal);
+        setupFileMenu(store, uiState, controller.signal);
 
         title.value = 'Renamed';
         title.dispatchEvent(new FocusEvent('blur'));
@@ -60,8 +60,8 @@ describe('save command synchronization', () => {
             valueAtSave = store.getKey()[0].alt1;
         });
         const controller = new AbortController();
-        setupFileMenu(store, new UIStateStore(), vi.fn(), controller.signal);
-        const destroyKeyboard = setupKeyboardShortcuts(store, vi.fn());
+        setupFileMenu(store, new UIStateStore(), controller.signal);
+        const destroyKeyboard = setupKeyboardShortcuts(store);
 
         root.textContent = 'latest text';
         root.dispatchEvent(new InputEvent('input', { bubbles: true }));

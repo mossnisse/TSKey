@@ -18,6 +18,8 @@ import { orderFiguresByReference, resolveTextReferences, encodeFigureTokens, dec
 import { createTaxon, resolveDrafts, migrateLegacyTaxa, deleteTaxaAndSever, findTaxonByAnyName, relinkDraftsToExisting, sortTaxaByName, sanitizeTaxa } from './taxonOps.ts';
 import type { NameDisplayMode } from '../utils.ts';
 import { Selection } from './selection.ts';
+import { ChangeEmitter } from '../changeEmitter.ts';
+import type { ChangeKind, ChangeListener } from '../changeEmitter.ts';
 
 export const APP_NAME = 'TSKey';
 export const APP_VERSION = '0.0.4';
@@ -394,6 +396,8 @@ export class KeyStore {
     private _draggedId: number | null = null;
     private activeCoupletId: number | null = null;
 
+    private readonly changes = new ChangeEmitter();
+
     // Shared clipboard state structure
     private clipboardBuffer: Couplet[] = [];
     private clipboardMode: 'copy' | 'cut' = 'copy';
@@ -452,6 +456,9 @@ export class KeyStore {
         return this.coupletSelection.get();
     }
 
+    /** Deliberately silent (unlike the selection setters): this is set on every
+     *  keystroke in a card, and its callers refresh only when the active card
+     *  actually changed, so announcing it would re-render the app while typing. */
     public setActiveCouplet(id: number | null) {
         this.activeCoupletId = id;
     }
@@ -480,15 +487,37 @@ export class KeyStore {
         this.savedDepth = this.undoStack.length;
         this.hasUncommittedChanges = false;
         this.editScope = null;
+        this.markViewChanged();
     }
 
     private bumpMutationRevision(): void {
         this.mutationRevision += 1;
     }
 
-    private markChanged(): void {
+    /**
+     * Records a document mutation and announces it. `kind` is 'typing' only for the
+     * per-keystroke field mutators, whose panel debounces its own refresh — see
+     * ChangeKind. Everything else is structural and subscribers react immediately.
+     */
+    private markChanged(kind: ChangeKind = 'structural'): void {
         this.bumpMutationRevision();
         this.hasUncommittedChanges = true;
+        this.changes.emit(kind);
+    }
+
+    /**
+     * Subscribes to document changes; the returned function unsubscribes. The store
+     * announces its own mutations so callers can't forget to (the failure that used
+     * to leave a mutated document rendered as its previous state).
+     */
+    public subscribe(listener: ChangeListener): () => void {
+        return this.changes.subscribe(listener);
+    }
+
+    /** Announces a change to view-only state (selection, drag, active card), which
+     *  never touches the document and so never marks it unsaved. */
+    private markViewChanged(): void {
+        this.changes.emit('structural');
     }
 
     public hasUnsavedChanges(): boolean {
@@ -511,6 +540,7 @@ export class KeyStore {
         this.taxonSelection.clear();
         this.activeCoupletId = null;
         this._draggedId = null;
+        this.changes.emit('structural');
     }
 
     // ==========================================
@@ -596,6 +626,7 @@ export class KeyStore {
         this.hasUncommittedChanges = false;
         this.editScope = null;
         this.discardCutBuffer();
+        this.changes.emit('structural');
 
         return true;
     }
@@ -611,6 +642,7 @@ export class KeyStore {
         this.hasUncommittedChanges = false;
         this.editScope = null;
         this.discardCutBuffer();
+        this.changes.emit('structural');
 
         return true;
     }
@@ -633,6 +665,7 @@ export class KeyStore {
 
         this.clipboardMode = 'copy';
         this.cutIncomingLinksBuffer = [];
+        this.markViewChanged();
     }
 
     public hasClipboardData(): boolean {
@@ -685,7 +718,7 @@ export class KeyStore {
         if (!newKey) return;
         this.state.dichotomousKey = newKey;
 
-        this.markChanged();
+        this.markChanged('typing');
     }
 
     public addCouplet(): number {
@@ -839,10 +872,12 @@ export class KeyStore {
     public toggleFigureSelection(id: number, multiSelect: boolean) {
         if (!multiSelect) this.clearSelectionsExcept(this.figureSelection);
         this.figureSelection.toggle(id, multiSelect);
+        this.markViewChanged();
     }
 
     public clearFigureSelection() {
         this.figureSelection.clear();
+        this.markViewChanged();
     }
 
     /**
@@ -885,7 +920,7 @@ export class KeyStore {
         if (!newFigures) return;
         this.state.figures = newFigures;
 
-        this.markChanged();
+        this.markChanged('typing');
     }
 
     public reorderFigures(srcIdx: number, targetIdx: number) {
@@ -921,10 +956,12 @@ export class KeyStore {
     public toggleTaxonSelection(id: number, multiSelect: boolean) {
         if (!multiSelect) this.clearSelectionsExcept(this.taxonSelection);
         this.taxonSelection.toggle(id, multiSelect);
+        this.markViewChanged();
     }
 
     public clearTaxonSelection() {
         this.taxonSelection.clear();
+        this.markViewChanged();
     }
 
     /** Deletes selected taxa and severs any branch that pointed at one of them. */
@@ -971,7 +1008,7 @@ export class KeyStore {
         if (!next) return;
         this.state.taxa = next;
 
-        this.markChanged();
+        this.markChanged('typing');
     }
 
     /**
@@ -1300,19 +1337,23 @@ export class KeyStore {
     public toggleSelection(id: number, multiSelect: boolean) {
         if (!multiSelect) this.clearSelectionsExcept(this.coupletSelection);
         this.coupletSelection.toggle(id, multiSelect);
+        this.markViewChanged();
     }
 
     public clearSelection(): void {
         if (this.coupletSelection.size === 0) return; // Optimize: don't trigger updates if already empty
         this.coupletSelection.clear();
+        this.markViewChanged();
     }
 
     public setSelectionBatch(coupletIds: number[] | Set<number>): void {
         this.coupletSelection.replace(coupletIds);
+        this.markViewChanged();
     }
 
     public selectAll() {
         this.coupletSelection.replace(this.state.dichotomousKey.map(c => c.id));
+        this.markViewChanged();
     }
 
     // ==========================================
